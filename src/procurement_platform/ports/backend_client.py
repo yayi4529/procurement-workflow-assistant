@@ -26,6 +26,8 @@ from procurement_platform.domain.requirement import (
     RequirementPage,
     RequirementSummary,
     RequirementTransitionResult,
+    ReviewFieldsPatch,
+    ReviewFieldsSaveResult,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -79,6 +81,35 @@ class BackendClient(Protocol):
     ) -> RequirementTransitionResult: ...
 
     async def resubmit_review(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult: ...
+
+    async def update_review_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: ReviewFieldsPatch,
+    ) -> ReviewFieldsSaveResult: ...
+
+    async def reject_requirement(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        reason: str,
+        action_token: UUID,
+    ) -> RequirementTransitionResult: ...
+
+    async def submit_purchaser(
         self,
         *,
         identity: PlatformIdentity,

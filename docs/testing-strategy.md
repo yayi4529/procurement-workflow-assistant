@@ -63,3 +63,8 @@ Task 2 另覆盖 Challenge、私聊文本、群聊忽略、空文本、错误 To
 新增严格 BackendClient 契约测试与 Fake 驱动的无 LLM 端到端测试，覆盖字符串数量、
 显式 null、可选 brand/model、角色/楼宇、候选楼长、首次提交、重新提交、版本递增及
 调用端点隔离。架构约束继续禁止应用层依赖 httpx、飞书 SDK、LLM、MySQL 或 Redis。
+## Task 4 测试
+
+覆盖审核字段部分更新、显式 null、字符串金额、后端总价、合同条件必填、0/1/多候选
+分支、版本冲突、稳定 action token、重复点击、驳回和提交采购员；正式链路不写 Agent
+会话且不直接发送跨角色通知。

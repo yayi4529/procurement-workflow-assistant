@@ -144,3 +144,10 @@ Body 一致的 `Idempotency-Key` 和 `X-Notification-Id`。首次成功和完全
 - `brand`/`model` 选填，数量使用字符串；
 - 保存使用 `expected_version`，正式动作使用 `action_token`；
 - 跨角色通知仍只由后端 Outbox 驱动。
+## Task 4 building-manager card flow
+
+The deterministic building-manager flow is implemented without LLM or Agent-session
+dependencies. It supports backend-scoped pending work, partial review-field saves,
+confirmed rejection, purchaser candidate validation, and confirmed submission.
+`expected_version` protects writes, confirmation cards retain a stable `action_token`,
+and cross-role notifications remain backend-Outbox-only.

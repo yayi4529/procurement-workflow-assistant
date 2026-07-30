@@ -1613,3 +1613,8 @@ Task 3～13：待开发
 
 需求人正式卡片流程已交付。验收以 FakeBackendClient 从 DRAFT 进入
 PENDING_REVIEW、以及 REJECTED 使用原采购单重新提交为准，不配置 LLM。
+## Task 4 交付状态
+
+楼长无 LLM 正式卡片流程已交付：PENDING_REVIEW 保存同轮 DRAFT review、驳回至
+REJECTED，或选择合法采购员并提交至 PENDING_PURCHASE。跨角色通知仅由后端 Outbox
+驱动。

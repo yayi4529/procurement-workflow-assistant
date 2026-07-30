@@ -15,6 +15,12 @@ from procurement_platform.adapters.persistence.memory_notification_delivery_stor
 )
 from procurement_platform.application.applicant.action_router import ApplicantActionRouter
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
+from procurement_platform.application.building_manager.action_router import (
+    BuildingManagerActionRouter,
+)
+from procurement_platform.application.building_manager.workflow_service import (
+    BuildingManagerWorkflowService,
+)
 from procurement_platform.application.inbound.card_interaction_handler import (
     BaseCardInteractionHandler,
 )
@@ -75,6 +81,9 @@ class ApplicationContainer:
             container.card_interaction_handler = BaseCardInteractionHandler(
                 channel,
                 ApplicantActionRouter(ApplicantWorkflowService(container.backend_client)),
+                BuildingManagerActionRouter(
+                    BuildingManagerWorkflowService(container.backend_client)
+                ),
             )
             if settings.notification_gateway.enabled:
                 delivery_store = MemoryNotificationDeliveryStore()

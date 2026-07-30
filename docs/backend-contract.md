@@ -213,3 +213,16 @@ POST  /api/v1/requirements/{id}/resubmit-review
 
 部分更新使用 `fields` 与 `exclude_unset` 区分未提供和显式 `null`。数量保持字符串。
 提交前重新读取详情，保存使用 `expected_version`，正式动作使用 UUID `action_token`。
+## Task 4 客户端接口
+
+```text
+GET   /api/v1/requirements?view=PENDING_FOR_ME
+GET   /api/v1/requirements?view=PROCESSED_BY_ME
+GET   /api/v1/requirements/{id}
+PATCH /api/v1/requirements/{id}/review-fields
+GET   /api/v1/requirements/{id}/handler-candidates?target_role=PURCHASER
+POST  /api/v1/requirements/{id}/reject
+POST  /api/v1/requirements/{id}/submit-purchaser
+```
+
+部分更新区分未提供与显式 `null`。预计总价不由客户端提交，只读取后端响应。

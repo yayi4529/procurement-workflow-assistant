@@ -33,6 +33,8 @@ from procurement_platform.domain.requirement import (
     RequirementPage,
     RequirementSummary,
     RequirementTransitionResult,
+    ReviewFieldsPatch,
+    ReviewFieldsSaveResult,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -165,8 +167,8 @@ class HttpBackendClient:
         requirement_id: int,
         target_role: RoleCode,
     ) -> HandlerCandidates:
-        if target_role is not RoleCode.BUILDING_MANAGER:
-            raise ValueError("applicant flow only supports BUILDING_MANAGER")
+        if target_role not in {RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}:
+            raise ValueError("unsupported handler target role")
         return await self._request_model(
             HandlerCandidates,
             method="GET",
@@ -231,6 +233,67 @@ class HttpBackendClient:
             expected_version=expected_version,
             assigned_to_employee_id=assigned_to_employee_id,
             action_token=action_token,
+        )
+
+    async def update_review_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: ReviewFieldsPatch,
+    ) -> ReviewFieldsSaveResult:
+        return await self._request_model(
+            ReviewFieldsSaveResult,
+            method="PATCH",
+            path=f"/api/v1/requirements/{requirement_id}/review-fields",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "fields": fields.model_dump(mode="json", exclude_unset=True),
+            },
+        )
+
+    async def reject_requirement(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        reason: str,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        return await self._request_model(
+            RequirementTransitionResult,
+            method="POST",
+            path=f"/api/v1/requirements/{requirement_id}/reject",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "reason": reason,
+                "action_token": str(action_token),
+            },
+        )
+
+    async def submit_purchaser(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        return await self._request_model(
+            RequirementTransitionResult,
+            method="POST",
+            path=f"/api/v1/requirements/{requirement_id}/submit-purchaser",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "assigned_to_employee_id": assigned_to_employee_id,
+                "action_token": str(action_token),
+            },
         )
 
     async def get_or_create_agent_conversation(

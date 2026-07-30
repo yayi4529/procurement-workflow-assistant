@@ -84,3 +84,15 @@ FastAPI、httpx 或飞书 SDK。通知链路不持有 `BackendClient`，失败�
 
 该链路不依赖 LLM、Agent Session 或具体飞书 SDK。正式提交成功后仅更新原卡片，
 不根据业务响应主动通知楼长。
+## Task 4 楼长调用链
+
+```text
+飞书楼长卡片回调
+→ BuildingManagerActionRouter
+→ BuildingManagerWorkflowService
+→ BackendClient
+→ BuildingManagerCardFactory
+→ ChannelClient.update_interaction
+```
+
+正式动作前重新读取详情；客户端不直接发送需求人或采购员通知。

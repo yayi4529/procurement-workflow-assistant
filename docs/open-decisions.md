@@ -62,3 +62,10 @@ Schema（包括字段是否必返、时间字段和分页元数据的精确命�
   `UPDATE_APPLICANT_FIELDS`、`SUBMIT_REVIEW`、`RESUBMIT_REVIEW`。
 - 驳回原因字段是否为 `rejection_reason` 仍需真实 Schema 确认；当前为可选最小字段，
   缺失时卡片不编造原因。
+## Task 4 联调待确认
+
+- 三个楼长写接口的完整响应 JSON Schema 仍需以后端 OpenAPI 或真实样例确认。
+- `proposed_supplier_id` 在任务文件中列出，但契约摘要冻结字段清单未列出。
+- `review_record` 嵌套结构及 `review_status` 返回位置尚未冻结。
+- `allowed_actions` 中三个楼长动作的精确编码仍需后端确认。
+- 正式 Outbox 通知事件类型及 Payload 仍未冻结。
