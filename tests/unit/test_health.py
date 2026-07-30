@@ -31,5 +31,9 @@ def test_health_and_lifecycle() -> None:
     container = ApplicationContainer(settings=settings, backend_client=fake)
     with TestClient(create_app(settings, container)) as client:
         assert client.get("/health/live").json() == {"status": "ok"}
-        assert client.get("/health/ready").json() == {"status": "ready"}
+        ready = client.get("/health/ready").json()
+        assert ready["status"] == "ready"
+        assert ready["backend_mode"] == "http"
+        assert ready["backend_configured"] is True
+        assert ready["llm_enabled"] is False
     assert fake.call_counts["aclose"] == 1

@@ -1,3 +1,4 @@
+from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.enums import RequirementStatus
 from procurement_platform.domain.interaction import (
     ActionButton,
@@ -71,7 +72,7 @@ class ApplicantCardFactory:
             KeyValueSection(
                 fields=(
                     KeyValueField(label="采购单编号", value=detail.requirement_no),
-                    KeyValueField(label="状态", value=detail.status.value),
+                    KeyValueField(label="状态", value=requirement_status_label(detail.status)),
                     KeyValueField(label="所属楼宇", value=detail.building.building_name),
                     KeyValueField(label="版本", value=str(detail.version)),
                 )
@@ -229,7 +230,7 @@ class ApplicantCardFactory:
                 KeyValueSection(
                     fields=(
                         KeyValueField(label="采购单编号", value=result.requirement_no),
-                        KeyValueField(label="状态", value=result.status.value),
+                        KeyValueField(label="状态", value=requirement_status_label(result.status)),
                         KeyValueField(
                             label="当前处理人",
                             value=result.current_handler.name if result.current_handler else "-",
@@ -250,7 +251,8 @@ class ApplicantCardFactory:
 
     def listing(self, page: RequirementPage) -> InteractionView:
         lines = [
-            f"- {item.requirement_no} | {item.device_name or '未填写'} | {item.status.value}"
+            f"- {item.requirement_no} | {item.device_name or '未填写'} | "
+            f"{requirement_status_label(item.status)}"
             for item in page.items
         ]
         actions = [

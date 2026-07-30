@@ -39,3 +39,30 @@ def test_renderer_produces_feishu_card_without_identity() -> None:
     serialized = str(card)
     assert "foundation.echo" in serialized
     assert "operator_open_id" not in serialized
+
+
+def test_renderer_wraps_inputs_and_submit_buttons_in_form() -> None:
+    from procurement_platform.domain.interaction import SelectInput, SelectOption
+
+    card = FeishuInteractionRenderer().render(
+        InteractionView(
+            title="Form",
+            elements=(
+                SelectInput(
+                    name="building_id",
+                    label="Building",
+                    options=(SelectOption(label="One", value="1"),),
+                    required=True,
+                    default_value="1",
+                ),
+            ),
+            actions=(ActionButton(action_id="applicant.create_draft", label="Create"),),
+        )
+    )
+    elements = cast(list[JsonObject], card["elements"])
+    form = elements[0]
+    assert form["tag"] == "form"
+    form_elements = cast(list[JsonObject], form["elements"])
+    assert form_elements[0]["name"] == "building_id"
+    assert form_elements[1]["action_type"] == "form_submit"
+    assert form_elements[1]["name"] == "applicant_create_draft"

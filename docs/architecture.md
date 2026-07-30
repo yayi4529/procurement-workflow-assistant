@@ -1,5 +1,11 @@
 # 架构设计 V2.1
 
+## 真实飞书 Fake 调试拓扑
+
+`PROCUREMENT_BACKEND_MODE=fake` 将所有应用服务连接到同一进程内
+`FakeBackendClient`，同时保留真实 `FeishuChannelClient`。Fake 用户按真实 open_id
+映射；模式选择只存在于 bootstrap。该模式禁止 production、多 worker 和 reload。
+
 ## 1. 三条入口
 
 ```text

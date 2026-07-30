@@ -25,32 +25,22 @@ class BaseCardInteractionHandler:
         self._purchaser_router = purchaser_router
         self._warehouse_router = warehouse_router
 
-    async def handle(self, event: CardInteractionEvent) -> None:
+    async def handle(self, event: CardInteractionEvent) -> InteractionView:
         if event.action_id.startswith("applicant.") and self._applicant_router is not None:
-            view = await self._applicant_router.route(event)
-            await self._channel_client.update_interaction(message_id=event.message_id, view=view)
-            return
+            return await self._applicant_router.route(event)
         if event.action_id.startswith("purchaser.") and self._purchaser_router is not None:
-            view = await self._purchaser_router.route(event)
-            await self._channel_client.update_interaction(message_id=event.message_id, view=view)
-            return
+            return await self._purchaser_router.route(event)
         if event.action_id.startswith("warehouse.") and self._warehouse_router is not None:
-            view = await self._warehouse_router.route(event)
-            await self._channel_client.update_interaction(message_id=event.message_id, view=view)
-            return
+            return await self._warehouse_router.route(event)
         if (
             event.action_id.startswith("building_manager.")
             and self._building_manager_router is not None
         ):
-            view = await self._building_manager_router.route(event)
-            await self._channel_client.update_interaction(message_id=event.message_id, view=view)
-            return
+            return await self._building_manager_router.route(event)
         if event.action_id != "foundation.echo":
             raise UnsupportedCardActionError("不支持的卡片操作")
-        await self._channel_client.update_interaction(
-            message_id=event.message_id,
-            view=InteractionView(
-                title="基础链路验证",
-                elements=(PlainTextBlock(text="卡片操作已收到。"),),
-            ),
+        view = InteractionView(
+            title="基础链路验证",
+            elements=(PlainTextBlock(text="卡片操作已收到。"),),
         )
+        return view
