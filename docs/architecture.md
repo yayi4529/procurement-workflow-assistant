@@ -110,3 +110,17 @@ FastAPI、httpx 或飞书 SDK。通知链路不持有 `BackendClient`，失败�
 
 开始采购、保存采购字段和提交仓库前均重新读取后端详情。供应商和黑名单信息只采用
 后端裁剪结果，实际总价只展示后端响应；成功后不直接通知仓库管理员。
+
+## Task 6 仓库管理员调用链
+
+```text
+飞书仓库卡片回调
+→ WarehouseActionRouter
+→ WarehouseWorkflowService
+→ BackendClient
+→ WarehouseCardFactory
+→ ChannelClient.update_interaction
+```
+
+准备完成前重新读取后端详情并以后端 `fields_complete`、`allowed_actions` 和最新 version
+为准。正式完成不直接通知需求人、楼长或采购员。

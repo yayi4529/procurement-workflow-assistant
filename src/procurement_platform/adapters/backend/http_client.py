@@ -31,6 +31,7 @@ from procurement_platform.domain.requirement import (
     HandlerCandidates,
     PurchaseFieldsPatch,
     PurchaseFieldsSaveResult,
+    RequirementCompletionResult,
     RequirementDetail,
     RequirementPage,
     RequirementSummary,
@@ -41,6 +42,8 @@ from procurement_platform.domain.requirement import (
     SupplierPage,
     SupplierSummary,
     SupplierUpsertCommand,
+    WarehouseFieldsPatch,
+    WarehouseFieldsSaveResult,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -407,6 +410,41 @@ class HttpBackendClient:
                 "assigned_to_employee_id": assigned_to_employee_id,
                 "action_token": str(action_token),
             },
+        )
+
+    async def update_warehouse_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: WarehouseFieldsPatch,
+    ) -> WarehouseFieldsSaveResult:
+        return await self._request_model(
+            WarehouseFieldsSaveResult,
+            method="PATCH",
+            path=f"/api/v1/requirements/{requirement_id}/warehouse-fields",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "fields": fields.model_dump(mode="json", exclude_unset=True),
+            },
+        )
+
+    async def complete_requirement(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        action_token: UUID,
+    ) -> RequirementCompletionResult:
+        return await self._request_model(
+            RequirementCompletionResult,
+            method="POST",
+            path=f"/api/v1/requirements/{requirement_id}/complete",
+            identity=identity,
+            json_body={"expected_version": expected_version, "action_token": str(action_token)},
         )
 
     async def get_or_create_agent_conversation(

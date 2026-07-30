@@ -39,7 +39,8 @@
 
 ## 任务 6：仓库管理员正式卡片
 
-received_quantity 和少收备注规则、确认完成。
+状态：已实现。不依赖 LLM，支持 `received_quantity` 小于、等于或大于申请数量，
+少收备注规则、部分字段保存和一次性确认完成。
 
 ## 任务 7：无 LLM 全流程联调
 
@@ -63,3 +64,8 @@ LLM Client、强类型意图、上下文、能力策略和故障隔离。各角�
 
 采购员无 LLM 正式卡片流程已实现：PENDING_PURCHASE 开始采购进入 PURCHASING，
 保存供应商快照和采购字段，选择合法仓库管理员并提交进入 PENDING_WAREHOUSE。
+
+## Task 6 交付状态
+
+仓库管理员无 LLM 正式卡片流程已实现：PENDING_WAREHOUSE 保存仓库位置、实际入库
+数量和备注，按后端字段完整性确认完成，进入 COMPLETED 并清空 current_handler。

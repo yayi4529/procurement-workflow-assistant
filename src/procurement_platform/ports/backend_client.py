@@ -24,6 +24,7 @@ from procurement_platform.domain.requirement import (
     HandlerCandidates,
     PurchaseFieldsPatch,
     PurchaseFieldsSaveResult,
+    RequirementCompletionResult,
     RequirementDetail,
     RequirementPage,
     RequirementSummary,
@@ -34,6 +35,8 @@ from procurement_platform.domain.requirement import (
     SupplierPage,
     SupplierSummary,
     SupplierUpsertCommand,
+    WarehouseFieldsPatch,
+    WarehouseFieldsSaveResult,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -175,6 +178,24 @@ class BackendClient(Protocol):
         assigned_to_employee_id: int,
         action_token: UUID,
     ) -> RequirementTransitionResult: ...
+
+    async def update_warehouse_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: WarehouseFieldsPatch,
+    ) -> WarehouseFieldsSaveResult: ...
+
+    async def complete_requirement(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        action_token: UUID,
+    ) -> RequirementCompletionResult: ...
 
     async def get_or_create_agent_conversation(
         self, *, identity: PlatformIdentity, current_action: str

@@ -81,3 +81,11 @@ Schema（包括字段是否必返、时间字段和分页元数据的精确命�
 - 采购字段 `missing_fields` 的完整必填清单、`purchased_at` 的时区约束及供应商创建
   必填字段仍需真实契约确认。
 - 采购员 `allowed_actions` 三个动作的精确编码及正式 Outbox 通知事件 Payload 尚未冻结。
+
+## Task 6 联调待确认
+
+- `warehouse-fields` 与 `complete` 的完整响应 JSON Schema 仍需以后端 OpenAPI 或真实
+  联调样例逐字段确认。
+- 仓库字段保存后的 `missing_fields` 顺序和 `allowed_actions` 精确编码尚未冻结。
+- `completed_at` 是否始终必返、时区格式及重复 action token 的成功/错误响应形态尚未冻结。
+- COMPLETED 事件的正式 Outbox `event_type` 与需求人、楼长、采购员通知 Payload 尚未冻结。

@@ -75,3 +75,9 @@ Task 2 另覆盖 Challenge、私聊文本、群聊忽略、空文本、错误 To
 供应商候选与详情、敏感账号 repr、字符串金额和税率、后端总价、档案同步默认否、
 仓库管理员候选、`expected_version`、稳定 `action_token` 及从 PENDING_PURCHASE 到
 PENDING_WAREHOUSE 的无 LLM 集成链路。
+
+## Task 6 测试
+
+覆盖 `warehouse-fields` 与 `complete` 的方法、路径和 JSON 契约；覆盖字符串 Decimal
+数量、零/负数、等量、多收、少收无备注、少收补备注、部分更新、显式 null、字段完整性、
+current_handler 清空和从 PENDING_WAREHOUSE 到 COMPLETED 的无 LLM 集成链路。

@@ -56,6 +56,8 @@ class AllowedRequirementAction(StrEnum):
     START_PURCHASE = "START_PURCHASE"
     UPDATE_PURCHASE_FIELDS = "UPDATE_PURCHASE_FIELDS"
     SUBMIT_WAREHOUSE = "SUBMIT_WAREHOUSE"
+    UPDATE_WAREHOUSE_FIELDS = "UPDATE_WAREHOUSE_FIELDS"
+    COMPLETE = "COMPLETE"
 
 
 class ReviewStatus(StrEnum):
@@ -86,3 +88,12 @@ class PurchaserAction(StrEnum):
     PREPARE_SUBMIT_WAREHOUSE = "purchaser.prepare_submit_warehouse"
     CONFIRM_SUBMIT_WAREHOUSE = "purchaser.confirm_submit_warehouse"
     REFRESH = "purchaser.refresh"
+
+
+class WarehouseAction(StrEnum):
+    LIST_PENDING = "warehouse.list_pending"
+    OPEN_REQUIREMENT = "warehouse.open_requirement"
+    SAVE_FIELDS = "warehouse.save_fields"
+    PREPARE_COMPLETE = "warehouse.prepare_complete"
+    CONFIRM_COMPLETE = "warehouse.confirm_complete"
+    REFRESH = "warehouse.refresh"

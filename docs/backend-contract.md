@@ -242,3 +242,15 @@ POST  /api/v1/requirements/{id}/submit-warehouse
 采购字段部分更新区分未提供与显式 `null`，金额和税率保持字符串。客户端不提交
 `actual_total_price`；`update_supplier_profile` 默认 `false`，只有用户明确确认才传
 `true`。供应商银行账号按敏感信息处理，提交确认只显示脱敏值。
+
+## Task 6 客户端接口
+
+```text
+GET   /api/v1/requirements?view=PENDING_FOR_ME
+GET   /api/v1/requirements/{id}
+PATCH /api/v1/requirements/{id}/warehouse-fields
+POST  /api/v1/requirements/{id}/complete
+```
+
+`warehouse_location`、`received_quantity`、`receipt_remark` 支持部分更新与显式
+`null`；数量保持字符串。少收备注与字段完整性最终以后端响应为准。

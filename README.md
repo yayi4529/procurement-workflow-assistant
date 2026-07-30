@@ -151,3 +151,9 @@ dependencies. It supports backend-scoped pending work, partial review-field save
 confirmed rejection, purchaser candidate validation, and confirmed submission.
 `expected_version` protects writes, confirmation cards retain a stable `action_token`,
 and cross-role notifications remain backend-Outbox-only.
+
+## Task 6 仓库管理员正式卡片流程
+
+已实现完全不依赖 LLM/Agent Session 的仓库待办、入库字段部分保存、少收备注提示与
+后端校验、一次性完成确认。保存携带 `expected_version`，完成携带稳定
+`action_token`；完成通知仅由后端 Outbox 驱动。

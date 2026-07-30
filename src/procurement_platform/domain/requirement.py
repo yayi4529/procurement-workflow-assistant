@@ -1,7 +1,8 @@
 from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from procurement_platform.domain.enums import (
     AllowedRequirementAction,
@@ -116,6 +117,45 @@ class PurchaseExecutionSummary(RequirementModel):
     fields_complete: bool
 
 
+class WarehouseFields(RequirementModel):
+    warehouse_location: str | None = None
+    received_quantity: str | None = None
+    receipt_remark: str | None = None
+
+
+class WarehouseFieldsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse_location: str | None = None
+    received_quantity: str | None = None
+    receipt_remark: str | None = None
+
+    @field_validator("received_quantity")
+    @classmethod
+    def validate_received_quantity(cls, value: str | None) -> str | None:
+        if value is not None and Decimal(value) <= 0:
+            raise ValueError("received_quantity must be greater than zero")
+        return value
+
+    def provided_fields(self) -> dict[str, str | None]:
+        return self.model_dump(exclude_unset=True)
+
+
+class WarehouseFieldsSaveResult(RequirementModel):
+    requirement_id: int
+    status: RequirementStatus
+    version: int
+    warehouse_fields: WarehouseFields
+    missing_fields: tuple[str, ...]
+    fields_complete: bool
+
+
+class WarehouseReceiptSummary(RequirementModel):
+    requirement_id: int
+    warehouse_fields: WarehouseFields
+    fields_complete: bool
+
+
 class StartPurchaseCommand(RequirementModel):
     expected_version: int
     action_token: UUID
@@ -217,6 +257,12 @@ class RequirementSummary(RequirementModel):
     version: int
 
 
+class RequirementCompletionResult(RequirementSummary):
+    current_handler: RequirementHandler | None = None
+    completed_at: datetime
+    action_token: UUID | None = None
+
+
 class ApplicantFieldsSaveResult(RequirementModel):
     requirement_id: int
     status: RequirementStatus
@@ -233,10 +279,12 @@ class RequirementDetail(RequirementSummary):
     review_fields: ReviewFields | None = None
     review_record: ReviewRecordSummary | None = None
     purchase_fields: PurchaseFields | None = None
+    warehouse_fields: WarehouseFields | None = None
     missing_fields: tuple[str, ...]
     allowed_actions: tuple[AllowedRequirementAction, ...]
     fields_complete: bool = False
     rejection_reason: str | None = None
+    completed_at: datetime | None = None
 
 
 class RequirementListItem(RequirementSummary):

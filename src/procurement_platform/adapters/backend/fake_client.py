@@ -44,6 +44,7 @@ from procurement_platform.domain.requirement import (
     PurchaseFieldsPatch,
     PurchaseFieldsSaveResult,
     RequirementBuilding,
+    RequirementCompletionResult,
     RequirementDetail,
     RequirementHandler,
     RequirementListItem,
@@ -58,6 +59,9 @@ from procurement_platform.domain.requirement import (
     SupplierPage,
     SupplierSummary,
     SupplierUpsertCommand,
+    WarehouseFields,
+    WarehouseFieldsPatch,
+    WarehouseFieldsSaveResult,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -84,6 +88,7 @@ class FakeBackendClient:
         self._requirements: dict[int, RequirementDetail] = {}
         self.handler_candidates = HandlerCandidates(items=())
         self._action_results: dict[UUID, RequirementTransitionResult] = {}
+        self._completion_results: dict[UUID, RequirementCompletionResult] = {}
         self._next_requirement_id = 1
         self._suppliers: dict[int, SupplierDetail] = {}
         self._next_supplier_id = 1
@@ -771,6 +776,112 @@ class FakeBackendClient:
             action_token=action_token,
         )
         self._action_results[action_token] = result
+        return result
+
+    def _require_warehouse_access(self, detail: RequirementDetail) -> None:
+        if self.current_user.status != "ACTIVE" or not any(
+            role.role_code is RoleCode.WAREHOUSE_MANAGER for role in self.current_user.roles
+        ):
+            raise PermissionDeniedError("PERMISSION_DENIED", "当前用户不是有效仓库管理员")
+        if (
+            detail.current_handler is None
+            or detail.current_handler.employee_id != self.current_user.employee_id
+        ):
+            raise InvalidHandlerError("INVALID_HANDLER", "当前用户不是处理人")
+
+    async def update_warehouse_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: WarehouseFieldsPatch,
+    ) -> WarehouseFieldsSaveResult:
+        self._record("update_warehouse_fields")
+        detail = self._require_requirement(requirement_id)
+        self._require_warehouse_access(detail)
+        if detail.status is not RequirementStatus.PENDING_WAREHOUSE:
+            raise InvalidStatusError("INVALID_STATUS", "当前状态不可保存入库字段")
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "版本冲突")
+        merged = (detail.warehouse_fields or WarehouseFields()).model_copy(
+            update=fields.provided_fields()
+        )
+        missing = [
+            name
+            for name in ("warehouse_location", "received_quantity")
+            if getattr(merged, name) in (None, "")
+        ]
+        if (
+            merged.received_quantity is not None
+            and detail.applicant_fields.quantity is not None
+            and Decimal(merged.received_quantity) < Decimal(detail.applicant_fields.quantity)
+            and not merged.receipt_remark
+        ):
+            missing.append("receipt_remark")
+        updated = detail.model_copy(
+            update={
+                "warehouse_fields": merged,
+                "version": detail.version + 1,
+                "missing_fields": tuple(missing),
+                "fields_complete": not missing,
+                "allowed_actions": (
+                    AllowedRequirementAction.UPDATE_WAREHOUSE_FIELDS,
+                    *((AllowedRequirementAction.COMPLETE,) if not missing else ()),
+                ),
+            }
+        )
+        self._requirements[requirement_id] = updated
+        return WarehouseFieldsSaveResult(
+            requirement_id=requirement_id,
+            status=updated.status,
+            version=updated.version,
+            warehouse_fields=merged,
+            missing_fields=tuple(missing),
+            fields_complete=not missing,
+        )
+
+    async def complete_requirement(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        action_token: UUID,
+    ) -> RequirementCompletionResult:
+        self._record("complete_requirement")
+        duplicate = self._completion_results.get(action_token)
+        if duplicate is not None:
+            raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
+        detail = self._require_requirement(requirement_id)
+        self._require_warehouse_access(detail)
+        if detail.status is not RequirementStatus.PENDING_WAREHOUSE:
+            raise InvalidStatusError("INVALID_STATUS", "当前状态不可完成")
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "版本冲突")
+        if not detail.fields_complete:
+            raise MissingRequiredFieldsError("MISSING_REQUIRED_FIELDS", "入库字段不完整")
+        completed_at = datetime.now(UTC)
+        updated = detail.model_copy(
+            update={
+                "status": RequirementStatus.COMPLETED,
+                "version": detail.version + 1,
+                "current_handler": None,
+                "allowed_actions": (),
+                "completed_at": completed_at,
+            }
+        )
+        self._requirements[requirement_id] = updated
+        result = RequirementCompletionResult(
+            requirement_id=updated.requirement_id,
+            requirement_no=updated.requirement_no,
+            status=updated.status,
+            version=updated.version,
+            current_handler=None,
+            completed_at=completed_at,
+            action_token=action_token,
+        )
+        self._completion_results[action_token] = result
         return result
 
     async def get_or_create_agent_conversation(
