@@ -45,6 +45,10 @@
 - payload 校验；
 - 不调用正式业务接口。
 
+Task 2 另覆盖 Challenge、私聊文本、群聊忽略、空文本、错误 Token、
+`foundation.echo`、事件去重与失败重试、Interaction 严格模型与渲染、通知 SHA-256
+指纹、投递幂等、自定义路由以及 Fake Channel 无网络链路。
+
 ## 字段规则
 
 - brand/model 可选；

@@ -182,3 +182,20 @@ POST /api/v1/agent/conversations/{id}/complete
 
 客户端拒绝非 JSON、缺字段、额外字段、成功但无 data、未知稳定枚举以及未知错误码。
 未知错误码映射为 `UnknownBackendError`，不会被当作成功。
+
+## 9. Task 2 通知网关当前契约
+
+接收路径由 `PROCUREMENT_NOTIFICATION_GATEWAY_PATH` 配置，开发默认值
+`/internal/notifications` 不是已冻结的正式路径。
+
+```text
+POST <configured path>
+Authorization: Bearer <configured token>
+Idempotency-Key: <body.dedup_key>
+X-Notification-Id: <body.notification_id>
+```
+
+Body 使用严格 `NotificationGatewayRequest`，当前仅接受 `platform_type=FEISHU`。
+`event_type` 必须已注册；生产容器不注册测试事件或未经确认的业务事件。成功及相同的已
+成功重复投递返回 204；Header 不一致为 400，鉴权失败为 401，幂等冲突为 409，未知
+事件/非法 Payload 为 422，飞书失败/超时为 502/503。

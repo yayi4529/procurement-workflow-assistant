@@ -1,6 +1,11 @@
 import pytest
+from pydantic import SecretStr
 
-from procurement_platform.bootstrap.settings import Settings
+from procurement_platform.bootstrap.settings import (
+    FeishuSettings,
+    NotificationGatewaySettings,
+    Settings,
+)
 
 
 def environment(**overrides: str) -> dict[str, str]:
@@ -35,3 +40,41 @@ def test_timeout_must_be_positive() -> None:
 def test_production_rejects_test_platform() -> None:
     with pytest.raises(ValueError, match="production"):
         Settings.from_env(environment(PROCUREMENT_ENVIRONMENT="production"))
+
+
+def test_feishu_paths_and_required_credentials() -> None:
+    with pytest.raises(ValueError, match="absolute path"):
+        FeishuSettings(webhook_path="https://example.test/webhook")
+    with pytest.raises(ValueError, match="requires"):
+        FeishuSettings(enabled=True)
+    configured = FeishuSettings(
+        enabled=True,
+        app_id="app",
+        app_secret=SecretStr("secret"),
+        verification_token=SecretStr("verify"),
+    )
+    assert "secret" not in repr(configured)
+    assert "verify" not in repr(configured)
+
+
+def test_production_notification_gateway_requires_token_and_durable_store() -> None:
+    with pytest.raises(ValueError, match="bearer token"):
+        Settings(
+            environment="production",
+            service_name="service",
+            backend_base_url="http://backend",
+            backend_request_timeout_seconds=1,
+            identity_gateway_secret=SecretStr("identity"),
+            notification_gateway=NotificationGatewaySettings(enabled=True),
+        )
+    with pytest.raises(ValueError, match="memory"):
+        Settings(
+            environment="production",
+            service_name="service",
+            backend_base_url="http://backend",
+            backend_request_timeout_seconds=1,
+            identity_gateway_secret=SecretStr("identity"),
+            notification_gateway=NotificationGatewaySettings(
+                enabled=True, bearer_token=SecretStr("token")
+            ),
+        )

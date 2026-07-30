@@ -46,3 +46,27 @@ NotificationGatewayHandler
 - Agent 不直接访问 MySQL/Redis；
 - 正式事实始终从后端加载；
 - 后端通知失败由 Outbox 重试。
+
+## 5. Task 2 实现调用链
+
+```text
+POST 飞书 Webhook
+→ FeishuWebhookParser
+→ EventDedupStore
+→ BaseMessageHandler / BaseCardInteractionHandler
+→ ChannelClient
+→ Feishu SDK Adapter
+```
+
+```text
+Backend notification_outbox worker
+→ POST Notification Gateway
+→ Bearer/Header 校验
+→ NotificationDeliveryStore
+→ NotificationRendererRegistry
+→ ChannelClient
+→ Feishu SDK Adapter
+```
+
+平台 JSON 和 `lark_oapi` 只存在于 `adapters/feishu`。Domain 和 Application 不依赖
+FastAPI、httpx 或飞书 SDK。通知链路不持有 `BackendClient`，失败不会重新执行采购动作。

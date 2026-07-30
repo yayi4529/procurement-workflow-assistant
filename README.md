@@ -68,8 +68,18 @@
 - `/health/live`、`/health/ready`；
 - `/api/v1/users/me` 与全部 Agent 会话接口适配。
 
-本阶段不包含飞书 SDK、通知网关、LLM、卡片或四角色正式采购流程，也不直接访问
-MySQL/Redis。
+## Task 2 已实现
+
+- 可配置的飞书 Webhook，支持 Challenge、Token/签名校验、加密事件解密、私聊文本和
+  卡片回调解析；
+- 平台无关 `InteractionView`、飞书 Renderer、回复/更新/主动发送 Channel Port；
+- 并发安全的内存事件去重和通知投递幂等 Store；
+- 可配置通知网关、可选 Bearer Token、Header/Body 一致性校验和 Payload 指纹；
+- `NotificationRendererRegistry`，但生产容器没有注册未冻结的业务模板；
+- `foundation.echo` 仅用于验证卡片回调链路，不执行采购业务。
+
+本阶段不包含 LLM、四角色业务卡片、采购状态流转或正式业务通知 Renderer，也不直接
+访问 MySQL/Redis。
 
 ## 本地开发
 
@@ -100,3 +110,29 @@ uvicorn --factory procurement_platform.interfaces.http.app:create_app
 测试应用服务可以注入 `FakeBackendClient(CurrentUser(...))`，再构造
 `ApplicationContainer(settings, fake)`；Fake 支持活动会话、消息幂等与分页、状态、
 快照、完成、调用计数和按方法错误注入。
+
+### 飞书与通知网关
+
+```text
+PROCUREMENT_FEISHU_ENABLED=true
+PROCUREMENT_FEISHU_APP_ID=
+PROCUREMENT_FEISHU_APP_SECRET=
+PROCUREMENT_FEISHU_VERIFICATION_TOKEN=
+PROCUREMENT_FEISHU_ENCRYPT_KEY=
+PROCUREMENT_FEISHU_WEBHOOK_PATH=/webhooks/feishu
+
+PROCUREMENT_NOTIFICATION_GATEWAY_ENABLED=true
+PROCUREMENT_NOTIFICATION_GATEWAY_PATH=/internal/notifications
+PROCUREMENT_NOTIFICATION_GATEWAY_TOKEN=
+PROCUREMENT_NOTIFICATION_DELIVERY_STORE_BACKEND=memory
+```
+
+Secret 必须由部署环境注入。`/internal/notifications` 只是开发默认值，并非后端已冻结的
+正式路径。配置 Token 时，Outbox worker 必须发送 Bearer Token。通知请求还必须携带与
+Body 一致的 `Idempotency-Key` 和 `X-Notification-Id`。首次成功和完全相同的重复投递均
+返回 `204`；后端以任意 2xx 作为成功，非 2xx 由 Outbox 重试。
+
+`MemoryEventDedupStore` 和 `MemoryNotificationDeliveryStore` 只适合单进程开发与测试。
+通知网关在 production 明确拒绝 memory Store；生产级持久化方案仍待确认。
+
+测试可注入 `FakeFeishuClient`，记录回复、更新和主动发送调用并模拟失败，不访问网络。

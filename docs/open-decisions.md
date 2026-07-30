@@ -43,3 +43,12 @@ V1.5 个别流程接口仍写“Agent 侧发送提醒”，但 Outbox 与联调�
 现有 V1.5 文档冻结了接口、主要字段和行为，但没有给出所有接口的完整响应 JSON
 Schema（包括字段是否必返、时间字段和分页元数据的精确命名）。Task 1 按当前文档建立了
 严格模型和契约测试；接入真实后端前，需以后端 OpenAPI 或联调响应样例逐字段确认。
+
+## Task 2 实施说明
+
+- 通知路径继续由环境变量配置；`/internal/notifications` 仅是开发默认值。
+- 生产容器未注册正式业务 Notification Renderer，等待事件与 Payload Schema 冻结。
+- `MemoryNotificationDeliveryStore` 仅允许 development/test，production 会拒绝；
+  生产级持久化实现仍待选择。
+- `MemoryEventDedupStore` 是单进程基础实现，不具备生产级跨实例去重能力。
+- 当前错误 JSON 沿用 FastAPI 结构，最终响应格式仍待联调冻结。
