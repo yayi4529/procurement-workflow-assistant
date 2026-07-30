@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -12,6 +12,117 @@ from procurement_platform.domain.enums import (
 
 class RequirementModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class SupplierBlacklistSummary(RequirementModel):
+    active: bool
+    reason: str | None = None
+
+
+class SupplierSummary(RequirementModel):
+    supplier_id: int
+    supplier_name: str
+    supplier_tax_number: str | None = None
+    blacklist: SupplierBlacklistSummary | None = None
+
+
+class SupplierDetail(SupplierSummary):
+    bank_name: str | None = None
+    bank_account: str | None = None
+    bank_account_masked: bool = True
+    registered_address: str | None = None
+    contract_contact_info: str | None = None
+
+    def __repr__(self) -> str:
+        return (
+            f"SupplierDetail(supplier_id={self.supplier_id!r}, "
+            f"supplier_name={self.supplier_name!r}, bank_account=<sensitive>)"
+        )
+
+
+class SupplierPage(RequirementModel):
+    items: tuple[SupplierSummary, ...]
+    page: int
+    page_size: int
+    total: int
+
+
+class SupplierUpsertCommand(RequirementModel):
+    supplier_name: str
+    supplier_tax_number: str | None = None
+    bank_name: str | None = None
+    bank_account: str | None = None
+    registered_address: str | None = None
+    contract_contact_info: str | None = None
+
+    def __repr__(self) -> str:
+        return (
+            f"SupplierUpsertCommand(supplier_name={self.supplier_name!r}, bank_account=<sensitive>)"
+        )
+
+
+class PurchaseFields(RequirementModel):
+    supplier_id: int | None = None
+    supplier_tax_number: str | None = None
+    bank_name: str | None = None
+    bank_account: str | None = None
+    registered_address: str | None = None
+    contract_contact_info: str | None = None
+    actual_unit_price: str | None = None
+    actual_total_price: str | None = None
+    tax_rate: str | None = None
+    purchased_at: datetime | None = None
+    purchase_remark: str | None = None
+    update_supplier_profile: bool = False
+
+    def __repr__(self) -> str:
+        return f"PurchaseFields(supplier_id={self.supplier_id!r}, bank_account=<sensitive>)"
+
+
+class PurchaseFieldsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_id: int | None = None
+    supplier_tax_number: str | None = None
+    bank_name: str | None = None
+    bank_account: str | None = None
+    registered_address: str | None = None
+    contract_contact_info: str | None = None
+    actual_unit_price: str | None = None
+    tax_rate: str | None = None
+    purchased_at: datetime | None = None
+    purchase_remark: str | None = None
+    update_supplier_profile: bool = False
+
+    def provided_fields(self) -> dict[str, object]:
+        return self.model_dump(exclude_unset=True)
+
+    def __repr__(self) -> str:
+        return "PurchaseFieldsPatch(bank_account=<sensitive>)"
+
+
+class PurchaseFieldsSaveResult(RequirementModel):
+    requirement_id: int
+    status: RequirementStatus
+    version: int
+    purchase_fields: PurchaseFields
+    missing_fields: tuple[str, ...]
+    fields_complete: bool
+
+
+class PurchaseExecutionSummary(RequirementModel):
+    requirement_id: int
+    purchase_fields: PurchaseFields
+    fields_complete: bool
+
+
+class StartPurchaseCommand(RequirementModel):
+    expected_version: int
+    action_token: UUID
+
+
+class SubmitWarehouseCommand(StartPurchaseCommand):
+    assigned_to_employee_id: int
 
 
 class RequirementBuilding(RequirementModel):
@@ -121,6 +232,7 @@ class RequirementDetail(RequirementSummary):
     applicant_fields: ApplicantFields
     review_fields: ReviewFields | None = None
     review_record: ReviewRecordSummary | None = None
+    purchase_fields: PurchaseFields | None = None
     missing_fields: tuple[str, ...]
     allowed_actions: tuple[AllowedRequirementAction, ...]
     fields_complete: bool = False

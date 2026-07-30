@@ -29,12 +29,18 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     ApplicantFieldsSaveResult,
     HandlerCandidates,
+    PurchaseFieldsPatch,
+    PurchaseFieldsSaveResult,
     RequirementDetail,
     RequirementPage,
     RequirementSummary,
     RequirementTransitionResult,
     ReviewFieldsPatch,
     ReviewFieldsSaveResult,
+    SupplierDetail,
+    SupplierPage,
+    SupplierSummary,
+    SupplierUpsertCommand,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -167,7 +173,11 @@ class HttpBackendClient:
         requirement_id: int,
         target_role: RoleCode,
     ) -> HandlerCandidates:
-        if target_role not in {RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}:
+        if target_role not in {
+            RoleCode.BUILDING_MANAGER,
+            RoleCode.PURCHASER,
+            RoleCode.WAREHOUSE_MANAGER,
+        }:
             raise ValueError("unsupported handler target role")
         return await self._request_model(
             HandlerCandidates,
@@ -288,6 +298,109 @@ class HttpBackendClient:
             RequirementTransitionResult,
             method="POST",
             path=f"/api/v1/requirements/{requirement_id}/submit-purchaser",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "assigned_to_employee_id": assigned_to_employee_id,
+                "action_token": str(action_token),
+            },
+        )
+
+    async def start_purchase(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        return await self._request_model(
+            RequirementTransitionResult,
+            method="POST",
+            path=f"/api/v1/requirements/{requirement_id}/start-purchase",
+            identity=identity,
+            json_body={"expected_version": expected_version, "action_token": str(action_token)},
+        )
+
+    async def search_suppliers(
+        self,
+        *,
+        identity: PlatformIdentity,
+        keyword: str,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> SupplierPage:
+        if not keyword.strip():
+            raise ValueError("keyword must not be empty")
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("invalid pagination")
+        return await self._request_model(
+            SupplierPage,
+            method="GET",
+            path="/api/v1/suppliers",
+            identity=identity,
+            query={"keyword": keyword.strip(), "page": page, "page_size": page_size},
+        )
+
+    async def get_supplier(
+        self,
+        *,
+        identity: PlatformIdentity,
+        supplier_id: int,
+    ) -> SupplierDetail:
+        return await self._request_model(
+            SupplierDetail,
+            method="GET",
+            path=f"/api/v1/suppliers/{supplier_id}",
+            identity=identity,
+        )
+
+    async def create_supplier(
+        self,
+        *,
+        identity: PlatformIdentity,
+        command: SupplierUpsertCommand,
+    ) -> SupplierSummary:
+        return await self._request_model(
+            SupplierSummary,
+            method="POST",
+            path="/api/v1/suppliers",
+            identity=identity,
+            json_body=command.model_dump(mode="json"),
+        )
+
+    async def update_purchase_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: PurchaseFieldsPatch,
+    ) -> PurchaseFieldsSaveResult:
+        return await self._request_model(
+            PurchaseFieldsSaveResult,
+            method="PATCH",
+            path=f"/api/v1/requirements/{requirement_id}/purchase-fields",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "fields": fields.model_dump(mode="json", exclude_unset=True),
+            },
+        )
+
+    async def submit_warehouse(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        return await self._request_model(
+            RequirementTransitionResult,
+            method="POST",
+            path=f"/api/v1/requirements/{requirement_id}/submit-warehouse",
             identity=identity,
             json_body={
                 "expected_version": expected_version,

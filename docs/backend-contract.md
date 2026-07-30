@@ -226,3 +226,19 @@ POST  /api/v1/requirements/{id}/submit-purchaser
 ```
 
 部分更新区分未提供与显式 `null`。预计总价不由客户端提交，只读取后端响应。
+
+## Task 5 客户端接口
+
+```text
+POST  /api/v1/requirements/{id}/start-purchase
+GET   /api/v1/suppliers?keyword=...&page=...&page_size=...
+GET   /api/v1/suppliers/{supplier_id}
+POST  /api/v1/suppliers
+PATCH /api/v1/requirements/{id}/purchase-fields
+GET   /api/v1/requirements/{id}/handler-candidates?target_role=WAREHOUSE_MANAGER
+POST  /api/v1/requirements/{id}/submit-warehouse
+```
+
+采购字段部分更新区分未提供与显式 `null`，金额和税率保持字符串。客户端不提交
+`actual_total_price`；`update_supplier_profile` 默认 `false`，只有用户明确确认才传
+`true`。供应商银行账号按敏感信息处理，提交确认只显示脱敏值。

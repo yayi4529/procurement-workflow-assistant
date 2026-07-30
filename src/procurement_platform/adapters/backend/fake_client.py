@@ -40,6 +40,9 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     ApplicantFieldsSaveResult,
     HandlerCandidates,
+    PurchaseFields,
+    PurchaseFieldsPatch,
+    PurchaseFieldsSaveResult,
     RequirementBuilding,
     RequirementDetail,
     RequirementHandler,
@@ -51,6 +54,10 @@ from procurement_platform.domain.requirement import (
     ReviewFieldsPatch,
     ReviewFieldsSaveResult,
     ReviewRecordSummary,
+    SupplierDetail,
+    SupplierPage,
+    SupplierSummary,
+    SupplierUpsertCommand,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -78,6 +85,12 @@ class FakeBackendClient:
         self.handler_candidates = HandlerCandidates(items=())
         self._action_results: dict[UUID, RequirementTransitionResult] = {}
         self._next_requirement_id = 1
+        self._suppliers: dict[int, SupplierDetail] = {}
+        self._next_supplier_id = 1
+
+    def seed_supplier(self, supplier: SupplierDetail) -> None:
+        self._suppliers[supplier.supplier_id] = supplier
+        self._next_supplier_id = max(self._next_supplier_id, supplier.supplier_id + 1)
 
     def inject_error(self, method: str, error: BackendApplicationError) -> None:
         self._failures[method] = error
@@ -254,7 +267,11 @@ class FakeBackendClient:
     ) -> HandlerCandidates:
         self._record("list_handler_candidates")
         self._require_requirement(requirement_id)
-        if target_role not in {RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}:
+        if target_role not in {
+            RoleCode.BUILDING_MANAGER,
+            RoleCode.PURCHASER,
+            RoleCode.WAREHOUSE_MANAGER,
+        }:
             raise ValueError("unsupported target role")
         return self.handler_candidates
 
@@ -506,6 +523,241 @@ class FakeBackendClient:
                     employee_id=candidate.employee_id, name=candidate.name
                 ),
                 "review_record": ReviewRecordSummary(review_status=ReviewStatus.COMPLETED),
+                "allowed_actions": (),
+            }
+        )
+        self._requirements[requirement_id] = updated
+        result = RequirementTransitionResult(
+            requirement_id=updated.requirement_id,
+            requirement_no=updated.requirement_no,
+            status=updated.status,
+            version=updated.version,
+            current_handler=updated.current_handler,
+            action_token=action_token,
+        )
+        self._action_results[action_token] = result
+        return result
+
+    def _require_purchaser_access(self, detail: RequirementDetail) -> None:
+        if self.current_user.status != "ACTIVE" or not any(
+            role.role_code is RoleCode.PURCHASER for role in self.current_user.roles
+        ):
+            raise PermissionDeniedError("PERMISSION_DENIED", "当前用户不是有效采购员")
+        if (
+            detail.current_handler is None
+            or detail.current_handler.employee_id != self.current_user.employee_id
+        ):
+            raise InvalidHandlerError("INVALID_HANDLER", "当前用户不是采购单处理人")
+
+    async def start_purchase(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        self._record("start_purchase")
+        if action_token in self._action_results:
+            raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
+        detail = self._require_requirement(requirement_id)
+        self._require_purchaser_access(detail)
+        if detail.status is not RequirementStatus.PENDING_PURCHASE:
+            raise InvalidStatusError("INVALID_STATUS", "当前状态不能开始采购")
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "版本冲突")
+        updated = detail.model_copy(
+            update={
+                "status": RequirementStatus.PURCHASING,
+                "version": detail.version + 1,
+                "allowed_actions": (AllowedRequirementAction.UPDATE_PURCHASE_FIELDS,),
+            }
+        )
+        self._requirements[requirement_id] = updated
+        result = RequirementTransitionResult(
+            requirement_id=updated.requirement_id,
+            requirement_no=updated.requirement_no,
+            status=updated.status,
+            version=updated.version,
+            current_handler=updated.current_handler,
+            action_token=action_token,
+        )
+        self._action_results[action_token] = result
+        return result
+
+    async def search_suppliers(
+        self,
+        *,
+        identity: PlatformIdentity,
+        keyword: str,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> SupplierPage:
+        self._record("search_suppliers")
+        if not keyword.strip():
+            raise ValueError("keyword must not be empty")
+        matches = [
+            item
+            for item in self._suppliers.values()
+            if keyword.casefold() in item.supplier_name.casefold()
+            or (item.supplier_tax_number is not None and keyword == item.supplier_tax_number)
+        ]
+        start = (page - 1) * page_size
+        return SupplierPage(
+            items=tuple(
+                SupplierSummary.model_validate(
+                    item.model_dump(
+                        include={"supplier_id", "supplier_name", "supplier_tax_number", "blacklist"}
+                    )
+                )
+                for item in matches[start : start + page_size]
+            ),
+            page=page,
+            page_size=page_size,
+            total=len(matches),
+        )
+
+    async def get_supplier(
+        self,
+        *,
+        identity: PlatformIdentity,
+        supplier_id: int,
+    ) -> SupplierDetail:
+        self._record("get_supplier")
+        try:
+            return self._suppliers[supplier_id]
+        except KeyError as exc:
+            raise BackendApplicationError("SUPPLIER_NOT_FOUND", "供应商不存在") from exc
+
+    async def create_supplier(
+        self,
+        *,
+        identity: PlatformIdentity,
+        command: SupplierUpsertCommand,
+    ) -> SupplierSummary:
+        self._record("create_supplier")
+        conflict = next(
+            (
+                item
+                for item in self._suppliers.values()
+                if item.supplier_name == command.supplier_name
+                or (
+                    command.supplier_tax_number is not None
+                    and item.supplier_tax_number == command.supplier_tax_number
+                )
+            ),
+            None,
+        )
+        if conflict is not None:
+            raise BackendApplicationError("SUPPLIER_MATCH_CONFLICT", "供应商匹配冲突")
+        supplier = SupplierDetail(
+            supplier_id=self._next_supplier_id, **command.model_dump(), bank_account_masked=False
+        )
+        self._next_supplier_id += 1
+        self._suppliers[supplier.supplier_id] = supplier
+        return SupplierSummary.model_validate(
+            supplier.model_dump(
+                include={"supplier_id", "supplier_name", "supplier_tax_number", "blacklist"}
+            )
+        )
+
+    async def update_purchase_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: PurchaseFieldsPatch,
+    ) -> PurchaseFieldsSaveResult:
+        self._record("update_purchase_fields")
+        detail = self._require_requirement(requirement_id)
+        self._require_purchaser_access(detail)
+        if detail.status is not RequirementStatus.PURCHASING:
+            raise InvalidStatusError("INVALID_STATUS", "当前状态不能保存采购字段")
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "版本冲突")
+        current = detail.purchase_fields or PurchaseFields()
+        merged = current.model_copy(update=fields.provided_fields())
+        if merged.actual_unit_price and detail.applicant_fields.quantity:
+            merged = merged.model_copy(
+                update={
+                    "actual_total_price": str(
+                        Decimal(merged.actual_unit_price)
+                        * Decimal(detail.applicant_fields.quantity)
+                    )
+                }
+            )
+        required = (
+            "supplier_id",
+            "supplier_tax_number",
+            "bank_name",
+            "bank_account",
+            "registered_address",
+            "contract_contact_info",
+            "actual_unit_price",
+            "tax_rate",
+            "purchased_at",
+        )
+        missing = tuple(name for name in required if getattr(merged, name) in (None, ""))
+        actions = [AllowedRequirementAction.UPDATE_PURCHASE_FIELDS]
+        if not missing:
+            actions.append(AllowedRequirementAction.SUBMIT_WAREHOUSE)
+        updated = detail.model_copy(
+            update={
+                "purchase_fields": merged,
+                "version": detail.version + 1,
+                "missing_fields": missing,
+                "fields_complete": not missing,
+                "allowed_actions": tuple(actions),
+            }
+        )
+        self._requirements[requirement_id] = updated
+        return PurchaseFieldsSaveResult(
+            requirement_id=requirement_id,
+            status=updated.status,
+            version=updated.version,
+            purchase_fields=merged,
+            missing_fields=missing,
+            fields_complete=not missing,
+        )
+
+    async def submit_warehouse(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        self._record("submit_warehouse")
+        if action_token in self._action_results:
+            raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
+        detail = self._require_requirement(requirement_id)
+        self._require_purchaser_access(detail)
+        if detail.status is not RequirementStatus.PURCHASING:
+            raise InvalidStatusError("INVALID_STATUS", "当前状态不能提交仓库")
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "版本冲突")
+        if not detail.fields_complete:
+            raise MissingRequiredFieldsError("MISSING_REQUIRED_FIELDS", "采购字段不完整")
+        candidate = next(
+            (
+                item
+                for item in self.handler_candidates.items
+                if item.employee_id == assigned_to_employee_id
+            ),
+            None,
+        )
+        if candidate is None:
+            raise InvalidHandlerError("INVALID_HANDLER", "处理人不在仓库管理员候选列表")
+        updated = detail.model_copy(
+            update={
+                "status": RequirementStatus.PENDING_WAREHOUSE,
+                "version": detail.version + 1,
+                "current_handler": RequirementHandler(
+                    employee_id=candidate.employee_id, name=candidate.name
+                ),
                 "allowed_actions": (),
             }
         )

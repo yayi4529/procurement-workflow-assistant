@@ -69,3 +69,15 @@ Schema（包括字段是否必返、时间字段和分页元数据的精确命�
 - `review_record` 嵌套结构及 `review_status` 返回位置尚未冻结。
 - `allowed_actions` 中三个楼长动作的精确编码仍需后端确认。
 - 正式 Outbox 通知事件类型及 Payload 仍未冻结。
+
+## Task 5 联调待确认
+
+- 供应商列表、详情、创建和采购字段保存的完整响应 JSON Schema 仍需以后端 OpenAPI
+  或真实联调样例逐字段确认。
+- `SUPPLIER_MATCH_CONFLICT` 的候选供应商具体承载位置和 Schema 尚未冻结；当前客户端
+  不会自动合并，待后端冻结后再渲染冲突候选确认卡。
+- 后端对不同采购员角色返回完整或脱敏银行账号的精确字段标志尚未冻结；当前采用
+  `bank_account_masked` 最小严格字段，确认卡始终二次脱敏。
+- 采购字段 `missing_fields` 的完整必填清单、`purchased_at` 的时区约束及供应商创建
+  必填字段仍需真实契约确认。
+- 采购员 `allowed_actions` 三个动作的精确编码及正式 Outbox 通知事件 Payload 尚未冻结。

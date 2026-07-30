@@ -1599,7 +1599,8 @@ git status --short
 ```text
 Task 1：已完成
 Task 2：待开发
-Task 3～13：待开发
+Task 3～5：已完成
+Task 6～13：待开发
 ```
 
 当前最重要的近期目标：
@@ -1621,3 +1622,9 @@ PENDING_REVIEW、以及 REJECTED 使用原采购单重新提交为准，不配�
 楼长无 LLM 正式卡片流程已交付：PENDING_REVIEW 保存同轮 DRAFT review、驳回至
 REJECTED，或选择合法采购员并提交至 PENDING_PURCHASE。跨角色通知仅由后端 Outbox
 驱动。
+
+## Task 5 交付状态
+
+采购员无 LLM 正式卡片流程已交付：PENDING_PURCHASE 开始采购、供应商搜索/选择/创建、
+采购字段与供应商快照保存、后端实际总价、档案同步明确确认、仓库管理员候选选择，
+并提交至 PENDING_WAREHOUSE。跨角色通知仅由后端 Outbox 驱动。

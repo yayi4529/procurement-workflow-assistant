@@ -68,3 +68,10 @@ Task 2 另覆盖 Challenge、私聊文本、群聊忽略、空文本、错误 To
 覆盖审核字段部分更新、显式 null、字符串金额、后端总价、合同条件必填、0/1/多候选
 分支、版本冲突、稳定 action token、重复点击、驳回和提交采购员；正式链路不写 Agent
 会话且不直接发送跨角色通知。
+
+## Task 5 测试
+
+覆盖新增 HTTP 接口的方法、路径、Query、JSON 和签名传输链路；覆盖空供应商关键词、
+供应商候选与详情、敏感账号 repr、字符串金额和税率、后端总价、档案同步默认否、
+仓库管理员候选、`expected_version`、稳定 `action_token` 及从 PENDING_PURCHASE 到
+PENDING_WAREHOUSE 的无 LLM 集成链路。

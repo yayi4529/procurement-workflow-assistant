@@ -22,12 +22,18 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     ApplicantFieldsSaveResult,
     HandlerCandidates,
+    PurchaseFieldsPatch,
+    PurchaseFieldsSaveResult,
     RequirementDetail,
     RequirementPage,
     RequirementSummary,
     RequirementTransitionResult,
     ReviewFieldsPatch,
     ReviewFieldsSaveResult,
+    SupplierDetail,
+    SupplierPage,
+    SupplierSummary,
+    SupplierUpsertCommand,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -110,6 +116,57 @@ class BackendClient(Protocol):
     ) -> RequirementTransitionResult: ...
 
     async def submit_purchaser(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult: ...
+
+    async def start_purchase(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult: ...
+
+    async def search_suppliers(
+        self,
+        *,
+        identity: PlatformIdentity,
+        keyword: str,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> SupplierPage: ...
+
+    async def get_supplier(
+        self,
+        *,
+        identity: PlatformIdentity,
+        supplier_id: int,
+    ) -> SupplierDetail: ...
+
+    async def create_supplier(
+        self,
+        *,
+        identity: PlatformIdentity,
+        command: SupplierUpsertCommand,
+    ) -> SupplierSummary: ...
+
+    async def update_purchase_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: PurchaseFieldsPatch,
+    ) -> PurchaseFieldsSaveResult: ...
+
+    async def submit_warehouse(
         self,
         *,
         identity: PlatformIdentity,

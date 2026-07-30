@@ -53,6 +53,9 @@ class AllowedRequirementAction(StrEnum):
     UPDATE_REVIEW_FIELDS = "UPDATE_REVIEW_FIELDS"
     REJECT = "REJECT"
     SUBMIT_PURCHASER = "SUBMIT_PURCHASER"
+    START_PURCHASE = "START_PURCHASE"
+    UPDATE_PURCHASE_FIELDS = "UPDATE_PURCHASE_FIELDS"
+    SUBMIT_WAREHOUSE = "SUBMIT_WAREHOUSE"
 
 
 class ReviewStatus(StrEnum):
@@ -69,3 +72,17 @@ class BuildingManagerAction(StrEnum):
     PREPARE_SUBMIT_PURCHASER = "building_manager.prepare_submit_purchaser"
     CONFIRM_SUBMIT_PURCHASER = "building_manager.confirm_submit_purchaser"
     REFRESH = "building_manager.refresh"
+
+
+class PurchaserAction(StrEnum):
+    LIST_PENDING = "purchaser.list_pending"
+    OPEN_REQUIREMENT = "purchaser.open_requirement"
+    START_PURCHASE = "purchaser.start_purchase"
+    SEARCH_SUPPLIER = "purchaser.search_supplier"
+    SELECT_SUPPLIER = "purchaser.select_supplier"
+    PREPARE_CREATE_SUPPLIER = "purchaser.prepare_create_supplier"
+    CREATE_SUPPLIER = "purchaser.create_supplier"
+    SAVE_PURCHASE_FIELDS = "purchaser.save_purchase_fields"
+    PREPARE_SUBMIT_WAREHOUSE = "purchaser.prepare_submit_warehouse"
+    CONFIRM_SUBMIT_WAREHOUSE = "purchaser.confirm_submit_warehouse"
+    REFRESH = "purchaser.refresh"

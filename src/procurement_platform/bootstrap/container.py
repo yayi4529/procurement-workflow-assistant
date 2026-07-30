@@ -31,6 +31,8 @@ from procurement_platform.application.notifications.gateway_service import (
 from procurement_platform.application.notifications.renderer_registry import (
     NotificationRendererRegistry,
 )
+from procurement_platform.application.purchaser.action_router import PurchaserActionRouter
+from procurement_platform.application.purchaser.workflow_service import PurchaserWorkflowService
 from procurement_platform.bootstrap.settings import Settings
 from procurement_platform.ports.backend_client import BackendClient
 from procurement_platform.ports.channel import ChannelClient
@@ -84,6 +86,7 @@ class ApplicationContainer:
                 BuildingManagerActionRouter(
                     BuildingManagerWorkflowService(container.backend_client)
                 ),
+                PurchaserActionRouter(PurchaserWorkflowService(container.backend_client)),
             )
             if settings.notification_gateway.enabled:
                 delivery_store = MemoryNotificationDeliveryStore()

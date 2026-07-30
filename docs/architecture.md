@@ -96,3 +96,17 @@ FastAPI、httpx 或飞书 SDK。通知链路不持有 `BackendClient`，失败�
 ```
 
 正式动作前重新读取详情；客户端不直接发送需求人或采购员通知。
+
+## Task 5 采购员调用链
+
+```text
+飞书采购员卡片回调
+→ PurchaserActionRouter
+→ PurchaserWorkflowService
+→ BackendClient
+→ PurchaserCardFactory
+→ ChannelClient.update_interaction
+```
+
+开始采购、保存采购字段和提交仓库前均重新读取后端详情。供应商和黑名单信息只采用
+后端裁剪结果，实际总价只展示后端响应；成功后不直接通知仓库管理员。
