@@ -199,3 +199,17 @@ Body 使用严格 `NotificationGatewayRequest`，当前仅接受 `platform_type=
 `event_type` 必须已注册；生产容器不注册测试事件或未经确认的业务事件。成功及相同的已
 成功重复投递返回 204；Header 不一致为 400，鉴权失败为 401，幂等冲突为 409，未知
 事件/非法 Payload 为 422，飞书失败/超时为 502/503。
+## Task 3 客户端接口
+
+```text
+POST  /api/v1/requirements
+PATCH /api/v1/requirements/{id}/applicant-fields
+GET   /api/v1/requirements/{id}
+GET   /api/v1/requirements?view=CREATED_BY_ME
+GET   /api/v1/requirements/{id}/handler-candidates
+POST  /api/v1/requirements/{id}/submit-review
+POST  /api/v1/requirements/{id}/resubmit-review
+```
+
+部分更新使用 `fields` 与 `exclude_unset` 区分未提供和显式 `null`。数量保持字符串。
+提交前重新读取详情，保存使用 `expected_version`，正式动作使用 UUID `action_token`。

@@ -52,3 +52,13 @@ Schema（包括字段是否必返、时间字段和分页元数据的精确命�
   生产级持久化实现仍待选择。
 - `MemoryEventDedupStore` 是单进程基础实现，不具备生产级跨实例去重能力。
 - 当前错误 JSON 沿用 FastAPI 结构，最终响应格式仍待联调冻结。
+## Task 3 联调待确认
+
+- V1.5 仍未提供本任务七个接口的完整响应 JSON Schema；当前采用任务所需最小严格 DTO，
+  接入真实后端前需以 OpenAPI/响应样例逐字段确认。
+- 正式楼长通知 `event_type` 与 payload Schema 尚未冻结，因此 Task 3 未注册生产
+  Notification Renderer，也不会绕过 Outbox 主动通知楼长。
+- `allowed_actions` 的实际完整枚举仍需由后端 OpenAPI 冻结；当前严格支持需求人流程使用的
+  `UPDATE_APPLICANT_FIELDS`、`SUBMIT_REVIEW`、`RESUBMIT_REVIEW`。
+- 驳回原因字段是否为 `rejection_reason` 仍需真实 Schema 确认；当前为可选最小字段，
+  缺失时卡片不编造原因。

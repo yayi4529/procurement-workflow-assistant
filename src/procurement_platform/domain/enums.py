@@ -28,3 +28,23 @@ class AgentMessageSender(StrEnum):
     USER = "USER"
     AGENT = "AGENT"
     SYSTEM = "SYSTEM"
+
+
+class RequirementStatus(StrEnum):
+    DRAFT = "DRAFT"
+    PENDING_REVIEW = "PENDING_REVIEW"
+    REJECTED = "REJECTED"
+    PENDING_PURCHASE = "PENDING_PURCHASE"
+    PURCHASING = "PURCHASING"
+    PENDING_WAREHOUSE = "PENDING_WAREHOUSE"
+    COMPLETED = "COMPLETED"
+
+
+class RequirementView(StrEnum):
+    CREATED_BY_ME = "CREATED_BY_ME"
+
+
+class AllowedRequirementAction(StrEnum):
+    UPDATE_APPLICANT_FIELDS = "UPDATE_APPLICANT_FIELDS"
+    SUBMIT_REVIEW = "SUBMIT_REVIEW"
+    RESUBMIT_REVIEW = "RESUBMIT_REVIEW"

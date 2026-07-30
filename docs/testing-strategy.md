@@ -58,3 +58,8 @@ Task 2 另覆盖 Challenge、私聊文本、群聊忽略、空文本、错误 To
 - received_quantity 可小于/等于/大于；
 - 少收时 receipt_remark 必填；
 - 黑名单仅 COMPLETED 采购单。
+## Task 3 测试
+
+新增严格 BackendClient 契约测试与 Fake 驱动的无 LLM 端到端测试，覆盖字符串数量、
+显式 null、可选 brand/model、角色/楼宇、候选楼长、首次提交、重新提交、版本递增及
+调用端点隔离。架构约束继续禁止应用层依赖 httpx、飞书 SDK、LLM、MySQL 或 Redis。

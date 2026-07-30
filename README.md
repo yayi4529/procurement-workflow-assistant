@@ -136,3 +136,11 @@ Body 一致的 `Idempotency-Key` 和 `X-Notification-Id`。首次成功和完全
 通知网关在 production 明确拒绝 memory Store；生产级持久化方案仍待确认。
 
 测试可注入 `FakeFeishuClient`，记录回复、更新和主动发送调用并模拟失败，不访问网络。
+## Task 3 已实现
+
+- 完全不依赖 LLM 的需求人正式卡片流程；
+- 后端身份、角色和楼宇校验；
+- 草稿、部分字段保存、我的申请、楼长候选、提交和重新提交；
+- `brand`/`model` 选填，数量使用字符串；
+- 保存使用 `expected_version`，正式动作使用 `action_token`；
+- 跨角色通知仍只由后端 Outbox 驱动。

@@ -39,6 +39,34 @@ class ConcurrentModificationError(BackendApplicationError):
     pass
 
 
+class InvalidStatusError(BackendApplicationError):
+    pass
+
+
+class RequirementNotFoundError(BackendApplicationError):
+    pass
+
+
+class RequirementNotOwnedError(BackendApplicationError):
+    pass
+
+
+class MissingRequiredFieldsError(BackendApplicationError):
+    pass
+
+
+class InvalidHandlerError(BackendApplicationError):
+    pass
+
+
+class NoHandlerCandidateError(BackendApplicationError):
+    pass
+
+
+class DuplicateOperationError(BackendApplicationError):
+    pass
+
+
 class ValidationError(BackendApplicationError):
     pass
 

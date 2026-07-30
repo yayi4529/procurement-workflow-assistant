@@ -1609,3 +1609,7 @@ Task 3～13：待开发
 ```
 
 这是本项目最稳妥的开发顺序。
+## Task 3 交付状态
+
+需求人正式卡片流程已交付。验收以 FakeBackendClient 从 DRAFT 进入
+PENDING_REVIEW、以及 REJECTED 使用原采购单重新提交为准，不配置 LLM。

@@ -1,6 +1,7 @@
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from uuid import UUID
 
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
@@ -13,9 +14,37 @@ from procurement_platform.domain.assistant_session import (
     AgentSessionStateUpdate,
     AgentStateSaveResult,
 )
-from procurement_platform.domain.enums import AgentConversationStatus, AgentMessageSender
-from procurement_platform.domain.errors import BackendApplicationError, SessionNotFoundError
+from procurement_platform.domain.enums import (
+    AgentConversationStatus,
+    AgentMessageSender,
+    AllowedRequirementAction,
+    RequirementStatus,
+    RequirementView,
+    RoleCode,
+)
+from procurement_platform.domain.errors import (
+    BackendApplicationError,
+    ConcurrentModificationError,
+    DuplicateOperationError,
+    InvalidHandlerError,
+    InvalidStatusError,
+    MissingRequiredFieldsError,
+    SessionNotFoundError,
+)
 from procurement_platform.domain.identity import PlatformIdentity
+from procurement_platform.domain.requirement import (
+    ApplicantFields,
+    ApplicantFieldsPatch,
+    ApplicantFieldsSaveResult,
+    HandlerCandidates,
+    RequirementBuilding,
+    RequirementDetail,
+    RequirementHandler,
+    RequirementListItem,
+    RequirementPage,
+    RequirementSummary,
+    RequirementTransitionResult,
+)
 from procurement_platform.domain.user import CurrentUser
 
 
@@ -38,6 +67,10 @@ class FakeBackendClient:
         self.snapshots: list[AgentSessionSnapshot] = []
         self._next_conversation_id = 1
         self._next_message_id = 1
+        self._requirements: dict[int, RequirementDetail] = {}
+        self.handler_candidates = HandlerCandidates(items=())
+        self._action_results: dict[UUID, RequirementTransitionResult] = {}
+        self._next_requirement_id = 1
 
     def inject_error(self, method: str, error: BackendApplicationError) -> None:
         self._failures[method] = error
@@ -52,6 +85,240 @@ class FakeBackendClient:
     async def get_current_user(self, *, identity: PlatformIdentity) -> CurrentUser:
         self._record("get_current_user")
         return self.current_user
+
+    def seed_requirement(self, detail: RequirementDetail) -> None:
+        self._requirements[detail.requirement_id] = detail
+        self._next_requirement_id = max(self._next_requirement_id, detail.requirement_id + 1)
+
+    async def create_requirement(
+        self, *, identity: PlatformIdentity, building_id: int
+    ) -> RequirementSummary:
+        self._record("create_requirement")
+        building = next(
+            (item for item in self.current_user.buildings if item.building_id == building_id),
+            None,
+        )
+        if building is None:
+            from procurement_platform.domain.errors import PermissionDeniedError
+
+            raise PermissionDeniedError("BUILDING_NOT_ALLOWED", "无权使用该楼宇")
+        requirement_id = self._next_requirement_id
+        self._next_requirement_id += 1
+        detail = RequirementDetail(
+            requirement_id=requirement_id,
+            requirement_no=f"PR-{requirement_id:06d}",
+            status=RequirementStatus.DRAFT,
+            version=1,
+            building=RequirementBuilding(
+                building_id=building.building_id, building_name=building.building_name
+            ),
+            applicant_fields=ApplicantFields(),
+            missing_fields=(
+                "device_profession",
+                "device_name",
+                "quantity",
+                "unit",
+                "application_reason",
+            ),
+            allowed_actions=(AllowedRequirementAction.UPDATE_APPLICANT_FIELDS,),
+        )
+        self._requirements[requirement_id] = detail
+        return RequirementSummary.model_validate(
+            detail.model_dump(include={"requirement_id", "requirement_no", "status", "version"})
+        )
+
+    def _require_requirement(self, requirement_id: int) -> RequirementDetail:
+        try:
+            return self._requirements[requirement_id]
+        except KeyError as exc:
+            from procurement_platform.domain.errors import RequirementNotFoundError
+
+            raise RequirementNotFoundError("REQUIREMENT_NOT_FOUND", "采购申请不存在") from exc
+
+    async def update_applicant_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: ApplicantFieldsPatch,
+    ) -> ApplicantFieldsSaveResult:
+        self._record("update_applicant_fields")
+        detail = self._require_requirement(requirement_id)
+        if detail.status not in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}:
+            raise InvalidStatusError("INVALID_STATUS", "当前状态不可修改")
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "版本冲突")
+        merged = detail.applicant_fields.model_copy(update=fields.provided_fields())
+        required = (
+            "device_profession",
+            "device_name",
+            "quantity",
+            "unit",
+            "application_reason",
+        )
+        missing = tuple(name for name in required if not getattr(merged, name))
+        actions = [AllowedRequirementAction.UPDATE_APPLICANT_FIELDS]
+        if not missing:
+            actions.append(
+                AllowedRequirementAction.RESUBMIT_REVIEW
+                if detail.status is RequirementStatus.REJECTED
+                else AllowedRequirementAction.SUBMIT_REVIEW
+            )
+        updated = detail.model_copy(
+            update={
+                "applicant_fields": merged,
+                "version": detail.version + 1,
+                "missing_fields": missing,
+                "fields_complete": not missing,
+                "allowed_actions": tuple(actions),
+            }
+        )
+        self._requirements[requirement_id] = updated
+        return ApplicantFieldsSaveResult(
+            requirement_id=requirement_id,
+            status=updated.status,
+            version=updated.version,
+            missing_fields=missing,
+            next_missing_field=missing[0] if missing else None,
+            fields_complete=not missing,
+        )
+
+    async def get_requirement(
+        self, *, identity: PlatformIdentity, requirement_id: int
+    ) -> RequirementDetail:
+        self._record("get_requirement")
+        return self._require_requirement(requirement_id)
+
+    async def list_requirements(
+        self,
+        *,
+        identity: PlatformIdentity,
+        view: RequirementView,
+        status: RequirementStatus | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> RequirementPage:
+        self._record("list_requirements")
+        if view is not RequirementView.CREATED_BY_ME:
+            raise ValueError("unsupported view")
+        values = [
+            item for item in self._requirements.values() if status is None or item.status is status
+        ]
+        start = (page - 1) * page_size
+        items = tuple(
+            RequirementListItem(
+                requirement_id=item.requirement_id,
+                requirement_no=item.requirement_no,
+                status=item.status,
+                version=item.version,
+                device_name=item.applicant_fields.device_name,
+                current_handler=item.current_handler,
+            )
+            for item in values[start : start + page_size]
+        )
+        return RequirementPage(items=items, page=page, page_size=page_size, total=len(values))
+
+    async def list_handler_candidates(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        target_role: RoleCode,
+    ) -> HandlerCandidates:
+        self._record("list_handler_candidates")
+        self._require_requirement(requirement_id)
+        if target_role is not RoleCode.BUILDING_MANAGER:
+            raise ValueError("unsupported target role")
+        return self.handler_candidates
+
+    async def _transition(
+        self,
+        expected_status: RequirementStatus,
+        *,
+        method: str,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        self._record(method)
+        duplicate = self._action_results.get(action_token)
+        if duplicate is not None:
+            raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
+        detail = self._require_requirement(requirement_id)
+        if detail.status is not expected_status:
+            raise InvalidStatusError("INVALID_STATUS", "当前状态不可提交")
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "版本冲突")
+        if not detail.fields_complete:
+            raise MissingRequiredFieldsError("MISSING_REQUIRED_FIELDS", "必填字段不完整")
+        candidate = next(
+            (
+                item
+                for item in self.handler_candidates.items
+                if item.employee_id == assigned_to_employee_id
+            ),
+            None,
+        )
+        if candidate is None:
+            raise InvalidHandlerError("INVALID_HANDLER", "处理人不在候选列表")
+        handler = RequirementHandler(employee_id=candidate.employee_id, name=candidate.name)
+        updated = detail.model_copy(
+            update={
+                "status": RequirementStatus.PENDING_REVIEW,
+                "version": detail.version + 1,
+                "current_handler": handler,
+                "allowed_actions": (),
+            }
+        )
+        self._requirements[requirement_id] = updated
+        result = RequirementTransitionResult(
+            requirement_id=updated.requirement_id,
+            requirement_no=updated.requirement_no,
+            status=updated.status,
+            version=updated.version,
+            current_handler=updated.current_handler,
+            action_token=action_token,
+        )
+        self._action_results[action_token] = result
+        return result
+
+    async def submit_review(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        return await self._transition(
+            RequirementStatus.DRAFT,
+            method="submit_review",
+            requirement_id=requirement_id,
+            expected_version=expected_version,
+            assigned_to_employee_id=assigned_to_employee_id,
+            action_token=action_token,
+        )
+
+    async def resubmit_review(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        return await self._transition(
+            RequirementStatus.REJECTED,
+            method="resubmit_review",
+            requirement_id=requirement_id,
+            expected_version=expected_version,
+            assigned_to_employee_id=assigned_to_employee_id,
+            action_token=action_token,
+        )
 
     async def get_or_create_agent_conversation(
         self, *, identity: PlatformIdentity, current_action: str

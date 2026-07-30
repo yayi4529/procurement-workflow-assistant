@@ -70,3 +70,17 @@ Backend notification_outbox worker
 
 平台 JSON 和 `lark_oapi` 只存在于 `adapters/feishu`。Domain 和 Application 不依赖
 FastAPI、httpx 或飞书 SDK。通知链路不持有 `BackendClient`，失败不会重新执行采购动作。
+## Task 3 需求人调用链
+
+```text
+飞书卡片回调
+→ EventDedupStore
+→ ApplicantActionRouter
+→ ApplicantWorkflowService
+→ BackendClient
+→ ApplicantCardFactory
+→ ChannelClient.update_interaction
+```
+
+该链路不依赖 LLM、Agent Session 或具体飞书 SDK。正式提交成功后仅更新原卡片，
+不根据业务响应主动通知楼长。

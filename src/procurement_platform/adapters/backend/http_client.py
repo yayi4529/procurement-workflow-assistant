@@ -1,4 +1,5 @@
 from typing import TypeVar
+from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
@@ -16,9 +17,23 @@ from procurement_platform.domain.assistant_session import (
     AgentSessionStateUpdate,
     AgentStateSaveResult,
 )
-from procurement_platform.domain.enums import AgentMessageSender
+from procurement_platform.domain.enums import (
+    AgentMessageSender,
+    RequirementStatus,
+    RequirementView,
+    RoleCode,
+)
 from procurement_platform.domain.errors import BackendProtocolError
 from procurement_platform.domain.identity import PlatformIdentity
+from procurement_platform.domain.requirement import (
+    ApplicantFieldsPatch,
+    ApplicantFieldsSaveResult,
+    HandlerCandidates,
+    RequirementDetail,
+    RequirementPage,
+    RequirementSummary,
+    RequirementTransitionResult,
+)
 from procurement_platform.domain.user import CurrentUser
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -77,6 +92,145 @@ class HttpBackendClient:
             method="GET",
             path="/api/v1/users/me",
             identity=identity,
+        )
+
+    async def create_requirement(
+        self, *, identity: PlatformIdentity, building_id: int
+    ) -> RequirementSummary:
+        return await self._request_model(
+            RequirementSummary,
+            method="POST",
+            path="/api/v1/requirements",
+            identity=identity,
+            json_body={"building_id": building_id},
+        )
+
+    async def update_applicant_fields(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        fields: ApplicantFieldsPatch,
+    ) -> ApplicantFieldsSaveResult:
+        return await self._request_model(
+            ApplicantFieldsSaveResult,
+            method="PATCH",
+            path=f"/api/v1/requirements/{requirement_id}/applicant-fields",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "fields": fields.model_dump(mode="json", exclude_unset=True),
+            },
+        )
+
+    async def get_requirement(
+        self, *, identity: PlatformIdentity, requirement_id: int
+    ) -> RequirementDetail:
+        return await self._request_model(
+            RequirementDetail,
+            method="GET",
+            path=f"/api/v1/requirements/{requirement_id}",
+            identity=identity,
+        )
+
+    async def list_requirements(
+        self,
+        *,
+        identity: PlatformIdentity,
+        view: RequirementView,
+        status: RequirementStatus | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> RequirementPage:
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("invalid pagination")
+        return await self._request_model(
+            RequirementPage,
+            method="GET",
+            path="/api/v1/requirements",
+            identity=identity,
+            query={
+                "view": view.value,
+                "status": status.value if status else None,
+                "page": page,
+                "page_size": page_size,
+            },
+        )
+
+    async def list_handler_candidates(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        target_role: RoleCode,
+    ) -> HandlerCandidates:
+        if target_role is not RoleCode.BUILDING_MANAGER:
+            raise ValueError("applicant flow only supports BUILDING_MANAGER")
+        return await self._request_model(
+            HandlerCandidates,
+            method="GET",
+            path=f"/api/v1/requirements/{requirement_id}/handler-candidates",
+            identity=identity,
+            query={"target_role": target_role.value},
+        )
+
+    async def _review_transition(
+        self,
+        path_action: str,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        return await self._request_model(
+            RequirementTransitionResult,
+            method="POST",
+            path=f"/api/v1/requirements/{requirement_id}/{path_action}",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "assigned_to_employee_id": assigned_to_employee_id,
+                "action_token": str(action_token),
+            },
+        )
+
+    async def submit_review(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        return await self._review_transition(
+            "submit-review",
+            identity=identity,
+            requirement_id=requirement_id,
+            expected_version=expected_version,
+            assigned_to_employee_id=assigned_to_employee_id,
+            action_token=action_token,
+        )
+
+    async def resubmit_review(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        assigned_to_employee_id: int,
+        action_token: UUID,
+    ) -> RequirementTransitionResult:
+        return await self._review_transition(
+            "resubmit-review",
+            identity=identity,
+            requirement_id=requirement_id,
+            expected_version=expected_version,
+            assigned_to_employee_id=assigned_to_employee_id,
+            action_token=action_token,
         )
 
     async def get_or_create_agent_conversation(

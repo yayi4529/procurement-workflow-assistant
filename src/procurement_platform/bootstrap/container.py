@@ -13,6 +13,8 @@ from procurement_platform.adapters.persistence.memory_event_dedup_store import (
 from procurement_platform.adapters.persistence.memory_notification_delivery_store import (
     MemoryNotificationDeliveryStore,
 )
+from procurement_platform.application.applicant.action_router import ApplicantActionRouter
+from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
 from procurement_platform.application.inbound.card_interaction_handler import (
     BaseCardInteractionHandler,
 )
@@ -70,7 +72,10 @@ class ApplicationContainer:
             )
             container.event_dedup_store = MemoryEventDedupStore()
             container.message_handler = BaseMessageHandler(channel)
-            container.card_interaction_handler = BaseCardInteractionHandler(channel)
+            container.card_interaction_handler = BaseCardInteractionHandler(
+                channel,
+                ApplicantActionRouter(ApplicantWorkflowService(container.backend_client)),
+            )
             if settings.notification_gateway.enabled:
                 delivery_store = MemoryNotificationDeliveryStore()
                 registry = NotificationRendererRegistry()
