@@ -5,6 +5,8 @@ from urllib.parse import urlsplit
 
 from pydantic import SecretStr
 
+from procurement_platform.domain.enums import BackendMode
+
 
 def _parse_bool(value: str) -> bool:
     normalized = value.strip().lower()
@@ -70,30 +72,55 @@ class Settings:
     backend_base_url: str
     backend_request_timeout_seconds: float
     identity_gateway_secret: SecretStr = field(repr=False)
+    backend_mode: BackendMode = BackendMode.HTTP
+    fake_data_path: str = ".local/fake-users.json"
     llm_enabled: bool = False
     allow_test_platform: bool = False
+    event_dedup_store_backend: str = "memory"
+    debug_identity_probe_enabled: bool = False
+    development_notification_renderer_enabled: bool = False
+    log_level: str = "INFO"
+    log_format: str = "text"
     feishu: FeishuSettings = field(default_factory=FeishuSettings)
     notification_gateway: NotificationGatewaySettings = field(
         default_factory=NotificationGatewaySettings
     )
 
     def __post_init__(self) -> None:
+        environment = self.environment.lower()
+        if environment not in {"development", "test", "production"}:
+            raise ValueError("environment must be development, test, or production")
         if self.backend_request_timeout_seconds <= 0:
             raise ValueError("backend request timeout must be greater than zero")
         if not self.identity_gateway_secret.get_secret_value():
             raise ValueError("identity gateway secret is required")
-        if self.environment.lower() == "production" and self.allow_test_platform:
+        if self.event_dedup_store_backend != "memory":
+            raise ValueError("unsupported event dedup store backend")
+        if self.log_format not in {"text", "json"}:
+            raise ValueError("log format must be text or json")
+        if self.backend_mode is BackendMode.FAKE and environment == "production":
+            raise ValueError("fake backend is forbidden in production")
+        if environment == "production" and self.allow_test_platform:
             raise ValueError("TEST_PLATFORM cannot be enabled in production")
-        if self.environment.lower() == "production" and self.notification_gateway.enabled:
+        if environment == "production" and self.debug_identity_probe_enabled:
+            raise ValueError("debug identity probe is forbidden in production")
+        if environment == "production" and self.development_notification_renderer_enabled:
+            raise ValueError("development notification renderer is forbidden in production")
+        if environment == "production" and self.notification_gateway.enabled:
             token = self.notification_gateway.bearer_token
             if token is None or not token.get_secret_value():
                 raise ValueError("notification gateway bearer token is required in production")
             if self.notification_gateway.delivery_store_backend == "memory":
                 raise ValueError("memory notification delivery store is forbidden in production")
+        if environment == "production" and self.event_dedup_store_backend == "memory":
+            raise ValueError("memory event dedup store is forbidden in production")
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "Settings":
         values = os.environ if environ is None else environ
+        backend_mode = BackendMode(
+            values.get("PROCUREMENT_BACKEND_MODE", BackendMode.HTTP.value).strip().lower()
+        )
 
         def required(name: str) -> str:
             value = values.get(name, "").strip()
@@ -105,14 +132,41 @@ class Settings:
         gateway_token = values.get("PROCUREMENT_NOTIFICATION_GATEWAY_TOKEN", "").strip()
         return cls(
             environment=required("PROCUREMENT_ENVIRONMENT"),
-            service_name=required("PROCUREMENT_SERVICE_NAME"),
-            backend_base_url=required("PROCUREMENT_BACKEND_BASE_URL"),
-            backend_request_timeout_seconds=float(
-                required("PROCUREMENT_BACKEND_REQUEST_TIMEOUT_SECONDS")
+            service_name=values.get(
+                "PROCUREMENT_SERVICE_NAME", "procurement-workflow-assistant"
+            ).strip(),
+            backend_base_url=(
+                required("PROCUREMENT_BACKEND_BASE_URL")
+                if backend_mode is BackendMode.HTTP
+                else values.get("PROCUREMENT_BACKEND_BASE_URL", "http://unused.invalid").strip()
             ),
-            identity_gateway_secret=SecretStr(required("PROCUREMENT_IDENTITY_GATEWAY_SECRET")),
+            backend_request_timeout_seconds=float(
+                values.get("PROCUREMENT_BACKEND_REQUEST_TIMEOUT_SECONDS", "10")
+            ),
+            identity_gateway_secret=SecretStr(
+                required("PROCUREMENT_IDENTITY_GATEWAY_SECRET")
+                if backend_mode is BackendMode.HTTP
+                else values.get(
+                    "PROCUREMENT_IDENTITY_GATEWAY_SECRET", "unused-in-fake-mode"
+                ).strip()
+            ),
+            backend_mode=backend_mode,
+            fake_data_path=values.get(
+                "PROCUREMENT_FAKE_DATA_PATH", ".local/fake-users.json"
+            ).strip(),
             llm_enabled=_parse_bool(values.get("PROCUREMENT_LLM_ENABLED", "false")),
             allow_test_platform=_parse_bool(values.get("PROCUREMENT_ALLOW_TEST_PLATFORM", "false")),
+            event_dedup_store_backend=values.get(
+                "PROCUREMENT_EVENT_DEDUP_STORE_BACKEND", "memory"
+            ).strip(),
+            debug_identity_probe_enabled=_parse_bool(
+                values.get("PROCUREMENT_DEBUG_IDENTITY_PROBE_ENABLED", "false")
+            ),
+            development_notification_renderer_enabled=_parse_bool(
+                values.get("PROCUREMENT_DEVELOPMENT_NOTIFICATION_RENDERER_ENABLED", "false")
+            ),
+            log_level=values.get("PROCUREMENT_LOG_LEVEL", "INFO").strip().upper(),
+            log_format=values.get("PROCUREMENT_LOG_FORMAT", "text").strip().lower(),
             feishu=FeishuSettings(
                 enabled=_parse_bool(values.get("PROCUREMENT_FEISHU_ENABLED", "false")),
                 app_id=values.get("PROCUREMENT_FEISHU_APP_ID", "").strip(),

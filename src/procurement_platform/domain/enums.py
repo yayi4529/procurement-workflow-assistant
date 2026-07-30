@@ -17,6 +17,11 @@ class PlatformType(StrEnum):
     TEST_PLATFORM = "TEST_PLATFORM"
 
 
+class BackendMode(StrEnum):
+    HTTP = "http"
+    FAKE = "fake"
+
+
 class AgentConversationStatus(StrEnum):
     ACTIVE = "ACTIVE"
     COMPLETED = "COMPLETED"

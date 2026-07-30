@@ -2,6 +2,10 @@
 
 基于飞书卡片、智能助手和平台无关通知网关的采购流程自动化平台。
 
+真实飞书账号连接进程内 Fake Backend 的开发调试方式见
+[`docs/feishu-fake-debugging.md`](docs/feishu-fake-debugging.md)。该模式仅允许
+development/test，不需要采购后端、MySQL、Redis 或 LLM。
+
 ## 核心定位
 
 ```text

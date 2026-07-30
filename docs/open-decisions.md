@@ -1,5 +1,11 @@
 # 剩余待确认项（后端 V1.5 / 数据库 V1.4）
 
+## Feishu + Fake 调试模式
+
+- 进程内 Fake 状态和内存幂等存储仅用于 development/test。
+- `DEV_NOTIFICATION_TEST` 仅用于通知网关 Smoke，不属于正式 Outbox 契约。
+- Quick Tunnel 仅提供临时 HTTPS；飞书控制台配置和应用发布仍由用户完成。
+
 ## 已解决
 
 以下旧差异已统一：

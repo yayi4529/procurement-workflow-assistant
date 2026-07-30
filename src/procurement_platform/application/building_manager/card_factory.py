@@ -1,3 +1,4 @@
+from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.enums import RequirementStatus
 from procurement_platform.domain.interaction import (
     ActionButton,
@@ -47,7 +48,7 @@ class BuildingManagerCardFactory:
                         label="数量", value=f"{applicant.quantity or '-'} {applicant.unit or ''}"
                     ),
                     KeyValueField(label="需求原因", value=applicant.application_reason or "-"),
-                    KeyValueField(label="状态", value=detail.status.value),
+                    KeyValueField(label="状态", value=requirement_status_label(detail.status)),
                     KeyValueField(label="版本", value=str(detail.version)),
                 )
             )
@@ -254,7 +255,7 @@ class BuildingManagerCardFactory:
                 KeyValueSection(
                     fields=(
                         KeyValueField(label="采购单编号", value=result.requirement_no),
-                        KeyValueField(label="状态", value=result.status.value),
+                        KeyValueField(label="状态", value=requirement_status_label(result.status)),
                         KeyValueField(
                             label="当前处理人",
                             value=result.current_handler.name if result.current_handler else "-",

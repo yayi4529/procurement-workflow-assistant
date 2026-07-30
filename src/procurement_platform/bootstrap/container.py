@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from procurement_platform.adapters.backend.fake_client import FakeBackendClient
+from procurement_platform.adapters.backend.fake_seed import FakeBackendSeedLoader
 from procurement_platform.adapters.backend.http_client import HttpBackendClient
 from procurement_platform.adapters.backend.signer import GatewayIdentitySigner
 from procurement_platform.adapters.backend.transport import SignedBackendTransport
@@ -25,6 +27,9 @@ from procurement_platform.application.inbound.card_interaction_handler import (
     BaseCardInteractionHandler,
 )
 from procurement_platform.application.inbound.message_handler import BaseMessageHandler
+from procurement_platform.application.notifications.development_renderer import (
+    DevelopmentNotificationRenderer,
+)
 from procurement_platform.application.notifications.gateway_service import (
     NotificationGatewayService,
 )
@@ -36,6 +41,7 @@ from procurement_platform.application.purchaser.workflow_service import Purchase
 from procurement_platform.application.warehouse.action_router import WarehouseActionRouter
 from procurement_platform.application.warehouse.workflow_service import WarehouseWorkflowService
 from procurement_platform.bootstrap.settings import Settings
+from procurement_platform.domain.enums import BackendMode
 from procurement_platform.ports.backend_client import BackendClient
 from procurement_platform.ports.channel import ChannelClient
 
@@ -55,16 +61,30 @@ class ApplicationContainer:
 
     @classmethod
     def build(cls, settings: Settings) -> "ApplicationContainer":
-        signer = GatewayIdentitySigner(
-            secret=settings.identity_gateway_secret,
-            allow_test_platform=settings.allow_test_platform,
-        )
-        transport = SignedBackendTransport(
-            base_url=settings.backend_base_url,
-            timeout_seconds=settings.backend_request_timeout_seconds,
-            signer=signer,
-        )
-        container = cls(settings=settings, backend_client=HttpBackendClient(transport))
+        if settings.backend_mode is BackendMode.FAKE:
+            seed = FakeBackendSeedLoader.load(settings.fake_data_path)
+            backend = FakeBackendClient(users_by_platform_id=FakeBackendSeedLoader.users(seed))
+            backend.handler_candidates = backend.handler_candidates.model_copy(
+                update={"items": FakeBackendSeedLoader.candidates(seed)}
+            )
+            backend.handler_candidates_by_role = {
+                role: backend.handler_candidates.model_copy(update={"items": candidates})
+                for role, candidates in FakeBackendSeedLoader.candidates_by_role(seed).items()
+            }
+            for supplier in FakeBackendSeedLoader.suppliers(seed):
+                backend.seed_supplier(supplier)
+            container = cls(settings=settings, backend_client=backend)
+        else:
+            signer = GatewayIdentitySigner(
+                secret=settings.identity_gateway_secret,
+                allow_test_platform=settings.allow_test_platform,
+            )
+            transport = SignedBackendTransport(
+                base_url=settings.backend_base_url,
+                timeout_seconds=settings.backend_request_timeout_seconds,
+                signer=signer,
+            )
+            container = cls(settings=settings, backend_client=HttpBackendClient(transport))
         if settings.feishu.enabled:
             sdk = LarkOapiTransport(
                 settings.feishu.app_id,
@@ -81,7 +101,13 @@ class ApplicationContainer:
                 ),
             )
             container.event_dedup_store = MemoryEventDedupStore()
-            container.message_handler = BaseMessageHandler(channel)
+            container.message_handler = BaseMessageHandler(
+                channel,
+                debug_identity_probe_enabled=settings.debug_identity_probe_enabled,
+                backend_client=(
+                    container.backend_client if settings.backend_mode is BackendMode.FAKE else None
+                ),
+            )
             container.card_interaction_handler = BaseCardInteractionHandler(
                 channel,
                 ApplicantActionRouter(ApplicantWorkflowService(container.backend_client)),
@@ -94,6 +120,8 @@ class ApplicationContainer:
             if settings.notification_gateway.enabled:
                 delivery_store = MemoryNotificationDeliveryStore()
                 registry = NotificationRendererRegistry()
+                if settings.development_notification_renderer_enabled:
+                    registry.register(DevelopmentNotificationRenderer())
                 container.notification_delivery_store = delivery_store
                 container.notification_renderer_registry = registry
                 token = settings.notification_gateway.bearer_token

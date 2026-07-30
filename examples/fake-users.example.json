@@ -1,0 +1,62 @@
+{
+  "users": [
+    {
+      "platform_user_id": "ou_applicant_xxx",
+      "employee_id": 1001,
+      "name": "测试需求人",
+      "roles": ["APPLICANT"],
+      "buildings": [
+        {
+          "building_id": 1,
+          "building_name": "一号楼",
+          "is_primary": true
+        }
+      ]
+    },
+    {
+      "platform_user_id": "ou_manager_xxx",
+      "employee_id": 2001,
+      "name": "测试楼长",
+      "roles": ["BUILDING_MANAGER"],
+      "buildings": [
+        {
+          "building_id": 1,
+          "building_name": "一号楼",
+          "is_primary": true
+        }
+      ]
+    },
+    {
+      "platform_user_id": "ou_purchaser_xxx",
+      "employee_id": 3001,
+      "name": "测试采购员",
+      "roles": ["PURCHASER"],
+      "buildings": []
+    },
+    {
+      "platform_user_id": "ou_warehouse_xxx",
+      "employee_id": 4001,
+      "name": "测试仓库管理员",
+      "roles": ["WAREHOUSE_MANAGER"],
+      "buildings": []
+    }
+  ],
+  "routing": {
+    "building_manager_by_building": {
+      "1": [2001]
+    },
+    "purchasers": [3001],
+    "warehouse_managers": [4001]
+  },
+  "suppliers": [
+    {
+      "supplier_id": 1,
+      "supplier_name": "测试科技供应商",
+      "supplier_tax_number": "TEST-TAX-001",
+      "bank_name": "测试银行",
+      "bank_account": "6222000000000000",
+      "registered_address": "测试地址",
+      "contract_contact_info": "测试联系人 000-00000000"
+    }
+  ]
+}

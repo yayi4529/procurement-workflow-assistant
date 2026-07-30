@@ -1,5 +1,6 @@
 from uuid import uuid4
 
+from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.enums import RequirementStatus
 from procurement_platform.domain.interaction import (
     ActionButton,
@@ -72,7 +73,7 @@ class PurchaserCardFactory:
                         value=f"{detail.applicant_fields.quantity or '-'} "
                         f"{detail.applicant_fields.unit or ''}",
                     ),
-                    KeyValueField(label="状态", value=detail.status.value),
+                    KeyValueField(label="状态", value=requirement_status_label(detail.status)),
                     KeyValueField(label="版本", value=str(detail.version)),
                 )
             )
@@ -187,7 +188,8 @@ class PurchaserCardFactory:
             elements=(
                 MarkdownBlock(
                     markdown="\n".join(
-                        f"- {item.requirement_no} | {item.device_name or '-'} | {item.status.value}"
+                        f"- {item.requirement_no} | {item.device_name or '-'} | "
+                        f"{requirement_status_label(item.status)}"
                         for item in page.items
                     )
                     or "暂无待采购任务"
@@ -308,7 +310,7 @@ class PurchaserCardFactory:
                 KeyValueSection(
                     fields=(
                         KeyValueField(label="采购单编号", value=result.requirement_no),
-                        KeyValueField(label="状态", value=result.status.value),
+                        KeyValueField(label="状态", value=requirement_status_label(result.status)),
                         KeyValueField(
                             label="当前处理人",
                             value=result.current_handler.name if result.current_handler else "-",

@@ -73,8 +73,16 @@ class FakeCall:
 
 
 class FakeBackendClient:
-    def __init__(self, current_user: CurrentUser) -> None:
-        self.current_user = current_user
+    def __init__(
+        self,
+        current_user: CurrentUser | None = None,
+        *,
+        users_by_platform_id: dict[str, CurrentUser] | None = None,
+    ) -> None:
+        if current_user is None and not users_by_platform_id:
+            raise ValueError("at least one fake user is required")
+        self.current_user = current_user or next(iter((users_by_platform_id or {}).values()))
+        self._users_by_platform_id = dict(users_by_platform_id or {})
         self.calls: list[FakeCall] = []
         self.call_counts: Counter[str] = Counter()
         self._failures: dict[str, BackendApplicationError] = {}
@@ -87,6 +95,7 @@ class FakeBackendClient:
         self._next_message_id = 1
         self._requirements: dict[int, RequirementDetail] = {}
         self.handler_candidates = HandlerCandidates(items=())
+        self.handler_candidates_by_role: dict[RoleCode, HandlerCandidates] = {}
         self._action_results: dict[UUID, RequirementTransitionResult] = {}
         self._completion_results: dict[UUID, RequirementCompletionResult] = {}
         self._next_requirement_id = 1
@@ -109,7 +118,17 @@ class FakeBackendClient:
 
     async def get_current_user(self, *, identity: PlatformIdentity) -> CurrentUser:
         self._record("get_current_user")
-        return self.current_user
+        return self._user(identity)
+
+    def _user(self, identity: PlatformIdentity) -> CurrentUser:
+        if not self._users_by_platform_id:
+            return self.current_user
+        try:
+            return self._users_by_platform_id[identity.platform_user_id]
+        except KeyError as exc:
+            raise PermissionDeniedError(
+                "FAKE_USER_NOT_MAPPED", "当前飞书账号尚未配置 Fake 身份"
+            ) from exc
 
     def seed_requirement(self, detail: RequirementDetail) -> None:
         self._requirements[detail.requirement_id] = detail
@@ -119,8 +138,9 @@ class FakeBackendClient:
         self, *, identity: PlatformIdentity, building_id: int
     ) -> RequirementSummary:
         self._record("create_requirement")
+        current_user = self._user(identity)
         building = next(
-            (item for item in self.current_user.buildings if item.building_id == building_id),
+            (item for item in current_user.buildings if item.building_id == building_id),
             None,
         )
         if building is None:
@@ -225,6 +245,7 @@ class FakeBackendClient:
         page_size: int = 20,
     ) -> RequirementPage:
         self._record("list_requirements")
+        current_user = self._user(identity)
         if view not in {
             RequirementView.CREATED_BY_ME,
             RequirementView.PENDING_FOR_ME,
@@ -240,7 +261,7 @@ class FakeBackendClient:
                 or (
                     view is RequirementView.PENDING_FOR_ME
                     and item.current_handler is not None
-                    and item.current_handler.employee_id == self.current_user.employee_id
+                    and item.current_handler.employee_id == current_user.employee_id
                 )
                 or (
                     view is RequirementView.PROCESSED_BY_ME
@@ -278,7 +299,7 @@ class FakeBackendClient:
             RoleCode.WAREHOUSE_MANAGER,
         }:
             raise ValueError("unsupported target role")
-        return self.handler_candidates
+        return self.handler_candidates_by_role.get(target_role, self.handler_candidates)
 
     async def _transition(
         self,
@@ -368,18 +389,18 @@ class FakeBackendClient:
             action_token=action_token,
         )
 
-    def _require_manager_access(self, detail: RequirementDetail) -> None:
-        if self.current_user.status != "ACTIVE" or not any(
-            role.role_code is RoleCode.BUILDING_MANAGER for role in self.current_user.roles
+    def _require_manager_access(self, detail: RequirementDetail, current_user: CurrentUser) -> None:
+        if current_user.status != "ACTIVE" or not any(
+            role.role_code is RoleCode.BUILDING_MANAGER for role in current_user.roles
         ):
             raise PermissionDeniedError("PERMISSION_DENIED", "当前用户不是有效楼长")
         if detail.building.building_id not in {
-            building.building_id for building in self.current_user.buildings
+            building.building_id for building in current_user.buildings
         }:
             raise PermissionDeniedError("PERMISSION_DENIED", "采购申请不在楼长负责楼宇")
         if (
             detail.current_handler is None
-            or detail.current_handler.employee_id != self.current_user.employee_id
+            or detail.current_handler.employee_id != current_user.employee_id
         ):
             raise InvalidHandlerError("INVALID_HANDLER", "当前用户不是处理人")
 
@@ -393,7 +414,7 @@ class FakeBackendClient:
     ) -> ReviewFieldsSaveResult:
         self._record("update_review_fields")
         detail = self._require_requirement(requirement_id)
-        self._require_manager_access(detail)
+        self._require_manager_access(detail, self._user(identity))
         if detail.status is not RequirementStatus.PENDING_REVIEW:
             raise InvalidStatusError("INVALID_STATUS", "当前状态不可保存审核字段")
         if detail.version != expected_version:
@@ -460,7 +481,7 @@ class FakeBackendClient:
         if duplicate is not None:
             raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
         detail = self._require_requirement(requirement_id)
-        self._require_manager_access(detail)
+        self._require_manager_access(detail, self._user(identity))
         if not reason.strip():
             raise MissingRequiredFieldsError("MISSING_REQUIRED_FIELDS", "驳回原因必填")
         if detail.status is not RequirementStatus.PENDING_REVIEW:
@@ -503,7 +524,7 @@ class FakeBackendClient:
         if duplicate is not None:
             raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
         detail = self._require_requirement(requirement_id)
-        self._require_manager_access(detail)
+        self._require_manager_access(detail, self._user(identity))
         if detail.status is not RequirementStatus.PENDING_REVIEW:
             raise InvalidStatusError("INVALID_STATUS", "当前状态不可提交采购员")
         if detail.version != expected_version:
@@ -543,14 +564,16 @@ class FakeBackendClient:
         self._action_results[action_token] = result
         return result
 
-    def _require_purchaser_access(self, detail: RequirementDetail) -> None:
-        if self.current_user.status != "ACTIVE" or not any(
-            role.role_code is RoleCode.PURCHASER for role in self.current_user.roles
+    def _require_purchaser_access(
+        self, detail: RequirementDetail, current_user: CurrentUser
+    ) -> None:
+        if current_user.status != "ACTIVE" or not any(
+            role.role_code is RoleCode.PURCHASER for role in current_user.roles
         ):
             raise PermissionDeniedError("PERMISSION_DENIED", "当前用户不是有效采购员")
         if (
             detail.current_handler is None
-            or detail.current_handler.employee_id != self.current_user.employee_id
+            or detail.current_handler.employee_id != current_user.employee_id
         ):
             raise InvalidHandlerError("INVALID_HANDLER", "当前用户不是采购单处理人")
 
@@ -566,7 +589,7 @@ class FakeBackendClient:
         if action_token in self._action_results:
             raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
         detail = self._require_requirement(requirement_id)
-        self._require_purchaser_access(detail)
+        self._require_purchaser_access(detail, self._user(identity))
         if detail.status is not RequirementStatus.PENDING_PURCHASE:
             raise InvalidStatusError("INVALID_STATUS", "当前状态不能开始采购")
         if detail.version != expected_version:
@@ -676,7 +699,7 @@ class FakeBackendClient:
     ) -> PurchaseFieldsSaveResult:
         self._record("update_purchase_fields")
         detail = self._require_requirement(requirement_id)
-        self._require_purchaser_access(detail)
+        self._require_purchaser_access(detail, self._user(identity))
         if detail.status is not RequirementStatus.PURCHASING:
             raise InvalidStatusError("INVALID_STATUS", "当前状态不能保存采购字段")
         if detail.version != expected_version:
@@ -739,7 +762,7 @@ class FakeBackendClient:
         if action_token in self._action_results:
             raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
         detail = self._require_requirement(requirement_id)
-        self._require_purchaser_access(detail)
+        self._require_purchaser_access(detail, self._user(identity))
         if detail.status is not RequirementStatus.PURCHASING:
             raise InvalidStatusError("INVALID_STATUS", "当前状态不能提交仓库")
         if detail.version != expected_version:
@@ -778,14 +801,16 @@ class FakeBackendClient:
         self._action_results[action_token] = result
         return result
 
-    def _require_warehouse_access(self, detail: RequirementDetail) -> None:
-        if self.current_user.status != "ACTIVE" or not any(
-            role.role_code is RoleCode.WAREHOUSE_MANAGER for role in self.current_user.roles
+    def _require_warehouse_access(
+        self, detail: RequirementDetail, current_user: CurrentUser
+    ) -> None:
+        if current_user.status != "ACTIVE" or not any(
+            role.role_code is RoleCode.WAREHOUSE_MANAGER for role in current_user.roles
         ):
             raise PermissionDeniedError("PERMISSION_DENIED", "当前用户不是有效仓库管理员")
         if (
             detail.current_handler is None
-            or detail.current_handler.employee_id != self.current_user.employee_id
+            or detail.current_handler.employee_id != current_user.employee_id
         ):
             raise InvalidHandlerError("INVALID_HANDLER", "当前用户不是处理人")
 
@@ -799,7 +824,7 @@ class FakeBackendClient:
     ) -> WarehouseFieldsSaveResult:
         self._record("update_warehouse_fields")
         detail = self._require_requirement(requirement_id)
-        self._require_warehouse_access(detail)
+        self._require_warehouse_access(detail, self._user(identity))
         if detail.status is not RequirementStatus.PENDING_WAREHOUSE:
             raise InvalidStatusError("INVALID_STATUS", "当前状态不可保存入库字段")
         if detail.version != expected_version:
@@ -854,7 +879,7 @@ class FakeBackendClient:
         if duplicate is not None:
             raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
         detail = self._require_requirement(requirement_id)
-        self._require_warehouse_access(detail)
+        self._require_warehouse_access(detail, self._user(identity))
         if detail.status is not RequirementStatus.PENDING_WAREHOUSE:
             raise InvalidStatusError("INVALID_STATUS", "当前状态不可完成")
         if detail.version != expected_version:

@@ -124,8 +124,32 @@ def test_webhook_challenge_message_and_duplicate() -> None:
             },
         }
         assert client.post("/custom/feishu", json=payload).status_code == 200
+        payload["header"]["event_id"] = "e2"
         assert client.post("/custom/feishu", json=payload).status_code == 200
     assert len(fake.reply_text_calls) == 1
+
+
+def test_card_callback_returns_new_raw_card_response_shape() -> None:
+    client, _ = configured_app()
+    payload = {
+        "header": {
+            "token": "verify",
+            "event_id": "card-event",
+            "event_type": "card.action.trigger",
+        },
+        "event": {
+            "operator": {"open_id": "ou"},
+            "action": {"value": {"action_id": "foundation.echo"}},
+            "context": {"open_message_id": "om_card"},
+        },
+    }
+    with client:
+        response = client.post("/custom/feishu", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["toast"]["type"] == "success"
+    assert body["card"]["type"] == "raw"
+    assert body["card"]["data"]["header"]["title"]["content"] == "基础链路验证"
 
 
 def test_notification_gateway_delivers_once_and_validates_headers() -> None:
