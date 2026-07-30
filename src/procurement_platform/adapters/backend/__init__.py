@@ -1,0 +1,1 @@
+"""Signed procurement backend adapter."""

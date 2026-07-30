@@ -1,0 +1,23 @@
+{
+  "version": "2.1",
+  "contract_baseline": [
+    "后端接口文档 V1.5",
+    "数据库设计文档 V1.4",
+    "后端接口联调说明 2026-07-30"
+  ],
+  "main_entry": "CODEX_PROJECT_SPEC.md",
+  "generated_files": [
+    "AGENTS.md",
+    "CODEX_PROJECT_SPEC.md",
+    "README.md",
+    "docs/architecture.md",
+    "docs/assistant-session.md",
+    "docs/backend-contract.md",
+    "docs/backend-v1.5-delta.md",
+    "docs/card-agent-interaction.md",
+    "docs/codex-task-template.md",
+    "docs/development-roadmap.md",
+    "docs/open-decisions.md",
+    "docs/testing-strategy.md"
+  ]
+}
