@@ -15,6 +15,15 @@ class RequirementModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class FieldsSaveResult(RequirementModel):
+    requirement_id: int
+    status: RequirementStatus
+    version: int
+    missing_fields: tuple[str, ...]
+    next_missing_field: str | None = None
+    fields_complete: bool
+
+
 class SupplierBlacklistSummary(RequirementModel):
     active: bool
     reason: str | None = None
@@ -102,13 +111,8 @@ class PurchaseFieldsPatch(BaseModel):
         return "PurchaseFieldsPatch(bank_account=<sensitive>)"
 
 
-class PurchaseFieldsSaveResult(RequirementModel):
-    requirement_id: int
-    status: RequirementStatus
-    version: int
+class PurchaseFieldsSaveResult(FieldsSaveResult):
     purchase_fields: PurchaseFields
-    missing_fields: tuple[str, ...]
-    fields_complete: bool
 
 
 class PurchaseExecutionSummary(RequirementModel):
@@ -141,13 +145,8 @@ class WarehouseFieldsPatch(BaseModel):
         return self.model_dump(exclude_unset=True)
 
 
-class WarehouseFieldsSaveResult(RequirementModel):
-    requirement_id: int
-    status: RequirementStatus
-    version: int
+class WarehouseFieldsSaveResult(FieldsSaveResult):
     warehouse_fields: WarehouseFields
-    missing_fields: tuple[str, ...]
-    fields_complete: bool
 
 
 class WarehouseReceiptSummary(RequirementModel):
@@ -240,14 +239,9 @@ class ReviewRecordSummary(RequirementModel):
     review_status: ReviewStatus
 
 
-class ReviewFieldsSaveResult(RequirementModel):
-    requirement_id: int
-    status: RequirementStatus
-    version: int
+class ReviewFieldsSaveResult(FieldsSaveResult):
     review_fields: ReviewFields
     review_record: ReviewRecordSummary
-    missing_fields: tuple[str, ...]
-    fields_complete: bool
 
 
 class RequirementSummary(RequirementModel):
@@ -263,13 +257,8 @@ class RequirementCompletionResult(RequirementSummary):
     action_token: UUID | None = None
 
 
-class ApplicantFieldsSaveResult(RequirementModel):
-    requirement_id: int
-    status: RequirementStatus
-    version: int
-    missing_fields: tuple[str, ...]
-    next_missing_field: str | None
-    fields_complete: bool
+class ApplicantFieldsSaveResult(FieldsSaveResult):
+    pass
 
 
 class RequirementDetail(RequirementSummary):
@@ -287,9 +276,12 @@ class RequirementDetail(RequirementSummary):
     completed_at: datetime | None = None
 
 
-class RequirementListItem(RequirementSummary):
+class RequirementListItem(RequirementModel):
+    requirement_id: int
+    requirement_no: str
+    status: RequirementStatus
     device_name: str | None = None
-    current_handler: RequirementHandler | None = None
+    current_handler_name: str | None = None
 
 
 class RequirementPage(RequirementModel):

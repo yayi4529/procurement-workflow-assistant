@@ -21,22 +21,20 @@ from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     ApplicantFieldsSaveResult,
+    FieldsSaveResult,
     HandlerCandidates,
     PurchaseFieldsPatch,
-    PurchaseFieldsSaveResult,
     RequirementCompletionResult,
     RequirementDetail,
     RequirementPage,
     RequirementSummary,
     RequirementTransitionResult,
     ReviewFieldsPatch,
-    ReviewFieldsSaveResult,
     SupplierDetail,
     SupplierPage,
     SupplierSummary,
     SupplierUpsertCommand,
     WarehouseFieldsPatch,
-    WarehouseFieldsSaveResult,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -106,7 +104,7 @@ class BackendClient(Protocol):
         requirement_id: int,
         expected_version: int,
         fields: ReviewFieldsPatch,
-    ) -> ReviewFieldsSaveResult: ...
+    ) -> FieldsSaveResult: ...
 
     async def reject_requirement(
         self,
@@ -167,7 +165,7 @@ class BackendClient(Protocol):
         requirement_id: int,
         expected_version: int,
         fields: PurchaseFieldsPatch,
-    ) -> PurchaseFieldsSaveResult: ...
+    ) -> FieldsSaveResult: ...
 
     async def submit_warehouse(
         self,
@@ -186,7 +184,7 @@ class BackendClient(Protocol):
         requirement_id: int,
         expected_version: int,
         fields: WarehouseFieldsPatch,
-    ) -> WarehouseFieldsSaveResult: ...
+    ) -> FieldsSaveResult: ...
 
     async def complete_requirement(
         self,

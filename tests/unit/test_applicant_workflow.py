@@ -6,7 +6,7 @@ from procurement_platform.adapters.backend.fake_client import FakeBackendClient
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
 from procurement_platform.domain.enums import PlatformType, RequirementStatus, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
-from procurement_platform.domain.interaction import SelectInput, TextInput
+from procurement_platform.domain.interaction import TextInput
 from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     HandlerCandidate,
@@ -44,11 +44,10 @@ def backend(*, role: RoleCode = RoleCode.APPLICANT) -> FakeBackendClient:
 async def test_no_llm_applicant_flow_reaches_pending_review() -> None:
     fake = backend()
     service = ApplicantWorkflowService(fake)
-    selection = await service.start_new(identity())
-    assert any(
-        isinstance(element, SelectInput) and element.default_value == "1"
-        for element in selection.elements
-    )
+    draft_view = await service.start_new(identity())
+    assert draft_view.title == "采购申请详情"
+    assert fake.call_counts["create_requirement"] == 1
+    assert fake.call_counts["get_requirement"] == 1
     draft = await fake.create_requirement(identity=identity(), building_id=1)
     await service.save(
         identity(),

@@ -276,9 +276,10 @@ class FakeBackendClient:
                 requirement_id=item.requirement_id,
                 requirement_no=item.requirement_no,
                 status=item.status,
-                version=item.version,
                 device_name=item.applicant_fields.device_name,
-                current_handler=item.current_handler,
+                current_handler_name=(
+                    item.current_handler.name if item.current_handler is not None else None
+                ),
             )
             for item in values[start : start + page_size]
         )

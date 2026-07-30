@@ -63,10 +63,13 @@ async def test_get_current_user_contract_and_unknown_role_rejection() -> None:
     requests: list[httpx.Request] = []
     data = {
         "employee_id": 7,
+        "employee_no": "TEST-E007",
         "name": "张三",
         "mobile": None,
         "status": "ACTIVE",
-        "roles": [{"role_code": "APPLICANT", "role_name": "需求人"}],
+        "platform_type": "FEISHU",
+        "platform_user_id": "ou_test",
+        "roles": [{"role_id": 1, "role_code": "APPLICANT", "role_name": "需求人"}],
         "buildings": [
             {"building_id": 1, "building_name": "一号楼", "is_primary": True},
             {"building_id": 2, "building_name": "二号楼", "is_primary": False},
@@ -87,7 +90,13 @@ async def test_get_current_user_contract_and_unknown_role_rejection() -> None:
     assert user.mobile is None
     await raw_client.aclose()
 
-    data["roles"] = [{"role_code": "LEGACY_REQUESTER"}]
+    data["roles"] = [
+        {
+            "role_id": 99,
+            "role_code": "LEGACY_REQUESTER",
+            "role_name": "legacy",
+        }
+    ]
     client, raw_client = make_client(handler)
     with pytest.raises(BackendProtocolError):
         await client.get_current_user(identity=identity())

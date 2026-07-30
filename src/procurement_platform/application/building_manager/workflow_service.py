@@ -77,6 +77,17 @@ class BuildingManagerWorkflowService:
             )
             return self._cards.detail(detail, "版本冲突, 已加载后端最新字段, 请重新确认。")
 
+    async def review_validation_error(
+        self,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        message: str,
+    ) -> InteractionView:
+        detail = await self._backend.get_requirement(
+            identity=identity, requirement_id=requirement_id
+        )
+        return self._cards.detail(detail, message)
+
     async def prepare_reject(
         self, identity: PlatformIdentity, requirement_id: int, reason: str | None
     ) -> InteractionView:

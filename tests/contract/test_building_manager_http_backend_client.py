@@ -12,7 +12,7 @@ from tests.contract.test_http_backend_client import envelope, identity, make_cli
 @pytest.mark.asyncio
 async def test_building_manager_endpoint_contracts() -> None:
     requests: list[httpx.Request] = []
-    review_fields = {
+    _review_fields = {
         "proposed_supplier_id": 8,
         "supplier_contact_name": "王工",
         "supplier_contact_info": "13800000000",
@@ -32,12 +32,14 @@ async def test_building_manager_endpoint_contracts() -> None:
             "requirement_id": 1,
             "status": "PENDING_REVIEW",
             "version": 3,
-            "review_fields": review_fields,
-            "review_record": {"review_status": "DRAFT"},
             "missing_fields": [],
+            "next_missing_field": None,
             "fields_complete": True,
         },
-        {"items": [{"employee_id": 9, "name": "采购员"}], "auto_selected_employee_id": 9},
+        {
+            "items": [{"employee_id": 9, "name": "采购员", "mobile": None}],
+            "auto_selected_employee_id": 9,
+        },
         {
             "requirement_id": 1,
             "requirement_no": "PR-1",

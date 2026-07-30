@@ -13,7 +13,23 @@ from tests.contract.test_http_backend_client import envelope, identity, make_cli
 async def test_applicant_endpoint_contracts_and_string_quantity() -> None:
     requests: list[httpx.Request] = []
     responses: list[object] = [
-        {"requirement_id": 1, "requirement_no": "PR-1", "status": "DRAFT", "version": 1},
+        {
+            "requirement_id": 1,
+            "requirement_no": "PR-1",
+            "status": "DRAFT",
+            "version": 1,
+            "current_handler": {
+                "employee_id": 7,
+                "name": "申请人",
+                "platform_identities": [
+                    {
+                        "platform_type": "FEISHU",
+                        "platform_user_id": "ou_test",
+                    }
+                ],
+            },
+            "completed_at": None,
+        },
         {
             "requirement_id": 1,
             "status": "DRAFT",
@@ -39,31 +55,58 @@ async def test_applicant_endpoint_contracts_and_string_quantity() -> None:
                 "application_reason": "扩容",
                 "applicant_remark": None,
             },
+            "review_records": [],
+            "purchase_execution": None,
+            "warehouse_receipt": None,
             "missing_fields": [],
-            "allowed_actions": ["SUBMIT_REVIEW"],
-            "fields_complete": True,
-            "rejection_reason": None,
+            "allowed_actions": ["SAVE_APPLICANT_FIELDS", "SUBMIT_REVIEW"],
         },
-        {"items": [], "page": 1, "page_size": 20, "total": 0},
         {
-            "items": [{"employee_id": 9, "name": "楼长"}],
+            "items": [
+                {
+                    "requirement_id": 1,
+                    "requirement_no": "PR-1",
+                    "device_name": "交换机",
+                    "status": "DRAFT",
+                    "current_handler_name": "申请人",
+                }
+            ],
+            "page": 1,
+            "page_size": 20,
+            "total": 1,
+        },
+        {
+            "items": [{"employee_id": 9, "name": "楼长", "mobile": "138****9002"}],
             "auto_selected_employee_id": 9,
         },
         {
             "requirement_id": 1,
-            "requirement_no": "PR-1",
+            "requirement_no": None,
             "status": "PENDING_REVIEW",
             "version": 3,
-            "current_handler": {"employee_id": 9, "name": "楼长"},
-            "action_token": None,
+            "current_handler": {
+                "employee_id": 9,
+                "name": "楼长",
+                "platform_identities": [
+                    {
+                        "platform_type": "FEISHU",
+                        "platform_user_id": "ou_manager",
+                    }
+                ],
+            },
+            "completed_at": None,
         },
         {
             "requirement_id": 1,
-            "requirement_no": "PR-1",
+            "requirement_no": None,
             "status": "PENDING_REVIEW",
             "version": 4,
-            "current_handler": {"employee_id": 9, "name": "楼长"},
-            "action_token": None,
+            "current_handler": {
+                "employee_id": 9,
+                "name": "楼长",
+                "platform_identities": [],
+            },
+            "completed_at": None,
         },
     ]
 

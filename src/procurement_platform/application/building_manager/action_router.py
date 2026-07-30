@@ -17,6 +17,20 @@ def _integer(value: JsonValue | None, name: str) -> int:
     return int(value)
 
 
+def _optional_positive_integer(value: JsonValue | None, name: str) -> int | None:
+    if value in ("", None):
+        return None
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError(f"{name} must be a positive integer")
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if parsed <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
 class BuildingManagerActionRouter:
     def __init__(self, workflow: BuildingManagerWorkflowService) -> None:
         self._workflow = workflow
@@ -45,8 +59,16 @@ class BuildingManagerActionRouter:
                 for name in ReviewFieldsPatch.model_fields
                 if name in event.form_values
             }
-            if "proposed_supplier_id" in raw and raw["proposed_supplier_id"] not in ("", None):
-                raw["proposed_supplier_id"] = int(str(raw["proposed_supplier_id"]))
+            try:
+                raw["proposed_supplier_id"] = _optional_positive_integer(
+                    raw.get("proposed_supplier_id"), "proposed_supplier_id"
+                )
+            except ValueError:
+                return await self._workflow.review_validation_error(
+                    identity,
+                    requirement_id,
+                    "拟定供应商 ID 必须填写后端已有供应商的数字 ID, 例如 8。",
+                )
             if "need_contract" in raw:
                 raw["need_contract"] = raw["need_contract"] == "true"
             return await self._workflow.save_review_fields(

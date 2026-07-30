@@ -24,10 +24,10 @@ async def test_purchaser_endpoint_contracts() -> None:
     supplier = {
         "supplier_id": 8,
         "supplier_name": "示例供应商",
-        "supplier_tax_number": "TAX-8",
-        "blacklist": None,
+        "unified_social_credit_code": "TAX-8",
+        "blacklist_status": "NONE",
     }
-    purchase = {
+    _purchase = {
         "supplier_id": 8,
         "supplier_tax_number": "TAX-8",
         "bank_name": "示例银行",
@@ -45,23 +45,28 @@ async def test_purchaser_endpoint_contracts() -> None:
         transition,
         {"items": [supplier], "page": 1, "page_size": 20, "total": 1},
         {
-            **supplier,
+            "supplier_id": 8,
+            "supplier_name": supplier["supplier_name"],
+            "unified_social_credit_code": "TAX-8",
             "bank_name": "示例银行",
             "bank_account": "****5678",
-            "bank_account_masked": True,
             "registered_address": "示例地址",
             "contract_contact_info": "contact@example.com",
+            "blacklist": {"status": "NONE", "history_count": 0},
         },
-        supplier,
+        {"supplier_id": 9, "supplier_name": "新供应商"},
         {
             "requirement_id": 1,
             "status": "PURCHASING",
             "version": 6,
-            "purchase_fields": purchase,
             "missing_fields": [],
+            "next_missing_field": None,
             "fields_complete": True,
         },
-        {"items": [{"employee_id": 12, "name": "仓库管理员"}], "auto_selected_employee_id": 12},
+        {
+            "items": [{"employee_id": 12, "name": "仓库管理员", "mobile": None}],
+            "auto_selected_employee_id": 12,
+        },
         {
             **transition,
             "status": "PENDING_WAREHOUSE",
@@ -119,5 +124,8 @@ async def test_purchaser_endpoint_contracts() -> None:
     assert requests[5].url.params["target_role"] == "WAREHOUSE_MANAGER"
     assert json.loads(requests[4].content)["fields"]["actual_unit_price"] == "12.50"
     assert "actual_total_price" not in json.loads(requests[4].content)["fields"]
+    create_supplier = json.loads(requests[3].content)
+    assert "supplier_tax_number" not in create_supplier
+    assert create_supplier["unified_social_credit_code"] is None
     assert "operator_employee_id" not in json.loads(requests[6].content)
     await raw.aclose()

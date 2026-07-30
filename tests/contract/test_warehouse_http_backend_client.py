@@ -16,12 +16,8 @@ async def test_warehouse_endpoint_contracts() -> None:
             "requirement_id": 1,
             "status": "PENDING_WAREHOUSE",
             "version": 8,
-            "warehouse_fields": {
-                "warehouse_location": "A-01",
-                "received_quantity": "2",
-                "receipt_remark": None,
-            },
             "missing_fields": [],
+            "next_missing_field": None,
             "fields_complete": True,
         },
         {

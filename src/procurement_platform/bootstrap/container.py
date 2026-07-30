@@ -104,9 +104,7 @@ class ApplicationContainer:
             container.message_handler = BaseMessageHandler(
                 channel,
                 debug_identity_probe_enabled=settings.debug_identity_probe_enabled,
-                backend_client=(
-                    container.backend_client if settings.backend_mode is BackendMode.FAKE else None
-                ),
+                backend_client=container.backend_client,
             )
             container.card_interaction_handler = BaseCardInteractionHandler(
                 channel,

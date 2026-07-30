@@ -35,14 +35,25 @@ class ApplicantWorkflowService:
         if not user.buildings:
             return self._cards.message("无法创建", "当前账号没有可用楼宇, 请联系管理员。")
         primary = [item for item in user.buildings if item.is_primary]
-        default = (
-            user.buildings[0].building_id
+        building = (
+            user.buildings[0]
             if len(user.buildings) == 1
-            else primary[0].building_id
+            else primary[0]
             if len(primary) == 1
             else None
         )
-        return self._cards.building_selection(user, default)
+        if building is None:
+            return self._cards.message(
+                "无法创建",
+                "当前账号有多个可用楼宇, 但后端未返回唯一主楼宇, 请联系管理员。",
+            )
+        summary = await self._backend.create_requirement(
+            identity=identity, building_id=building.building_id
+        )
+        detail = await self._backend.get_requirement(
+            identity=identity, requirement_id=summary.requirement_id
+        )
+        return self._cards.detail(detail)
 
     async def create_draft(self, identity: PlatformIdentity, building_id: int) -> InteractionView:
         user = await self._backend.get_current_user(identity=identity)

@@ -4,8 +4,33 @@ from uuid import UUID
 from pydantic import BaseModel, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 
-from procurement_platform.adapters.backend.dto import BackendEnvelope
+from procurement_platform.adapters.backend.dto import (
+    BackendCreatedRequirementDTO,
+    BackendCurrentUserDTO,
+    BackendEnvelope,
+    BackendFieldsSaveDTO,
+    BackendHandlerCandidatesDTO,
+    BackendRequirementDetailDTO,
+    BackendRequirementMutationDTO,
+    BackendRequirementPageDTO,
+    BackendSupplierCreatedDTO,
+    BackendSupplierDetailDTO,
+    BackendSupplierPageDTO,
+)
 from procurement_platform.adapters.backend.error_mapping import map_backend_error
+from procurement_platform.adapters.backend.mapper import (
+    map_created_requirement,
+    map_current_user,
+    map_fields_save,
+    map_handler_candidates,
+    map_requirement_completion,
+    map_requirement_detail,
+    map_requirement_page,
+    map_requirement_transition,
+    map_supplier_created,
+    map_supplier_detail,
+    map_supplier_page,
+)
 from procurement_platform.adapters.backend.transport import SignedBackendTransport
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
@@ -28,22 +53,20 @@ from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     ApplicantFieldsSaveResult,
+    FieldsSaveResult,
     HandlerCandidates,
     PurchaseFieldsPatch,
-    PurchaseFieldsSaveResult,
     RequirementCompletionResult,
     RequirementDetail,
     RequirementPage,
     RequirementSummary,
     RequirementTransitionResult,
     ReviewFieldsPatch,
-    ReviewFieldsSaveResult,
     SupplierDetail,
     SupplierPage,
     SupplierSummary,
     SupplierUpsertCommand,
     WarehouseFieldsPatch,
-    WarehouseFieldsSaveResult,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -98,23 +121,25 @@ class HttpBackendClient:
             ) from exc
 
     async def get_current_user(self, *, identity: PlatformIdentity) -> CurrentUser:
-        return await self._request_model(
-            CurrentUser,
+        dto = await self._request_model(
+            BackendCurrentUserDTO,
             method="GET",
             path="/api/v1/users/me",
             identity=identity,
         )
+        return map_current_user(dto)
 
     async def create_requirement(
         self, *, identity: PlatformIdentity, building_id: int
     ) -> RequirementSummary:
-        return await self._request_model(
-            RequirementSummary,
+        dto = await self._request_model(
+            BackendCreatedRequirementDTO,
             method="POST",
             path="/api/v1/requirements",
             identity=identity,
             json_body={"building_id": building_id},
         )
+        return map_created_requirement(dto)
 
     async def update_applicant_fields(
         self,
@@ -124,8 +149,8 @@ class HttpBackendClient:
         expected_version: int,
         fields: ApplicantFieldsPatch,
     ) -> ApplicantFieldsSaveResult:
-        return await self._request_model(
-            ApplicantFieldsSaveResult,
+        dto = await self._request_model(
+            BackendFieldsSaveDTO,
             method="PATCH",
             path=f"/api/v1/requirements/{requirement_id}/applicant-fields",
             identity=identity,
@@ -134,16 +159,18 @@ class HttpBackendClient:
                 "fields": fields.model_dump(mode="json", exclude_unset=True),
             },
         )
+        return ApplicantFieldsSaveResult.model_validate(map_fields_save(dto).model_dump())
 
     async def get_requirement(
         self, *, identity: PlatformIdentity, requirement_id: int
     ) -> RequirementDetail:
-        return await self._request_model(
-            RequirementDetail,
+        dto = await self._request_model(
+            BackendRequirementDetailDTO,
             method="GET",
             path=f"/api/v1/requirements/{requirement_id}",
             identity=identity,
         )
+        return map_requirement_detail(dto)
 
     async def list_requirements(
         self,
@@ -156,8 +183,8 @@ class HttpBackendClient:
     ) -> RequirementPage:
         if page < 1 or not 1 <= page_size <= 100:
             raise ValueError("invalid pagination")
-        return await self._request_model(
-            RequirementPage,
+        dto = await self._request_model(
+            BackendRequirementPageDTO,
             method="GET",
             path="/api/v1/requirements",
             identity=identity,
@@ -168,6 +195,7 @@ class HttpBackendClient:
                 "page_size": page_size,
             },
         )
+        return map_requirement_page(dto)
 
     async def list_handler_candidates(
         self,
@@ -182,13 +210,14 @@ class HttpBackendClient:
             RoleCode.WAREHOUSE_MANAGER,
         }:
             raise ValueError("unsupported handler target role")
-        return await self._request_model(
-            HandlerCandidates,
+        dto = await self._request_model(
+            BackendHandlerCandidatesDTO,
             method="GET",
             path=f"/api/v1/requirements/{requirement_id}/handler-candidates",
             identity=identity,
             query={"target_role": target_role.value},
         )
+        return map_handler_candidates(dto)
 
     async def _review_transition(
         self,
@@ -200,8 +229,8 @@ class HttpBackendClient:
         assigned_to_employee_id: int,
         action_token: UUID,
     ) -> RequirementTransitionResult:
-        return await self._request_model(
-            RequirementTransitionResult,
+        dto = await self._request_model(
+            BackendRequirementMutationDTO,
             method="POST",
             path=f"/api/v1/requirements/{requirement_id}/{path_action}",
             identity=identity,
@@ -211,6 +240,7 @@ class HttpBackendClient:
                 "action_token": str(action_token),
             },
         )
+        return map_requirement_transition(dto)
 
     async def submit_review(
         self,
@@ -255,9 +285,9 @@ class HttpBackendClient:
         requirement_id: int,
         expected_version: int,
         fields: ReviewFieldsPatch,
-    ) -> ReviewFieldsSaveResult:
-        return await self._request_model(
-            ReviewFieldsSaveResult,
+    ) -> FieldsSaveResult:
+        dto = await self._request_model(
+            BackendFieldsSaveDTO,
             method="PATCH",
             path=f"/api/v1/requirements/{requirement_id}/review-fields",
             identity=identity,
@@ -266,6 +296,7 @@ class HttpBackendClient:
                 "fields": fields.model_dump(mode="json", exclude_unset=True),
             },
         )
+        return map_fields_save(dto)
 
     async def reject_requirement(
         self,
@@ -276,8 +307,8 @@ class HttpBackendClient:
         reason: str,
         action_token: UUID,
     ) -> RequirementTransitionResult:
-        return await self._request_model(
-            RequirementTransitionResult,
+        dto = await self._request_model(
+            BackendRequirementMutationDTO,
             method="POST",
             path=f"/api/v1/requirements/{requirement_id}/reject",
             identity=identity,
@@ -287,6 +318,7 @@ class HttpBackendClient:
                 "action_token": str(action_token),
             },
         )
+        return map_requirement_transition(dto)
 
     async def submit_purchaser(
         self,
@@ -297,8 +329,8 @@ class HttpBackendClient:
         assigned_to_employee_id: int,
         action_token: UUID,
     ) -> RequirementTransitionResult:
-        return await self._request_model(
-            RequirementTransitionResult,
+        dto = await self._request_model(
+            BackendRequirementMutationDTO,
             method="POST",
             path=f"/api/v1/requirements/{requirement_id}/submit-purchaser",
             identity=identity,
@@ -308,6 +340,7 @@ class HttpBackendClient:
                 "action_token": str(action_token),
             },
         )
+        return map_requirement_transition(dto)
 
     async def start_purchase(
         self,
@@ -317,13 +350,14 @@ class HttpBackendClient:
         expected_version: int,
         action_token: UUID,
     ) -> RequirementTransitionResult:
-        return await self._request_model(
-            RequirementTransitionResult,
+        dto = await self._request_model(
+            BackendRequirementMutationDTO,
             method="POST",
             path=f"/api/v1/requirements/{requirement_id}/start-purchase",
             identity=identity,
             json_body={"expected_version": expected_version, "action_token": str(action_token)},
         )
+        return map_requirement_transition(dto)
 
     async def search_suppliers(
         self,
@@ -337,13 +371,14 @@ class HttpBackendClient:
             raise ValueError("keyword must not be empty")
         if page < 1 or not 1 <= page_size <= 100:
             raise ValueError("invalid pagination")
-        return await self._request_model(
-            SupplierPage,
+        dto = await self._request_model(
+            BackendSupplierPageDTO,
             method="GET",
             path="/api/v1/suppliers",
             identity=identity,
             query={"keyword": keyword.strip(), "page": page, "page_size": page_size},
         )
+        return map_supplier_page(dto)
 
     async def get_supplier(
         self,
@@ -351,12 +386,13 @@ class HttpBackendClient:
         identity: PlatformIdentity,
         supplier_id: int,
     ) -> SupplierDetail:
-        return await self._request_model(
-            SupplierDetail,
+        dto = await self._request_model(
+            BackendSupplierDetailDTO,
             method="GET",
             path=f"/api/v1/suppliers/{supplier_id}",
             identity=identity,
         )
+        return map_supplier_detail(dto)
 
     async def create_supplier(
         self,
@@ -364,13 +400,21 @@ class HttpBackendClient:
         identity: PlatformIdentity,
         command: SupplierUpsertCommand,
     ) -> SupplierSummary:
-        return await self._request_model(
-            SupplierSummary,
+        dto = await self._request_model(
+            BackendSupplierCreatedDTO,
             method="POST",
             path="/api/v1/suppliers",
             identity=identity,
-            json_body=command.model_dump(mode="json"),
+            json_body={
+                "supplier_name": command.supplier_name,
+                "unified_social_credit_code": command.supplier_tax_number,
+                "bank_name": command.bank_name,
+                "bank_account": command.bank_account,
+                "registered_address": command.registered_address,
+                "contract_contact_info": command.contract_contact_info,
+            },
         )
+        return map_supplier_created(dto)
 
     async def update_purchase_fields(
         self,
@@ -379,9 +423,9 @@ class HttpBackendClient:
         requirement_id: int,
         expected_version: int,
         fields: PurchaseFieldsPatch,
-    ) -> PurchaseFieldsSaveResult:
-        return await self._request_model(
-            PurchaseFieldsSaveResult,
+    ) -> FieldsSaveResult:
+        dto = await self._request_model(
+            BackendFieldsSaveDTO,
             method="PATCH",
             path=f"/api/v1/requirements/{requirement_id}/purchase-fields",
             identity=identity,
@@ -390,6 +434,7 @@ class HttpBackendClient:
                 "fields": fields.model_dump(mode="json", exclude_unset=True),
             },
         )
+        return map_fields_save(dto)
 
     async def submit_warehouse(
         self,
@@ -400,8 +445,8 @@ class HttpBackendClient:
         assigned_to_employee_id: int,
         action_token: UUID,
     ) -> RequirementTransitionResult:
-        return await self._request_model(
-            RequirementTransitionResult,
+        dto = await self._request_model(
+            BackendRequirementMutationDTO,
             method="POST",
             path=f"/api/v1/requirements/{requirement_id}/submit-warehouse",
             identity=identity,
@@ -411,6 +456,7 @@ class HttpBackendClient:
                 "action_token": str(action_token),
             },
         )
+        return map_requirement_transition(dto)
 
     async def update_warehouse_fields(
         self,
@@ -419,9 +465,9 @@ class HttpBackendClient:
         requirement_id: int,
         expected_version: int,
         fields: WarehouseFieldsPatch,
-    ) -> WarehouseFieldsSaveResult:
-        return await self._request_model(
-            WarehouseFieldsSaveResult,
+    ) -> FieldsSaveResult:
+        dto = await self._request_model(
+            BackendFieldsSaveDTO,
             method="PATCH",
             path=f"/api/v1/requirements/{requirement_id}/warehouse-fields",
             identity=identity,
@@ -430,6 +476,7 @@ class HttpBackendClient:
                 "fields": fields.model_dump(mode="json", exclude_unset=True),
             },
         )
+        return map_fields_save(dto)
 
     async def complete_requirement(
         self,
@@ -439,13 +486,14 @@ class HttpBackendClient:
         expected_version: int,
         action_token: UUID,
     ) -> RequirementCompletionResult:
-        return await self._request_model(
-            RequirementCompletionResult,
+        dto = await self._request_model(
+            BackendRequirementMutationDTO,
             method="POST",
             path=f"/api/v1/requirements/{requirement_id}/complete",
             identity=identity,
             json_body={"expected_version": expected_version, "action_token": str(action_token)},
         )
+        return map_requirement_completion(dto)
 
     async def get_or_create_agent_conversation(
         self, *, identity: PlatformIdentity, current_action: str

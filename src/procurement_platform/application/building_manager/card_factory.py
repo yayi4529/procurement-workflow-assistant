@@ -57,7 +57,7 @@ class BuildingManagerCardFactory:
             specs = (
                 (
                     "proposed_supplier_id",
-                    "拟定供应商 ID",
+                    "拟定供应商 ID (只能填写数字)",
                     str(review.proposed_supplier_id)
                     if review and review.proposed_supplier_id
                     else None,
