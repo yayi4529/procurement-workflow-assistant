@@ -1691,3 +1691,6 @@ git log -5 --oneline
   准，跨角色通知仅由后端 Outbox 驱动。
 - Task 6：仓库管理员无 LLM 正式卡片流程已完成，包括待办与详情、仓库位置和实际入库
   数量保存、少收备注规则、一次性完成确认及 `COMPLETED/current_handler=null` 展示。
+- Task 7：无 LLM 正式流程已封板；显式关闭 LLM 且不配置 OpenAI/Agent Session 时，
+  四角色可完成驳回重提及 DRAFT 到 COMPLETED 的完整状态链。正式通知事件 Schema
+  未冻结，未绕过后端 Outbox。

@@ -81,3 +81,12 @@ PENDING_WAREHOUSE 的无 LLM 集成链路。
 覆盖 `warehouse-fields` 与 `complete` 的方法、路径和 JSON 契约；覆盖字符串 Decimal
 数量、零/负数、等量、多收、少收无备注、少收补备注、部分更新、显式 null、字段完整性、
 current_handler 清空和从 PENDING_WAREHOUSE 到 COMPLETED 的无 LLM 集成链路。
+
+## Task 7 测试
+
+- 显式解析 `PROCUREMENT_LLM_ENABLED=false`，无 OpenAI 配置时容器可构建；
+- 同一 Fake 后端切换后端返回的四角色身份，覆盖驳回、原单重提和完整状态链；
+- 断言正式 E2E 没有调用任一 Agent Session 接口；
+- 架构测试禁止正式卡片应用模块导入 LLM、OpenAI 或 Agent Session；
+- 通知网关不得依赖 `BackendClient` 或任何业务流转方法；
+- Task 2～6 回归继续覆盖事件/通知去重、版本冲突、旧卡片刷新、权限和字段完整性。

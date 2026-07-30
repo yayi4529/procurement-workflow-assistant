@@ -24,7 +24,14 @@ def environment(**overrides: str) -> dict[str, str]:
 def test_settings_load_and_hide_secret() -> None:
     settings = Settings.from_env(environment())
     assert settings.backend_request_timeout_seconds == 10
+    assert settings.llm_enabled is False
     assert "secret" not in repr(settings)
+
+
+def test_llm_setting_is_explicit_and_strict() -> None:
+    assert Settings.from_env(environment(PROCUREMENT_LLM_ENABLED="true")).llm_enabled is True
+    with pytest.raises(ValueError, match="boolean"):
+        Settings.from_env(environment(PROCUREMENT_LLM_ENABLED="sometimes"))
 
 
 def test_missing_secret_fails_fast() -> None:

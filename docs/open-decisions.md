@@ -89,3 +89,11 @@ Schema（包括字段是否必返、时间字段和分页元数据的精确命�
 - 仓库字段保存后的 `missing_fields` 顺序和 `allowed_actions` 精确编码尚未冻结。
 - `completed_at` 是否始终必返、时区格式及重复 action token 的成功/错误响应形态尚未冻结。
 - COMPLETED 事件的正式 Outbox `event_type` 与需求人、楼长、采购员通知 Payload 尚未冻结。
+
+## Task 7 外部阻塞
+
+- 正式通知 `event_type` 与 Payload Schema 仍未冻结，因此没有创造生产 Renderer；
+ 业务状态 E2E 已完成，通知链仍只允许后端 Outbox 调用通知网关。
+- 未提供可用本地后端地址、四角色测试账号及隔离测试数据，因此未执行真实 OpenAPI 或
+ 真实写入 smoke；自动验收使用严格 Fake/HTTP Contract。
+- 通知网关生产持久化幂等方案仍未冻结，内存 Store 继续只允许 development/test。

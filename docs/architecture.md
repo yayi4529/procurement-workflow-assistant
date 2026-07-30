@@ -124,3 +124,12 @@ FastAPI、httpx 或飞书 SDK。通知链路不持有 `BackendClient`，失败�
 
 准备完成前重新读取后端详情并以后端 `fields_complete`、`allowed_actions` 和最新 version
 为准。正式完成不直接通知需求人、楼长或采购员。
+
+## Task 7 无 LLM 封板
+
+`PROCUREMENT_LLM_ENABLED=false` 是正式流程默认值。当前容器没有 LLM 或
+Assistant Orchestrator 构造路径，四角色卡片 Application Service 仅依赖
+`BackendClient`，不需要 OpenAI 配置或 Agent Session。
+
+永久测试保护四角色 card/application 不导入 LLM 或 Agent Session、正式动作不直接发
+跨角色通知，以及 `NotificationGatewayService` 不依赖业务流转接口。

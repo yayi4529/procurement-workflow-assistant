@@ -254,3 +254,12 @@ POST  /api/v1/requirements/{id}/complete
 
 `warehouse_location`、`received_quantity`、`receipt_remark` 支持部分更新与显式
 `null`；数量保持字符串。少收备注与字段完整性最终以后端响应为准。
+
+## Task 7 无 LLM E2E 接口集合
+
+Task 7 不新增后端契约，只组合 Task 1～6 已实现接口：`users/me`、采购单创建/详情、
+四阶段字段 PATCH、处理人候选，以及 `submit-review`、`resubmit-review`、`reject`、
+`submit-purchaser`、`start-purchase`、`submit-warehouse`、`complete`。
+
+自动验收使用 Fake/Mock，不访问真实数据库；真实后端 OpenAPI smoke 需可用地址和明确
+测试账号后单独执行。

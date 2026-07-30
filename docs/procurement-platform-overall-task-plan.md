@@ -1598,9 +1598,10 @@ git status --short
 
 ```text
 Task 1：已完成
-Task 2：待开发
+Task 2：已完成基础设施
 Task 3～6：已完成
-Task 7～13：待开发
+Task 7：已完成
+Task 8～13：待开发
 ```
 
 当前最重要的近期目标：
@@ -1613,6 +1614,12 @@ Task 7～13：待开发
 ```
 
 这是本项目最稳妥的开发顺序。
+
+## Task 7 交付状态
+
+已通过无 OpenAI 配置、无 Agent Session 调用的 Application E2E 验证四角色完整状态链及
+驳回重提。架构测试永久隔离正式卡片、LLM 与通知业务流转；未冻结的正式通知事件继续
+记录为外部阻塞，不创造平行契约。
 ## Task 3 交付状态
 
 需求人正式卡片流程已交付。验收以 FakeBackendClient 从 DRAFT 进入

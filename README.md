@@ -11,6 +11,9 @@
 
 即使 LLM 不可用，四角色正式流程仍必须可运行。
 
+正式流程默认使用 `PROCUREMENT_LLM_ENABLED=false`。关闭时容器不构造 LLM、
+Assistant Orchestrator 或 Agent Session 组件。
+
 ## 四个角色
 
 - 需求人 `APPLICANT`
@@ -157,3 +160,10 @@ and cross-role notifications remain backend-Outbox-only.
 已实现完全不依赖 LLM/Agent Session 的仓库待办、入库字段部分保存、少收备注提示与
 后端校验、一次性完成确认。保存携带 `expected_version`，完成携带稳定
 `action_token`；完成通知仅由后端 Outbox 驱动。
+
+## Task 7 无 LLM 全流程封板
+
+已用同一 Fake 后端串联四角色应用服务，验证 DRAFT、驳回、原单重提、
+PENDING_PURCHASE、PURCHASING、PENDING_WAREHOUSE 到 COMPLETED 的完整状态链。
+永久架构测试禁止正式卡片模块导入 LLM/Agent Session，并禁止通知网关调用业务流转
+接口。验收范围和外部阻塞见 `docs/no-llm-e2e-acceptance.md`。

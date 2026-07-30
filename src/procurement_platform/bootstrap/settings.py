@@ -70,6 +70,7 @@ class Settings:
     backend_base_url: str
     backend_request_timeout_seconds: float
     identity_gateway_secret: SecretStr = field(repr=False)
+    llm_enabled: bool = False
     allow_test_platform: bool = False
     feishu: FeishuSettings = field(default_factory=FeishuSettings)
     notification_gateway: NotificationGatewaySettings = field(
@@ -110,6 +111,7 @@ class Settings:
                 required("PROCUREMENT_BACKEND_REQUEST_TIMEOUT_SECONDS")
             ),
             identity_gateway_secret=SecretStr(required("PROCUREMENT_IDENTITY_GATEWAY_SECRET")),
+            llm_enabled=_parse_bool(values.get("PROCUREMENT_LLM_ENABLED", "false")),
             allow_test_platform=_parse_bool(values.get("PROCUREMENT_ALLOW_TEST_PLATFORM", "false")),
             feishu=FeishuSettings(
                 enabled=_parse_bool(values.get("PROCUREMENT_FEISHU_ENABLED", "false")),

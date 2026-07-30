@@ -35,3 +35,34 @@ def test_application_does_not_import_feishu_sdk() -> None:
             if isinstance(node, ast.Import)
             for alias in node.names
         )
+
+
+def test_formal_card_and_application_modules_do_not_import_llm_or_agent_session() -> None:
+    roots = (
+        Path("src/procurement_platform/application/applicant"),
+        Path("src/procurement_platform/application/building_manager"),
+        Path("src/procurement_platform/application/purchaser"),
+        Path("src/procurement_platform/application/warehouse"),
+        Path("src/procurement_platform/application/inbound/card_interaction_handler.py"),
+    )
+    files = [path for root in roots for path in ([root] if root.is_file() else root.rglob("*.py"))]
+    forbidden = ("llm", "openai", "assistant_session", "assistantorchestrator")
+    for path in files:
+        source = path.read_text(encoding="utf-8").lower()
+        assert all(name not in source for name in forbidden), path
+
+
+def test_notification_gateway_has_no_business_transition_dependency() -> None:
+    path = Path("src/procurement_platform/application/notifications/gateway_service.py")
+    source = path.read_text(encoding="utf-8").lower()
+    forbidden = (
+        "backendclient",
+        "submit_review",
+        "resubmit_review",
+        "reject_requirement",
+        "submit_purchaser",
+        "start_purchase",
+        "submit_warehouse",
+        "complete_requirement",
+    )
+    assert all(name not in source for name in forbidden)
