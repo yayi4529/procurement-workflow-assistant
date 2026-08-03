@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from httpx import AsyncClient
+from httpx import AsyncClient, HTTPStatusError
 
 from app.core.config import Settings, get_settings
 from app.models.notification import NotificationOutbox
@@ -50,5 +50,12 @@ class HttpNotificationSender:
                     json=body,
                 )
                 response.raise_for_status()
+        except HTTPStatusError as exc:
+            response_detail = exc.response.text.strip()[:500]
+            raise NotificationDeliveryError(
+                "notification gateway rejected request: "
+                f"HTTP {exc.response.status_code}"
+                + (f" detail={response_detail}" if response_detail else "")
+            ) from exc
         except Exception as exc:
             raise NotificationDeliveryError(f"通知网关调用失败：{type(exc).__name__}") from exc

@@ -30,6 +30,21 @@ class ProcurementRepository:
     ) -> Supplier | None:
         return await session.get(Supplier, supplier_id)
 
+    async def get_active_supplier_by_name(
+        self,
+        session: AsyncSession,
+        supplier_name: str,
+    ) -> Supplier | None:
+        return await session.scalar(
+            select(Supplier)
+            .where(
+                Supplier.supplier_name == supplier_name,
+                Supplier.status.is_(True),
+            )
+            .order_by(Supplier.supplier_id)
+            .limit(1)
+        )
+
     async def get_execution(
         self,
         session: AsyncSession,

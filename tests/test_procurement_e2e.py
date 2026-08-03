@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.core.gateway_auth import build_gateway_signature
 from app.db.session import async_session_factory, engine
 from app.main import app
+from app.models.identity import EmployeeExternalIdentity
 from app.models.notification import NotificationOutbox
 from app.models.procurement import (
     PurchaseExecution,
@@ -19,6 +20,10 @@ from app.models.procurement import (
     WarehouseReceipt,
 )
 from scripts.seed_demo_data import seed_demo_data
+
+FEISHU_E2E_IDENTITIES = tuple(
+    (employee_id, f"ou_e2e_{employee_id}") for employee_id in range(90001, 90005)
+)
 
 
 def signed_headers(method: str, path: str, platform_user_id: str) -> dict[str, str]:
@@ -87,9 +92,40 @@ async def cleanup_requirement(request_id: int) -> None:
 
 
 @pytest.fixture(autouse=True)
-async def ensure_main_flow_dependencies() -> None:
+async def ensure_main_flow_dependencies():
     await engine.dispose()
     await seed_demo_data()
+    async with async_session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                delete(EmployeeExternalIdentity).where(
+                    EmployeeExternalIdentity.platform_type == "FEISHU",
+                    EmployeeExternalIdentity.platform_user_id.in_(
+                        platform_user_id for _, platform_user_id in FEISHU_E2E_IDENTITIES
+                    ),
+                )
+            )
+            session.add_all(
+                EmployeeExternalIdentity(
+                    employee_id=employee_id,
+                    platform_type="FEISHU",
+                    platform_user_id=platform_user_id,
+                    status=True,
+                )
+                for employee_id, platform_user_id in FEISHU_E2E_IDENTITIES
+            )
+    await engine.dispose()
+    yield
+    async with async_session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                delete(EmployeeExternalIdentity).where(
+                    EmployeeExternalIdentity.platform_type == "FEISHU",
+                    EmployeeExternalIdentity.platform_user_id.in_(
+                        platform_user_id for _, platform_user_id in FEISHU_E2E_IDENTITIES
+                    ),
+                )
+            )
     await engine.dispose()
 
 
@@ -217,7 +253,7 @@ async def test_complete_procurement_flow_with_rejection_and_resubmission() -> No
                 json={
                     "expected_version": 5,
                     "fields": {
-                        "proposed_supplier_id": 92001,
+                        "proposed_supplier_name": "TEST-E2E-SUPPLIER",
                         "supplier_contact_name": "测试联系人",
                         "supplier_contact_info": "13900009201",
                         "estimated_unit_price": "1000.00",
@@ -272,7 +308,6 @@ async def test_complete_procurement_flow_with_rejection_and_resubmission() -> No
                 json={
                     "expected_version": 8,
                     "fields": {
-                        "supplier_id": 92001,
                         "actual_unit_price": "950.00",
                         "actual_total_price": "999.00",
                         "purchased_at": "2026-08-03T06:30:00Z",
@@ -290,7 +325,6 @@ async def test_complete_procurement_flow_with_rejection_and_resubmission() -> No
                 json={
                     "expected_version": 8,
                     "fields": {
-                        "supplier_id": 92001,
                         "supplier_tax_number": "TEST-CREDIT-92001",
                         "bank_name": "测试银行",
                         "bank_account": "TEST-ACCOUNT-92001",
@@ -385,11 +419,9 @@ async def test_complete_procurement_flow_with_rejection_and_resubmission() -> No
             assert detail_data["status"] == "COMPLETED"
             assert len(detail_data["review_records"]) == 2
             assert detail_data["warehouse_receipt"]["received_quantity"] == "4.000"
+            assert detail_data["purchase_execution"]["supplier_name"] == "TEST-E2E-SUPPLIER"
             assert detail_data["purchase_execution"]["bank_account"] == "TEST****2001"
-            assert (
-                detail_data["purchase_execution"]["purchased_at"]
-                == "2026-08-03T14:30:00"
-            )
+            assert detail_data["purchase_execution"]["purchased_at"] == "2026-08-03T14:30:00"
 
             listed = await call(
                 client,
@@ -413,8 +445,23 @@ async def test_complete_procurement_flow_with_rejection_and_resubmission() -> No
                     .select_from(NotificationOutbox)
                     .where(NotificationOutbox.request_id == request_id)
                 )
+                notification_event_types = list(
+                    (
+                        await session.scalars(
+                            select(NotificationOutbox.event_type)
+                            .where(NotificationOutbox.request_id == request_id)
+                            .order_by(NotificationOutbox.notification_id)
+                        )
+                    ).all()
+                )
             assert log_count == 8
-            assert notification_count == 3
+            assert notification_count == 7
+            assert notification_event_types[:4] == [
+                "REQUIREMENT_PENDING_REVIEW",
+                "REQUIREMENT_PENDING_REVIEW",
+                "REQUIREMENT_PENDING_PURCHASE",
+                "REQUIREMENT_PENDING_WAREHOUSE",
+            ]
         finally:
             if request_id is not None:
                 await cleanup_requirement(request_id)

@@ -74,6 +74,9 @@ IDC网络、其他。
 & 'F:\Anaconda\envs\purchasing-agent\python.exe' scripts\seed_demo_data.py
 ```
 
+该脚本会重建测试员工 `90001`～`90008` 的外部身份。若已为真实飞书联调执行过
+`scripts\bind_feishu_test_identities.py --apply`，重新运行演示种子后必须再次执行该绑定命令。
+
 脚本只重建自身维护的测试记录，可重复执行。它覆盖采购全部状态、审核驳回与重提、
 三种入库数量关系、供应商快照与黑名单、Agent 会话及通知状态。
 

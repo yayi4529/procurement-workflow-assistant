@@ -53,7 +53,7 @@ class RejectRequest(ActionRequest):
 
 class ReviewFields(BaseModel):
     proposed_supplier_id: int | None = None
-    proposed_supplier_name: str | None = Field(default=None, max_length=200)
+    proposed_supplier_name: str | None = Field(default=None, min_length=1, max_length=200)
     supplier_contact_name: str | None = Field(default=None, max_length=100)
     supplier_contact_info: str | None = Field(default=None, max_length=255)
     supplier_link: str | None = Field(default=None, max_length=1000)
@@ -83,7 +83,7 @@ class SaveReviewFieldsRequest(BaseModel):
 
 
 class PurchaseFields(BaseModel):
-    supplier_id: int
+    supplier_id: int | None = None
     supplier_tax_number: str | None = Field(default=None, max_length=50)
     bank_name: str | None = Field(default=None, max_length=200)
     bank_account: str | None = Field(default=None, max_length=255)

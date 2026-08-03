@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +22,8 @@ from app.schemas.notifications import (
     ResendNotificationData,
 )
 from app.services.permissions import require_any_role
+
+logger = logging.getLogger(__name__)
 
 
 class NotificationService:
@@ -54,6 +57,12 @@ class NotificationService:
             try:
                 await self.sender.send(notification)
             except Exception as exc:
+                logger.warning(
+                    "notification_delivery_failed notification_id=%s event_type=%s error=%s",
+                    notification.notification_id,
+                    notification.event_type,
+                    str(exc).strip() or type(exc).__name__,
+                )
                 failed += 1
                 notification.retry_count += 1
                 notification.status = "FAILED"

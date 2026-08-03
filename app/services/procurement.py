@@ -15,6 +15,7 @@ from app.models.procurement import (
     PurchaseOperationLog,
     PurchaseRequest,
     PurchaseReview,
+    Supplier,
     WarehouseReceipt,
 )
 from app.repositories.procurement import ProcurementRepository
@@ -173,7 +174,9 @@ class ProcurementService:
                 f"需求人字段未完成：{', '.join(missing)}",
                 400,
             )
-        return await self.workflow.transition(session, current_user, command)
+        result = await self.workflow.transition(session, current_user, command)
+        await self._create_assignment_notification(session, command, "REQUIREMENT_PENDING_REVIEW")
+        return result
 
     async def reject(
         self,
@@ -216,6 +219,10 @@ class ProcurementService:
 
         review = await self._get_or_create_review(session, request, current_user)
         values = fields.model_dump(exclude_unset=True)
+        proposed_supplier_name = values.get("proposed_supplier_name")
+        if proposed_supplier_name is not None:
+            values["proposed_supplier_name"] = proposed_supplier_name.strip()
+            values["proposed_supplier_id"] = None
         supplier_id = values.get("proposed_supplier_id")
         if supplier_id is not None:
             supplier = await self.repository.get_supplier(session, supplier_id)
@@ -266,7 +273,9 @@ class ProcurementService:
         review.review_status = ReviewStatus.COMPLETED.value
         review.review_result = "APPROVED"
         review.reviewed_at = datetime.now()
-        return await self.workflow.transition(session, current_user, command)
+        result = await self.workflow.transition(session, current_user, command)
+        await self._create_assignment_notification(session, command, "REQUIREMENT_PENDING_PURCHASE")
+        return result
 
     async def start_purchase(
         self,
@@ -290,9 +299,11 @@ class ProcurementService:
             raise AppError("INVALID_STATUS", "当前状态不允许保存采购字段", 409)
         if request.version != expected_version:
             raise AppError("CONCURRENT_MODIFICATION", "采购申请版本已变化", 409)
-        supplier = await self.repository.get_supplier(session, fields.supplier_id)
-        if supplier is None or not supplier.status:
-            raise AppError("SUPPLIER_NOT_FOUND", "供应商不存在或已停用", 404)
+        supplier = await self._resolve_purchase_supplier(
+            session,
+            request_id=request_id,
+            supplier_id=fields.supplier_id,
+        )
 
         calculated_total = (request.quantity * fields.actual_unit_price).quantize(Decimal("0.01"))
         if fields.actual_total_price is not None and fields.actual_total_price != calculated_total:
@@ -354,6 +365,32 @@ class ProcurementService:
         await session.flush()
         return request
 
+    async def _resolve_purchase_supplier(
+        self,
+        session: AsyncSession,
+        *,
+        request_id: int,
+        supplier_id: int | None,
+    ) -> Supplier:
+        if supplier_id is not None:
+            supplier = await self.repository.get_supplier(session, supplier_id)
+            if supplier is None or not supplier.status:
+                raise AppError("SUPPLIER_NOT_FOUND", "供应商不存在或已停用", 404)
+            return supplier
+
+        review = await self.repository.get_latest_review(session, request_id)
+        supplier_name = review.proposed_supplier_name.strip() if review else ""
+        if not supplier_name:
+            raise AppError("SUPPLIER_NOT_FOUND", "楼长尚未填写供应商名称", 400)
+        supplier = await self.repository.get_active_supplier_by_name(session, supplier_name)
+        if supplier is None:
+            supplier = Supplier(supplier_name=supplier_name, status=True)
+            session.add(supplier)
+            await session.flush()
+        if review is not None:
+            review.proposed_supplier_id = supplier.supplier_id
+        return supplier
+
     async def submit_warehouse(
         self,
         session: AsyncSession,
@@ -363,7 +400,11 @@ class ProcurementService:
         execution = await self.repository.get_execution(session, command.request_id)
         if execution is None:
             raise AppError("MISSING_REQUIRED_FIELDS", "采购员字段未完成", 400)
-        return await self.workflow.transition(session, current_user, command)
+        result = await self.workflow.transition(session, current_user, command)
+        await self._create_assignment_notification(
+            session, command, "REQUIREMENT_PENDING_WAREHOUSE"
+        )
+        return result
 
     async def save_warehouse_fields(
         self,
@@ -649,9 +690,10 @@ class ProcurementService:
                 session,
                 receiver_id,
             )
-            if not identities:
+            identity = self._feishu_identity(identities)
+            if identity is None:
                 continue
-            platform_type, platform_user_id = identities[0]
+            platform_type, platform_user_id = identity
             session.add(
                 NotificationOutbox(
                     request_id=request.request_id,
@@ -670,6 +712,51 @@ class ProcurementService:
                 )
             )
         await session.flush()
+
+    async def _create_assignment_notification(
+        self,
+        session: AsyncSession,
+        command: WorkflowCommand,
+        event_type: str,
+    ) -> None:
+        request = await self._get_request(session, command.request_id)
+        receiver_id = request.current_handler_employee_id
+        if receiver_id is None:
+            return
+        identities = await self.repository.get_platform_identities(session, receiver_id)
+        identity = self._feishu_identity(identities)
+        if identity is None:
+            return
+        platform_type, platform_user_id = identity
+        session.add(
+            NotificationOutbox(
+                request_id=request.request_id,
+                event_type=event_type,
+                receiver_employee_id=receiver_id,
+                platform_type=platform_type,
+                receiver_platform_user_id_snapshot=platform_user_id,
+                dedup_key=f"{event_type}:{command.action_token}:{receiver_id}",
+                payload={
+                    "requirement_id": request.request_id,
+                    "requirement_no": request.request_no,
+                    "status": request.status,
+                },
+                status="PENDING",
+                retry_count=0,
+            )
+        )
+        await session.flush()
+
+    @staticmethod
+    def _feishu_identity(identities: list[tuple[str, str]]) -> tuple[str, str] | None:
+        return next(
+            (
+                (platform_type, platform_user_id)
+                for platform_type, platform_user_id in identities
+                if platform_type.upper() == "FEISHU"
+            ),
+            None,
+        )
 
     @staticmethod
     def _naive_datetime(value: datetime) -> datetime:
