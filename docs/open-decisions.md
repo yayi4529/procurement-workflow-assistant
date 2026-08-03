@@ -17,6 +17,9 @@
 - `received_quantity`；
 - 楼长联系人姓名、信息和链接；
 - `update_supplier_profile`。
+- 正式交接通知：后端在同一事务中写入 `REQUIREMENT_PENDING_REVIEW`、
+  `REQUIREMENT_PENDING_PURCHASE`、`REQUIREMENT_PENDING_WAREHOUSE` Outbox；三者 payload
+  固定为 `requirement_id`、`requirement_no`、`status`。通知网关将它们分别渲染为楼长、采购员、仓库管理员的待办卡片。
 
 ## 仍待确认
 
@@ -24,33 +27,29 @@
 
 后端配置为 `NOTIFICATION_GATEWAY_URL`，但接收路径尚未冻结。
 
-### 2. 通知事件 Schema
-
-需冻结 event_type 列表、每种 payload、卡片模板和错误响应格式。
-
-### 3. 通知网关生产幂等存储
+### 2. 通知网关生产幂等存储
 
 网关必须按 Idempotency-Key 幂等，但外部 Agent 不直接访问采购后端 MySQL/Redis。需要确定生产存储方案。
 
-### 4. 通知责任文字冲突
+### 3. 通知责任文字冲突
 
 V1.5 个别流程接口仍写“Agent 侧发送提醒”，但 Outbox 与联调说明明确由后端 worker 调用通知网关。为防止双发，本项目暂以 Outbox 为唯一跨角色通知触发源，需后端最终确认。
 
-### 5. 品牌和型号是否业务必填
+### 4. 品牌和型号是否业务必填
 
 数据库 V1.4 将 brand/model 设为可选，旧业务描述要求必填。当前按后端为准：可推荐、可补全，但不阻止提交。
 
-### 6. 统计接口
+### 5. 统计接口
 
 采购历史接口返回明细，没有冻结统计接口。LLM 不得自行计算次数、价格区间和主要供应商。
 
-### 7. Agent 会话与当前用户精确响应 Schema
+### 6. Agent 会话与当前用户精确响应 Schema
 
 现有 V1.5 文档冻结了接口、主要字段和行为，但没有给出所有接口的完整响应 JSON
 Schema（包括字段是否必返、时间字段和分页元数据的精确命名）。Task 1 按当前文档建立了
 严格模型和契约测试；接入真实后端前，需以后端 OpenAPI 或联调响应样例逐字段确认。
 
-### 8. 飞书身份、角色与楼宇绑定入口
+### 7. 飞书身份、角色与楼宇绑定入口
 
 当前后端仅提供 `GET /api/v1/users/me` 查询已绑定身份，未提供员工、`FEISHU` 外部身份、
 角色或楼宇权限的创建、绑定或同步接口。真实飞书联调需要后端负责人提供受控的导入/同步

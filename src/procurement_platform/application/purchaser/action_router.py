@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from procurement_platform.application.purchaser.workflow_service import PurchaserWorkflowService
@@ -13,6 +14,20 @@ def _integer(value: JsonValue | None, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         raise ValueError(f"{name} is required")
     return int(value)
+
+
+def _normalize_purchase_datetime(value: JsonValue | None) -> JsonValue | None:
+    if not isinstance(value, str):
+        return value
+    normalized = value.strip()
+    if not normalized:
+        return None
+    for date_format in ("%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M"):
+        try:
+            return datetime.strptime(normalized, date_format).isoformat()
+        except ValueError:
+            continue
+    return normalized
 
 
 class PurchaserActionRouter:
@@ -60,8 +75,9 @@ class PurchaserActionRouter:
                 for name in PurchaseFieldsPatch.model_fields
                 if name in event.form_values
             }
-            if "supplier_id" in raw:
-                raw["supplier_id"] = int(str(raw["supplier_id"]))
+            raw.pop("supplier_id", None)
+            if "purchased_at" in raw:
+                raw["purchased_at"] = _normalize_purchase_datetime(raw["purchased_at"])
             if "update_supplier_profile" in raw:
                 raw["update_supplier_profile"] = raw["update_supplier_profile"] == "true"
             return await self._workflow.save_purchase_fields(

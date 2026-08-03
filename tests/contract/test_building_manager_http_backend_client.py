@@ -13,7 +13,7 @@ from tests.contract.test_http_backend_client import envelope, identity, make_cli
 async def test_building_manager_endpoint_contracts() -> None:
     requests: list[httpx.Request] = []
     _review_fields = {
-        "proposed_supplier_id": 8,
+        "proposed_supplier_name": "测试供应商",
         "supplier_contact_name": "王工",
         "supplier_contact_info": "13800000000",
         "supplier_link": None,

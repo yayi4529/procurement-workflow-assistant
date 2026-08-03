@@ -203,6 +203,7 @@ class ApplicantFieldsPatch(BaseModel):
 
 class ReviewFields(RequirementModel):
     proposed_supplier_id: int | None = None
+    proposed_supplier_name: str | None = None
     supplier_contact_name: str | None = None
     supplier_contact_info: str | None = None
     supplier_link: str | None = None
@@ -220,6 +221,7 @@ class ReviewFieldsPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     proposed_supplier_id: int | None = None
+    proposed_supplier_name: str | None = None
     supplier_contact_name: str | None = None
     supplier_contact_info: str | None = None
     supplier_link: str | None = None

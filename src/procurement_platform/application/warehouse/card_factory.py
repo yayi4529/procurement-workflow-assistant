@@ -72,7 +72,6 @@ class WarehouseCardFactory:
                     default_value=warehouse.receipt_remark if warehouse else None,
                     required=False,
                 ),
-                MarkdownBlock(markdown=f"**当前缺少:** {'、'.join(detail.missing_fields) or '无'}"),
             )
         )
         return InteractionView(
@@ -91,11 +90,6 @@ class WarehouseCardFactory:
                 ActionButton(
                     action_id="warehouse.prepare_complete",
                     label="确认完成入库",
-                    value={"requirement_id": detail.requirement_id},
-                ),
-                ActionButton(
-                    action_id="warehouse.refresh",
-                    label="刷新",
                     value={"requirement_id": detail.requirement_id},
                 ),
             ),

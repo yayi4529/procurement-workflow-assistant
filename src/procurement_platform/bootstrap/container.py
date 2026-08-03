@@ -36,6 +36,9 @@ from procurement_platform.application.notifications.gateway_service import (
 from procurement_platform.application.notifications.renderer_registry import (
     NotificationRendererRegistry,
 )
+from procurement_platform.application.notifications.workflow_assignment_renderer import (
+    WorkflowAssignmentRenderer,
+)
 from procurement_platform.application.purchaser.action_router import PurchaserActionRouter
 from procurement_platform.application.purchaser.workflow_service import PurchaserWorkflowService
 from procurement_platform.application.warehouse.action_router import WarehouseActionRouter
@@ -118,6 +121,12 @@ class ApplicationContainer:
             if settings.notification_gateway.enabled:
                 delivery_store = MemoryNotificationDeliveryStore()
                 registry = NotificationRendererRegistry()
+                for event_type in (
+                    "REQUIREMENT_PENDING_REVIEW",
+                    "REQUIREMENT_PENDING_PURCHASE",
+                    "REQUIREMENT_PENDING_WAREHOUSE",
+                ):
+                    registry.register(WorkflowAssignmentRenderer(event_type))
                 if settings.development_notification_renderer_enabled:
                     registry.register(DevelopmentNotificationRenderer())
                 container.notification_delivery_store = delivery_store

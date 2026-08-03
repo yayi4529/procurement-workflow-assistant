@@ -432,7 +432,7 @@ class FakeBackendClient:
                 }
             )
         required = (
-            "proposed_supplier_id",
+            "proposed_supplier_name",
             "supplier_contact_name",
             "supplier_contact_info",
             "estimated_unit_price",

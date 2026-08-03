@@ -60,6 +60,7 @@ class FeishuInteractionRenderer:
                     "tag": "select_static",
                     "name": element.name,
                     "label": {"tag": "plain_text", "content": element.label},
+                    "placeholder": {"tag": "plain_text", "content": f"请选择{element.label}"},
                     "required": element.required,
                     "options": [
                         {
@@ -77,6 +78,10 @@ class FeishuInteractionRenderer:
                     "tag": "date_picker",
                     "name": element.name,
                     "label": {"tag": "plain_text", "content": element.label},
+                    "placeholder": {
+                        "tag": "plain_text",
+                        "content": f"请选择{element.label}",
+                    },
                     "required": element.required,
                 }
                 if element.default_value is not None:

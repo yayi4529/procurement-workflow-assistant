@@ -162,7 +162,7 @@ async def test_reject_resubmit_then_full_four_role_flow_without_agent_session() 
         requirement_id,
         current.version,
         ReviewFieldsPatch(
-            proposed_supplier_id=8,
+            proposed_supplier_name="测试供应商",
             supplier_contact_name="王工",
             supplier_contact_info="13800000000",
             estimated_unit_price="100.00",

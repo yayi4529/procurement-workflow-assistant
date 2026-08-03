@@ -11,6 +11,7 @@ from procurement_platform.domain.errors import (
     ConcurrentModificationError,
     DuplicateOperationError,
     MissingRequiredFieldsError,
+    ValidationError,
 )
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.interaction import InteractionView
@@ -106,8 +107,41 @@ class ApplicantWorkflowService:
             )
 
     async def prepare(
-        self, identity: PlatformIdentity, requirement_id: int, *, resubmit: bool
+        self,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        *,
+        resubmit: bool,
+        expected_version: int | None = None,
+        fields: ApplicantFieldsPatch | None = None,
     ) -> InteractionView:
+        if expected_version is not None and fields is not None and fields.provided_fields():
+            try:
+                await self._backend.update_applicant_fields(
+                    identity=identity,
+                    requirement_id=requirement_id,
+                    expected_version=expected_version,
+                    fields=fields,
+                )
+            except ConcurrentModificationError:
+                detail = await self._backend.get_requirement(
+                    identity=identity, requirement_id=requirement_id
+                )
+                return self._cards.detail(
+                    detail,
+                    notice="版本已变化，我已刷新后端最新内容，请重新检查后再提交。",  # noqa: RUF001
+                )
+            except ValidationError:
+                detail = await self._backend.get_requirement(
+                    identity=identity, requirement_id=requirement_id
+                )
+                return self._cards.detail(
+                    detail,
+                    notice=(
+                        "保存失败：后端校验未通过。请确认设备专业使用下拉选项，"  # noqa: RUF001
+                        "数量为大于 0 的数字。"
+                    ),
+                )
         detail = await self._backend.get_requirement(
             identity=identity, requirement_id=requirement_id
         )

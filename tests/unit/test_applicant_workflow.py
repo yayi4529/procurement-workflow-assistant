@@ -6,7 +6,7 @@ from procurement_platform.adapters.backend.fake_client import FakeBackendClient
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
 from procurement_platform.domain.enums import PlatformType, RequirementStatus, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
-from procurement_platform.domain.interaction import TextInput
+from procurement_platform.domain.interaction import MarkdownBlock, SelectInput, TextInput
 from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     HandlerCandidate,
@@ -126,6 +126,51 @@ async def test_non_applicant_cannot_create_and_form_marks_brand_model_optional()
     }
     assert inputs["brand"].required is False
     assert inputs["model"].required is False
+    professions = [
+        element
+        for element in detail_view.elements
+        if isinstance(element, SelectInput) and element.name == "device_profession"
+    ]
+    assert len(professions) == 1
+    assert professions[0].required is True
+    assert all(
+        "当前缺少" not in element.markdown
+        for element in detail_view.elements
+        if isinstance(element, MarkdownBlock)
+    )
+    action_ids = {action.action_id for action in detail_view.actions}
+    assert "applicant.save" not in action_ids
+    prepare = next(
+        action for action in detail_view.actions if action.action_id == "applicant.prepare_submit"
+    )
+    assert prepare.value["expected_version"] == summary.version
+
+
+@pytest.mark.asyncio
+async def test_prepare_saves_form_fields_before_selecting_handler() -> None:
+    fake = backend()
+    summary = await fake.create_requirement(identity=identity(), building_id=1)
+    service = ApplicantWorkflowService(fake)
+
+    prepared = await service.prepare(
+        identity(),
+        summary.requirement_id,
+        expected_version=summary.version,
+        fields=ApplicantFieldsPatch(
+            device_profession="弱电",
+            device_name="交换机",
+            quantity="1",
+            unit="台",
+            application_reason="网络扩容",
+        ),
+        resubmit=False,
+    )
+
+    detail = await fake.get_requirement(identity=identity(), requirement_id=summary.requirement_id)
+    assert prepared.title == "选择审批楼长"
+    assert detail.fields_complete is True
+    assert fake.call_counts["update_applicant_fields"] == 1
+    assert fake.call_counts["list_handler_candidates"] == 1
 
 
 @pytest.mark.asyncio

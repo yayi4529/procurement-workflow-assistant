@@ -31,6 +31,15 @@ def _optional_positive_integer(value: JsonValue | None, name: str) -> int | None
     return parsed
 
 
+def _normalize_feishu_date(value: JsonValue | None) -> JsonValue | None:
+    if not isinstance(value, str):
+        return value
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized.split(maxsplit=1)[0]
+
+
 class BuildingManagerActionRouter:
     def __init__(self, workflow: BuildingManagerWorkflowService) -> None:
         self._workflow = workflow
@@ -71,6 +80,8 @@ class BuildingManagerActionRouter:
                 )
             if "need_contract" in raw:
                 raw["need_contract"] = raw["need_contract"] == "true"
+            if "expected_arrival_date" in raw:
+                raw["expected_arrival_date"] = _normalize_feishu_date(raw["expected_arrival_date"])
             return await self._workflow.save_review_fields(
                 identity,
                 requirement_id,

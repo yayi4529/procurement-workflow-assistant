@@ -7,7 +7,7 @@ from procurement_platform.domain.enums import PlatformType
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import CardInteractionEvent
 from procurement_platform.domain.interaction import InteractionView
-from procurement_platform.domain.json_types import JsonValue
+from procurement_platform.domain.json_types import JsonObject, JsonValue
 from procurement_platform.domain.requirement import ApplicantFieldsPatch
 
 
@@ -15,6 +15,28 @@ def _integer(value: JsonValue | None, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         raise ValueError(f"{name} is required")
     return int(value)
+
+
+def _form_scalar(value: JsonValue) -> JsonValue:
+    if isinstance(value, dict):
+        selected = value.get("selected_option")
+        if isinstance(selected, dict) and "value" in selected:
+            return selected["value"]
+        if "value" in value:
+            return value["value"]
+        if "text" in value:
+            return value["text"]
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if stripped else None
+    return value
+
+
+def _applicant_patch(values: JsonObject) -> ApplicantFieldsPatch:
+    names = ApplicantFieldsPatch.model_fields
+    return ApplicantFieldsPatch.model_validate(
+        {name: _form_scalar(values[name]) for name in names if name in values}
+    )
 
 
 class ApplicantActionRouter:
@@ -40,20 +62,21 @@ class ApplicantActionRouter:
                 identity, _integer(value.get("requirement_id"), "requirement_id")
             )
         if action == "applicant.save":
-            names = ApplicantFieldsPatch.model_fields
-            patch = ApplicantFieldsPatch.model_validate(
-                {name: event.form_values[name] for name in names if name in event.form_values}
-            )
             return await self._workflow.save(
                 identity,
                 _integer(value.get("requirement_id"), "requirement_id"),
                 _integer(value.get("expected_version"), "expected_version"),
-                patch,
+                _applicant_patch(event.form_values),
             )
         if action in {"applicant.prepare_submit", "applicant.prepare_resubmit"}:
+            raw_version = value.get("expected_version")
             return await self._workflow.prepare(
                 identity,
                 _integer(value.get("requirement_id"), "requirement_id"),
+                expected_version=(
+                    _integer(raw_version, "expected_version") if raw_version is not None else None
+                ),
+                fields=_applicant_patch(event.form_values),
                 resubmit=action.endswith("resubmit"),
             )
         if action == "applicant.confirm_handler":

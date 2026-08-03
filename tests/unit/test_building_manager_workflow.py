@@ -4,6 +4,9 @@ from uuid import UUID
 import pytest
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
+from procurement_platform.application.building_manager.action_router import (
+    _normalize_feishu_date,
+)
 from procurement_platform.application.building_manager.workflow_service import (
     BuildingManagerWorkflowService,
 )
@@ -28,6 +31,27 @@ from procurement_platform.domain.user import CurrentUser, UserBuilding, UserRole
 
 def identity() -> PlatformIdentity:
     return PlatformIdentity(PlatformType.TEST_PLATFORM, "ou_manager", "request")
+
+
+def test_feishu_date_value_discards_timezone_suffix() -> None:
+    assert _normalize_feishu_date("2026-08-02 +0800") == "2026-08-02"
+    assert _normalize_feishu_date("2026-08-02") == "2026-08-02"
+
+
+def test_review_card_marks_backend_required_warranty_as_required() -> None:
+    from procurement_platform.application.building_manager.card_factory import (
+        BuildingManagerCardFactory,
+    )
+    from procurement_platform.domain.interaction import TextInput
+
+    detail = backend()._requirements[1]
+    view = BuildingManagerCardFactory().detail(detail)
+    warranty = next(
+        element
+        for element in view.elements
+        if isinstance(element, TextInput) and element.name == "warranty_info"
+    )
+    assert warranty.required is True
 
 
 def backend() -> FakeBackendClient:
@@ -76,7 +100,7 @@ async def save_complete(fake: FakeBackendClient) -> int:
         requirement_id=1,
         expected_version=2,
         fields=ReviewFieldsPatch(
-            proposed_supplier_id=8,
+            proposed_supplier_name="测试供应商",
             supplier_contact_name="王工",
             supplier_contact_info="13800000000",
             estimated_unit_price="12.50",

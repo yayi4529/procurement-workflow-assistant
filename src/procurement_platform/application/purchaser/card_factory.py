@@ -75,19 +75,39 @@ class PurchaserCardFactory:
                     ),
                     KeyValueField(label="状态", value=requirement_status_label(detail.status)),
                     KeyValueField(label="版本", value=str(detail.version)),
+                    KeyValueField(
+                        label="成交供应商",
+                        value=(
+                            detail.review_fields.proposed_supplier_name
+                            if detail.review_fields and detail.review_fields.proposed_supplier_name
+                            else "-"
+                        ),
+                    ),
                 )
             )
         )
         if detail.status is RequirementStatus.PURCHASING:
             specs = (
                 (
-                    "supplier_id",
-                    "正式供应商 ID",
-                    str(purchase.supplier_id) if purchase and purchase.supplier_id else None,
+                    "actual_unit_price",
+                    "实际单价 (元)",
+                    purchase.actual_unit_price if purchase else None,
                 ),
-                ("supplier_tax_number", "税号", purchase.supplier_tax_number if purchase else None),
-                ("bank_name", "开户行", purchase.bank_name if purchase else None),
-                ("bank_account", "银行账号(敏感)", None),
+                (
+                    "purchased_at",
+                    "采购时间 (YYYY-MM-DD HH:MM)",
+                    purchase.purchased_at.strftime("%Y-%m-%d %H:%M")
+                    if purchase and purchase.purchased_at
+                    else None,
+                ),
+                ("tax_rate", "税率 (%)", purchase.tax_rate if purchase else None),
+                (
+                    "supplier_tax_number",
+                    "统一社会信用代码",
+                    purchase.supplier_tax_number if purchase else None,
+                ),
+                ("bank_name", "开户银行", purchase.bank_name if purchase else None),
+                ("bank_account", "银行账号", None),
                 (
                     "registered_address",
                     "注册地址",
@@ -95,17 +115,8 @@ class PurchaserCardFactory:
                 ),
                 (
                     "contract_contact_info",
-                    "合同联系方式",
+                    "合同联系人",
                     purchase.contract_contact_info if purchase else None,
-                ),
-                ("actual_unit_price", "实际单价", purchase.actual_unit_price if purchase else None),
-                ("tax_rate", "税率", purchase.tax_rate if purchase else None),
-                (
-                    "purchased_at",
-                    "采购时间(ISO 8601)",
-                    purchase.purchased_at.isoformat()
-                    if purchase and purchase.purchased_at
-                    else None,
                 ),
                 ("purchase_remark", "采购备注", purchase.purchase_remark if purchase else None),
             )
@@ -114,38 +125,15 @@ class PurchaserCardFactory:
                     name=name,
                     label=label,
                     default_value=default,
-                    required=name not in {"purchase_remark"},
+                    required=name in {"actual_unit_price", "purchased_at"},
                 )
                 for name, label, default in specs
-            )
-            elements.append(
-                SelectInput(
-                    name="update_supplier_profile",
-                    label="同步更新供应商档案(默认否)",
-                    options=(
-                        SelectOption(label="否", value="false"),
-                        SelectOption(label="是, 我明确确认", value="true"),
-                    ),
-                    required=True,
-                    default_value="true"
-                    if purchase and purchase.update_supplier_profile
-                    else "false",
-                )
             )
             if purchase and purchase.actual_total_price:
                 elements.append(
                     MarkdownBlock(markdown=f"**实际总价(后端计算):** {purchase.actual_total_price}")
                 )
-            elements.append(
-                MarkdownBlock(markdown=f"**当前缺少:** {'、'.join(detail.missing_fields) or '无'}")
-            )
-        actions: list[ActionButton] = [
-            ActionButton(
-                action_id="purchaser.refresh",
-                label="刷新",
-                value={"requirement_id": detail.requirement_id},
-            )
-        ]
+        actions: list[ActionButton] = []
         if detail.status is RequirementStatus.PENDING_PURCHASE:
             actions.insert(
                 0,
@@ -162,7 +150,6 @@ class PurchaserCardFactory:
             )
         if detail.status is RequirementStatus.PURCHASING:
             actions[0:0] = [
-                ActionButton(action_id="purchaser.search_supplier", label="搜索供应商"),
                 ActionButton(
                     action_id="purchaser.save_purchase_fields",
                     label="保存采购信息",

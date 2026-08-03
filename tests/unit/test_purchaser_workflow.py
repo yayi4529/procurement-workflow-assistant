@@ -4,6 +4,9 @@ from uuid import UUID
 import pytest
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
+from procurement_platform.application.purchaser.action_router import (
+    _normalize_purchase_datetime,
+)
 from procurement_platform.application.purchaser.workflow_service import PurchaserWorkflowService
 from procurement_platform.domain.enums import (
     AllowedRequirementAction,
@@ -20,6 +23,7 @@ from procurement_platform.domain.requirement import (
     RequirementBuilding,
     RequirementDetail,
     RequirementHandler,
+    ReviewFields,
     SupplierDetail,
 )
 from procurement_platform.domain.user import CurrentUser, UserBuilding, UserRole
@@ -27,6 +31,11 @@ from procurement_platform.domain.user import CurrentUser, UserBuilding, UserRole
 
 def identity() -> PlatformIdentity:
     return PlatformIdentity(PlatformType.TEST_PLATFORM, "ou_purchaser", "request")
+
+
+def test_purchase_datetime_accepts_card_display_format() -> None:
+    assert _normalize_purchase_datetime("2026-08-03 13:56") == "2026-08-03T13:56:00"
+    assert _normalize_purchase_datetime("2026/08/03 13:56") == "2026-08-03T13:56:00"
 
 
 def backend() -> FakeBackendClient:
@@ -49,6 +58,10 @@ def backend() -> FakeBackendClient:
             building=RequirementBuilding(building_id=1, building_name="一号楼"),
             current_handler=RequirementHandler(employee_id=9, name="采购员"),
             applicant_fields=ApplicantFields(device_name="交换机", quantity="2", unit="台"),
+            review_fields=ReviewFields(
+                proposed_supplier_id=8,
+                proposed_supplier_name="示例供应商",
+            ),
             missing_fields=(),
             allowed_actions=(AllowedRequirementAction.START_PURCHASE,),
         )
@@ -70,6 +83,17 @@ def backend() -> FakeBackendClient:
         auto_selected_employee_id=12,
     )
     return fake
+
+
+@pytest.mark.asyncio
+async def test_purchase_card_inherits_supplier_name_without_supplier_id_input() -> None:
+    fake = backend()
+    service = PurchaserWorkflowService(fake)
+    await service.start_purchase(identity(), 1, 4, UUID("00000000-0000-0000-0000-000000000001"))
+    view = await service.open_requirement(identity(), 1)
+    serialized = str(view)
+    assert "示例供应商" in serialized
+    assert "supplier_id" not in serialized
 
 
 @pytest.mark.asyncio

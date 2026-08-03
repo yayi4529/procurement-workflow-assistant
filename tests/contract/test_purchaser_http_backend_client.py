@@ -95,7 +95,6 @@ async def test_purchaser_endpoint_contracts() -> None:
         requirement_id=1,
         expected_version=5,
         fields=PurchaseFieldsPatch(
-            supplier_id=8,
             actual_unit_price="12.50",
             tax_rate="13",
             purchased_at=datetime(2026, 7, 30, 10, tzinfo=UTC),
@@ -123,6 +122,7 @@ async def test_purchaser_endpoint_contracts() -> None:
     assert requests[1].url.params["keyword"] == "示例"
     assert requests[5].url.params["target_role"] == "WAREHOUSE_MANAGER"
     assert json.loads(requests[4].content)["fields"]["actual_unit_price"] == "12.50"
+    assert "supplier_id" not in json.loads(requests[4].content)["fields"]
     assert "actual_total_price" not in json.loads(requests[4].content)["fields"]
     create_supplier = json.loads(requests[3].content)
     assert "supplier_tax_number" not in create_supplier

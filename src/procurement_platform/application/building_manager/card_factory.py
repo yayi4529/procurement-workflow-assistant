@@ -56,11 +56,9 @@ class BuildingManagerCardFactory:
         if detail.status is RequirementStatus.PENDING_REVIEW:
             specs = (
                 (
-                    "proposed_supplier_id",
-                    "拟定供应商 ID (只能填写数字)",
-                    str(review.proposed_supplier_id)
-                    if review and review.proposed_supplier_id
-                    else None,
+                    "proposed_supplier_name",
+                    "拟定供应商名称",
+                    review.proposed_supplier_name if review else None,
                     True,
                 ),
                 (
@@ -89,7 +87,7 @@ class BuildingManagerCardFactory:
                     False,
                 ),
                 ("payment_method", "付款方式", review.payment_method if review else None, True),
-                ("warranty_info", "质保信息", review.warranty_info if review else None, False),
+                ("warranty_info", "质保信息", review.warranty_info if review else None, True),
                 ("review_remark", "楼长备注", review.review_remark if review else None, False),
             )
             elements.extend(
@@ -102,8 +100,8 @@ class BuildingManagerCardFactory:
                         name="need_contract",
                         label="是否需要合同",
                         options=(
-                            SelectOption(label="是", value="true"),
-                            SelectOption(label="否", value="false"),
+                            SelectOption(label="是否需要合同: 是", value="true"),
+                            SelectOption(label="是否需要合同: 否", value="false"),
                         ),
                         required=True,
                         default_value=(
@@ -126,9 +124,6 @@ class BuildingManagerCardFactory:
                         markdown=f"**预计总价(后端计算):** {review.estimated_total_price}"
                     )
                 )
-            elements.append(
-                MarkdownBlock(markdown=f"**当前缺少:** {'、'.join(detail.missing_fields) or '无'}")
-            )
         actions = (
             ActionButton(
                 action_id="building_manager.save_review_fields",
@@ -147,14 +142,14 @@ class BuildingManagerCardFactory:
                 label="提交采购员",
                 value={"requirement_id": detail.requirement_id},
             ),
-            ActionButton(
-                action_id="building_manager.refresh",
-                label="刷新",
-                value={"requirement_id": detail.requirement_id},
-            ),
         )
         return InteractionView(
             title="楼长审核采购申请",
+            subtitle=(
+                "表单底部依次为“是否需要合同”和“预计到货日期”。"
+                if detail.status is RequirementStatus.PENDING_REVIEW
+                else None
+            ),
             elements=tuple(elements),
             actions=actions if detail.status is RequirementStatus.PENDING_REVIEW else actions[-1:],
         )

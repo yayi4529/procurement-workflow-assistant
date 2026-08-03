@@ -12,6 +12,9 @@ from procurement_platform.application.notifications.development_renderer import 
     DevelopmentNotificationPayload,
     DevelopmentNotificationRenderer,
 )
+from procurement_platform.application.notifications.workflow_assignment_renderer import (
+    WorkflowAssignmentRenderer,
+)
 from procurement_platform.bootstrap.logging import JsonFormatter, mask_platform_user_id
 from procurement_platform.bootstrap.settings import Settings
 from procurement_platform.domain.enums import BackendMode, PlatformType, RoleCode
@@ -148,6 +151,33 @@ def test_development_notification_is_strict_and_marked() -> None:
                 "secret": "must fail",
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("event_type", "status", "action_id"),
+    (
+        ("REQUIREMENT_PENDING_REVIEW", "PENDING_REVIEW", "building_manager.open_requirement"),
+        ("REQUIREMENT_PENDING_PURCHASE", "PENDING_PURCHASE", "purchaser.open_requirement"),
+        ("REQUIREMENT_PENDING_WAREHOUSE", "PENDING_WAREHOUSE", "warehouse.open_requirement"),
+    ),
+)
+def test_workflow_assignment_notification_opens_the_correct_role_card(
+    event_type: str, status: str, action_id: str
+) -> None:
+    renderer = WorkflowAssignmentRenderer(event_type)
+    result = renderer.render(
+        NotificationGatewayRequest(
+            notification_id=1,
+            dedup_key="key",
+            event_type=event_type,
+            platform_type=PlatformType.FEISHU,
+            receiver_platform_user_id="ou_receiver",
+            payload={"requirement_id": 1, "requirement_no": "PR-1", "status": status},
+        )
+    )
+    assert isinstance(result, InteractionNotification)
+    assert result.view.actions[0].action_id == action_id
+    assert result.view.actions[0].value == {"requirement_id": 1}
 
 
 def test_json_logging_and_masking_do_not_expose_full_id() -> None:

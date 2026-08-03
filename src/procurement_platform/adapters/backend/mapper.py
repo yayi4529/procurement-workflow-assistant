@@ -93,6 +93,7 @@ def map_requirement_detail(dto: BackendRequirementDetailDTO) -> RequirementDetai
         review_fields=(
             ReviewFields(
                 proposed_supplier_id=latest_review.proposed_supplier_id,
+                proposed_supplier_name=latest_review.proposed_supplier_name,
                 supplier_contact_name=latest_review.supplier_contact_name,
                 supplier_contact_info=latest_review.supplier_contact_info,
                 supplier_link=latest_review.supplier_link,

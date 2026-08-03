@@ -19,6 +19,17 @@ from procurement_platform.domain.requirement import (
 )
 from procurement_platform.domain.user import CurrentUser
 
+DEVICE_PROFESSION_OPTIONS = (
+    "电气",
+    "暖通",
+    "弱电",
+    "机房环境",
+    "工器具",
+    "算力服务器",
+    "IDC网络",
+    "其他",
+)
+
 
 class ApplicantCardFactory:
     def home(self) -> InteractionView:
@@ -81,8 +92,22 @@ class ApplicantCardFactory:
         if detail.rejection_reason:
             elements.append(MarkdownBlock(markdown=f"**驳回原因:** {detail.rejection_reason}"))
         if editable:
+            elements.append(
+                SelectInput(
+                    name="device_profession",
+                    label="设备类型",
+                    options=tuple(
+                        SelectOption(label=item, value=item) for item in DEVICE_PROFESSION_OPTIONS
+                    ),
+                    required=True,
+                    default_value=(
+                        fields.device_profession
+                        if fields.device_profession in DEVICE_PROFESSION_OPTIONS
+                        else None
+                    ),
+                )
+            )
             specs = (
-                ("device_profession", "设备专业", fields.device_profession, True),
                 ("device_name", "设备名称", fields.device_name, True),
                 ("brand", "品牌(选填)", fields.brand, False),
                 ("model", "型号(选填)", fields.model, False),
@@ -95,21 +120,8 @@ class ApplicantCardFactory:
                 TextInput(name=name, label=label, default_value=value, required=required)
                 for name, label, value, required in specs
             )
-            missing = "、".join(detail.missing_fields) or "无"
-            elements.append(MarkdownBlock(markdown=f"**当前缺少:** {missing}"))
         actions = []
         if editable:
-            actions.append(
-                ActionButton(
-                    action_id="applicant.save",
-                    label="保存",
-                    value={
-                        "requirement_id": detail.requirement_id,
-                        "expected_version": detail.version,
-                    },
-                    style="primary",
-                )
-            )
             actions.append(
                 ActionButton(
                     action_id=(
@@ -118,19 +130,14 @@ class ApplicantCardFactory:
                         else "applicant.prepare_submit"
                     ),
                     label="重新提交" if detail.status is RequirementStatus.REJECTED else "准备提交",
-                    value={"requirement_id": detail.requirement_id},
+                    value={
+                        "requirement_id": detail.requirement_id,
+                        "expected_version": detail.version,
+                    },
+                    style="primary",
                 )
             )
-        actions.extend(
-            (
-                ActionButton(
-                    action_id="applicant.refresh",
-                    label="刷新",
-                    value={"requirement_id": detail.requirement_id},
-                ),
-                ActionButton(action_id="applicant.list", label="我的申请"),
-            )
-        )
+        actions.extend((ActionButton(action_id="applicant.list", label="我的申请"),))
         return InteractionView(
             title="采购申请详情", elements=tuple(elements), actions=tuple(actions)
         )
@@ -213,11 +220,6 @@ class ApplicantCardFactory:
                 ActionButton(
                     action_id="applicant.open",
                     label="返回修改",
-                    value={"requirement_id": detail.requirement_id},
-                ),
-                ActionButton(
-                    action_id="applicant.refresh",
-                    label="刷新",
                     value={"requirement_id": detail.requirement_id},
                 ),
             ),

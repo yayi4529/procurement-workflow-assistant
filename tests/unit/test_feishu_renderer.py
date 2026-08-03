@@ -42,7 +42,7 @@ def test_renderer_produces_feishu_card_without_identity() -> None:
 
 
 def test_renderer_wraps_inputs_and_submit_buttons_in_form() -> None:
-    from procurement_platform.domain.interaction import SelectInput, SelectOption
+    from procurement_platform.domain.interaction import DateInput, SelectInput, SelectOption
 
     card = FeishuInteractionRenderer().render(
         InteractionView(
@@ -55,6 +55,7 @@ def test_renderer_wraps_inputs_and_submit_buttons_in_form() -> None:
                     required=True,
                     default_value="1",
                 ),
+                DateInput(name="expected_arrival_date", label="预计到货日期", required=True),
             ),
             actions=(ActionButton(action_id="applicant.create_draft", label="Create"),),
         )
@@ -64,5 +65,10 @@ def test_renderer_wraps_inputs_and_submit_buttons_in_form() -> None:
     assert form["tag"] == "form"
     form_elements = cast(list[JsonObject], form["elements"])
     assert form_elements[0]["name"] == "building_id"
-    assert form_elements[1]["action_type"] == "form_submit"
-    assert form_elements[1]["name"] == "applicant_create_draft"
+    assert form_elements[0]["placeholder"] == {"tag": "plain_text", "content": "请选择Building"}
+    assert form_elements[1]["placeholder"] == {
+        "tag": "plain_text",
+        "content": "请选择预计到货日期",
+    }
+    assert form_elements[2]["action_type"] == "form_submit"
+    assert form_elements[2]["name"] == "applicant_create_draft"
