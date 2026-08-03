@@ -75,6 +75,13 @@ class Settings:
     backend_mode: BackendMode = BackendMode.HTTP
     fake_data_path: str = ".local/fake-users.json"
     llm_enabled: bool = False
+    llm_base_url: str | None = None
+    llm_api_key: SecretStr | None = field(default=None, repr=False)
+    llm_model: str | None = None
+    llm_timeout_seconds: float = 30.0
+    llm_max_tool_steps: int = 6
+    llm_max_history_messages: int = 20
+    llm_max_tool_result_chars: int = 20000
     allow_test_platform: bool = False
     event_dedup_store_backend: str = "memory"
     debug_identity_probe_enabled: bool = False
@@ -92,6 +99,10 @@ class Settings:
             raise ValueError("environment must be development, test, or production")
         if self.backend_request_timeout_seconds <= 0:
             raise ValueError("backend request timeout must be greater than zero")
+        if self.llm_timeout_seconds <= 0 or self.llm_max_tool_steps < 1:
+            raise ValueError("invalid LLM timeout or tool step limit")
+        if self.llm_max_history_messages < 1 or self.llm_max_tool_result_chars < 1:
+            raise ValueError("invalid LLM history or tool result limit")
         if not self.identity_gateway_secret.get_secret_value():
             raise ValueError("identity gateway secret is required")
         if self.event_dedup_store_backend != "memory":
@@ -130,6 +141,9 @@ class Settings:
 
         encrypt_key = values.get("PROCUREMENT_FEISHU_ENCRYPT_KEY", "").strip()
         gateway_token = values.get("PROCUREMENT_NOTIFICATION_GATEWAY_TOKEN", "").strip()
+        llm_api_key = values.get("PROCUREMENT_LLM_API_KEY", "").strip()
+        llm_base_url = values.get("PROCUREMENT_LLM_BASE_URL", "").strip()
+        llm_model = values.get("PROCUREMENT_LLM_MODEL", "").strip()
         return cls(
             environment=required("PROCUREMENT_ENVIRONMENT"),
             service_name=values.get(
@@ -155,6 +169,15 @@ class Settings:
                 "PROCUREMENT_FAKE_DATA_PATH", ".local/fake-users.json"
             ).strip(),
             llm_enabled=_parse_bool(values.get("PROCUREMENT_LLM_ENABLED", "false")),
+            llm_base_url=llm_base_url or None,
+            llm_api_key=SecretStr(llm_api_key) if llm_api_key else None,
+            llm_model=llm_model or None,
+            llm_timeout_seconds=float(values.get("PROCUREMENT_LLM_TIMEOUT_SECONDS", "30")),
+            llm_max_tool_steps=int(values.get("PROCUREMENT_LLM_MAX_TOOL_STEPS", "6")),
+            llm_max_history_messages=int(values.get("PROCUREMENT_LLM_MAX_HISTORY_MESSAGES", "20")),
+            llm_max_tool_result_chars=int(
+                values.get("PROCUREMENT_LLM_MAX_TOOL_RESULT_CHARS", "20000")
+            ),
             allow_test_platform=_parse_bool(values.get("PROCUREMENT_ALLOW_TEST_PLATFORM", "false")),
             event_dedup_store_backend=values.get(
                 "PROCUREMENT_EVENT_DEDUP_STORE_BACKEND", "memory"

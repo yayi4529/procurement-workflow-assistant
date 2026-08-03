@@ -1,0 +1,55 @@
+from procurement_platform.domain.assistant_session import (
+    AgentConversation,
+    AgentMessagePage,
+    AgentSessionState,
+    AgentSessionStateUpdate,
+)
+from procurement_platform.domain.enums import AgentMessageSender
+from procurement_platform.domain.identity import PlatformIdentity
+from procurement_platform.ports.backend_client import BackendClient
+
+
+class AssistantSessionService:
+    def __init__(self, backend_client: BackendClient) -> None:
+        self._backend_client = backend_client
+
+    async def active(self, *, identity: PlatformIdentity) -> AgentConversation:
+        return await self._backend_client.get_or_create_agent_conversation(
+            identity=identity, current_action="ASSISTANT_CHAT"
+        )
+
+    async def append(
+        self,
+        *,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        external_message_id: str,
+        sender: AgentMessageSender,
+        content: str,
+    ) -> None:
+        await self._backend_client.append_agent_message(
+            identity=identity,
+            conversation_id=conversation_id,
+            external_message_id=external_message_id,
+            sender_type=sender,
+            content=content,
+        )
+
+    async def messages(
+        self, *, identity: PlatformIdentity, conversation_id: int
+    ) -> AgentMessagePage:
+        return await self._backend_client.list_agent_messages(
+            identity=identity, conversation_id=conversation_id, page_size=50
+        )
+
+    async def state(self, *, identity: PlatformIdentity, conversation_id: int) -> AgentSessionState:
+        return await self._backend_client.get_agent_state(
+            identity=identity, conversation_id=conversation_id
+        )
+
+    async def save_state(
+        self, *, identity: PlatformIdentity, conversation_id: int, state: AgentSessionStateUpdate
+    ) -> None:
+        await self._backend_client.update_agent_state(
+            identity=identity, conversation_id=conversation_id, state=state
+        )

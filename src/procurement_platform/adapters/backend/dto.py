@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from procurement_platform.domain.enums import (
+    AgentConversationStatus,
     PlatformType,
     RequirementStatus,
     ReviewStatus,
@@ -244,6 +245,13 @@ class BackendSupplierDetailDTO(BackendDTO):
 class BackendSupplierCreatedDTO(BackendDTO):
     supplier_id: int
     supplier_name: str
+
+
+class BackendAgentConversationDTO(BackendDTO):
+    conversation_id: int
+    status: AgentConversationStatus
+    purchase_request_id: int | None
+    redis_state_exists: bool
 
 
 @dataclass(frozen=True, slots=True)

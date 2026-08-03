@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from procurement_platform.adapters.backend.dto import (
+    BackendAgentConversationDTO,
     BackendAllowedRequirementAction,
     BackendCreatedRequirementDTO,
     BackendCurrentUserDTO,
@@ -13,6 +14,7 @@ from procurement_platform.adapters.backend.dto import (
     BackendSupplierDetailDTO,
     BackendSupplierPageDTO,
 )
+from procurement_platform.domain.assistant_session import AgentConversation
 from procurement_platform.domain.enums import AllowedRequirementAction
 from procurement_platform.domain.requirement import (
     ApplicantFields,
@@ -56,6 +58,16 @@ def map_current_user(dto: BackendCurrentUserDTO) -> CurrentUser:
             )
             for building in dto.buildings
         ),
+    )
+
+
+def map_agent_conversation(
+    dto: BackendAgentConversationDTO, *, current_action: str
+) -> AgentConversation:
+    return AgentConversation(
+        conversation_id=dto.conversation_id,
+        current_action=current_action,
+        status=dto.status,
     )
 
 

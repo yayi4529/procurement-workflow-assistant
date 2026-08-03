@@ -1,4 +1,3 @@
-from dataclasses import fields
 from datetime import UTC, date, datetime
 from uuid import UUID
 
@@ -75,10 +74,8 @@ async def test_formal_container_builds_with_llm_disabled_and_no_openai_configura
     container = ApplicationContainer.build(settings)
     try:
         assert settings.llm_enabled is False
-        assert not any(
-            "llm" in item.name.lower() or "assistant" in item.name.lower()
-            for item in fields(container)
-        )
+        assert container.procurement_assistant is None
+        assert container.conversation_lock_manager is None
     finally:
         await container.aclose()
 

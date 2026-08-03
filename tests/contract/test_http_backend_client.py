@@ -129,10 +129,9 @@ async def test_agent_conversation_endpoint_contracts() -> None:
     responses: list[object] = [
         {
             "conversation_id": 10,
-            "current_action": "CARD_HELP",
             "status": "ACTIVE",
-            "created_at": NOW,
-            "updated_at": NOW,
+            "purchase_request_id": None,
+            "redis_state_exists": True,
         },
         {"message_id": 11, "created_at": NOW, "duplicate": False},
         {

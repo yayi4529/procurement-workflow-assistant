@@ -5,6 +5,7 @@ from pydantic import BaseModel, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 
 from procurement_platform.adapters.backend.dto import (
+    BackendAgentConversationDTO,
     BackendCreatedRequirementDTO,
     BackendCurrentUserDTO,
     BackendEnvelope,
@@ -19,6 +20,7 @@ from procurement_platform.adapters.backend.dto import (
 )
 from procurement_platform.adapters.backend.error_mapping import map_backend_error
 from procurement_platform.adapters.backend.mapper import (
+    map_agent_conversation,
     map_created_requirement,
     map_current_user,
     map_fields_save,
@@ -498,13 +500,14 @@ class HttpBackendClient:
     async def get_or_create_agent_conversation(
         self, *, identity: PlatformIdentity, current_action: str
     ) -> AgentConversation:
-        return await self._request_model(
-            AgentConversation,
+        dto = await self._request_model(
+            BackendAgentConversationDTO,
             method="POST",
             path="/api/v1/agent/conversations/active",
             identity=identity,
             json_body={"current_action": current_action},
         )
+        return map_agent_conversation(dto, current_action=current_action)
 
     async def append_agent_message(
         self,

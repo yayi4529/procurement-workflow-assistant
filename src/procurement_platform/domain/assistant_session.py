@@ -31,10 +31,10 @@ class RecentVisibleMessage(SessionModel):
 
 class AgentConversation(SessionModel):
     conversation_id: int
-    current_action: str
+    current_action: str = "ASSISTANT_CHAT"
     status: AgentConversationStatus
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class AgentMessage(SessionModel):

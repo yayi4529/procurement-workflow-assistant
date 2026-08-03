@@ -4,7 +4,7 @@
 
 当前开发阶段：
 
-> **将 Task 1～Task 7 的无 LLM 卡片流程，从 FakeBackendClient 切换到运行在 `http://127.0.0.1:8001` 的真实采购后端，并完成严格契约对齐。**
+> **Task 1～Task 8 已完成：无 LLM 正式卡片流程已对齐真实采购后端；可选文本 Agent 基础设施已具备，但默认关闭、不得成为正式采购流程路径。**
 
 ---
 
@@ -832,8 +832,8 @@ tenant_access_token
 除非用户另行下达任务，不要：
 
 ```text
-接入 LLM
-实现 Task 8～12
+将 LLM 或 Assistant 接入正式卡片操作
+实现 Task 9～12（除非用户明确授权）
 修改后端数据库
 修改后端业务状态机
 开发生产 Redis 幂等 Store
@@ -853,6 +853,17 @@ Mapper
 错误处理
 契约测试
 真实 Smoke
+```
+
+Task 8 已冻结的约束：
+
+```text
+文本 Assistant 必须默认关闭，并由 PROCUREMENT_LLM_ENABLED 显式开启
+卡片回调不得进入 ProcurementAssistant 或 ConversationLockManager
+正式采购状态流转只能通过既有卡片和 BackendClient
+生产 ToolPolicy 默认不得暴露 Fake Tool 或业务写入 Tool
+单进程 LocalConversationLockManager 仅用于本地/单 Worker；多 Worker 必须替换为后端会话租约或分布式锁
+Agent 会话仍只能经 BackendClient HTTP Port 访问后端
 ```
 
 ---

@@ -9,6 +9,10 @@ from procurement_platform.adapters.feishu.channel_client import FeishuChannelCli
 from procurement_platform.adapters.feishu.interaction_renderer import FeishuInteractionRenderer
 from procurement_platform.adapters.feishu.sdk_client import LarkOapiTransport
 from procurement_platform.adapters.feishu.webhook_parser import FeishuWebhookParser
+from procurement_platform.adapters.llm.openai_compatible_llm_client import OpenAICompatibleLlmClient
+from procurement_platform.adapters.persistence.local_conversation_lock import (
+    LocalConversationLockManager,
+)
 from procurement_platform.adapters.persistence.memory_event_dedup_store import (
     MemoryEventDedupStore,
 )
@@ -17,6 +21,12 @@ from procurement_platform.adapters.persistence.memory_notification_delivery_stor
 )
 from procurement_platform.application.applicant.action_router import ApplicantActionRouter
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
+from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
+from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
+from procurement_platform.application.assistant.prompt_builder import PromptBuilder
+from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.tool_policy import ToolPolicy
+from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
 from procurement_platform.application.building_manager.action_router import (
     BuildingManagerActionRouter,
 )
@@ -61,6 +71,8 @@ class ApplicationContainer:
     notification_delivery_store: MemoryNotificationDeliveryStore | None = None
     notification_renderer_registry: NotificationRendererRegistry | None = None
     notification_gateway_service: NotificationGatewayService | None = None
+    procurement_assistant: ProcurementAssistant | None = None
+    conversation_lock_manager: LocalConversationLockManager | None = None
 
     @classmethod
     def build(cls, settings: Settings) -> "ApplicationContainer":
@@ -104,10 +116,41 @@ class ApplicationContainer:
                 ),
             )
             container.event_dedup_store = MemoryEventDedupStore()
+            lock_manager = LocalConversationLockManager()
+            container.conversation_lock_manager = lock_manager
+            if settings.llm_enabled:
+                api_key = settings.llm_api_key
+                model = settings.llm_model
+                if api_key is None or not api_key.get_secret_value() or model is None:
+                    raise ValueError("enabled LLM requires API key and model")
+                if settings.environment == "production" and settings.llm_base_url is None:
+                    raise ValueError("enabled production LLM requires base URL")
+                tool_registry = ToolRegistry()
+                container.procurement_assistant = ProcurementAssistant(
+                    backend_client=container.backend_client,
+                    llm_client=OpenAICompatibleLlmClient(
+                        api_key=api_key,
+                        model=model,
+                        timeout_seconds=settings.llm_timeout_seconds,
+                        base_url=settings.llm_base_url,
+                    ),
+                    session_service=AssistantSessionService(container.backend_client),
+                    context_builder=AssistantContextBuilder(),
+                    prompt_builder=PromptBuilder(),
+                    tool_registry=tool_registry,
+                    tool_executor=ToolExecutor(
+                        tool_registry, max_result_chars=settings.llm_max_tool_result_chars
+                    ),
+                    tool_policy=ToolPolicy(),
+                    max_tool_steps=settings.llm_max_tool_steps,
+                    max_history_messages=settings.llm_max_history_messages,
+                )
             container.message_handler = BaseMessageHandler(
                 channel,
                 debug_identity_probe_enabled=settings.debug_identity_probe_enabled,
                 backend_client=container.backend_client,
+                procurement_assistant=container.procurement_assistant,
+                conversation_lock_manager=lock_manager,
             )
             container.card_interaction_handler = BaseCardInteractionHandler(
                 channel,
