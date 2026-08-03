@@ -5,6 +5,10 @@ from procurement_platform.application.building_manager.workflow_service import (
 )
 from procurement_platform.application.purchaser.workflow_service import PurchaserWorkflowService
 from procurement_platform.application.warehouse.workflow_service import WarehouseWorkflowService
+from procurement_platform.domain.assistant import (
+    AssistantInteractionResponse,
+    AssistantTextResponse,
+)
 from procurement_platform.domain.enums import PlatformType, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
@@ -73,9 +77,14 @@ class BaseMessageHandler:
                 key=f"FEISHU:{event.external_user_id}"
             ):
                 response = await self._procurement_assistant.handle(event)
-                await self._channel_client.reply_text(
-                    reply_to_message_id=event.external_message_id, text=response.text
-                )
+                if isinstance(response, AssistantTextResponse):
+                    await self._channel_client.reply_text(
+                        reply_to_message_id=event.external_message_id, text=response.text
+                    )
+                elif isinstance(response, AssistantInteractionResponse):
+                    await self._channel_client.reply_interaction(
+                        reply_to_message_id=event.external_message_id, view=response.view
+                    )
             return
         await self._channel_client.reply_text(
             reply_to_message_id=event.external_message_id,

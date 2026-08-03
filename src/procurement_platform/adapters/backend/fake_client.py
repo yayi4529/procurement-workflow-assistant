@@ -1,6 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -40,9 +40,13 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     ApplicantFieldsSaveResult,
     HandlerCandidates,
+    ProductRecommendations,
     PurchaseFields,
     PurchaseFieldsPatch,
     PurchaseFieldsSaveResult,
+    PurchaseHistoryRecommendations,
+    PurchaseRecord,
+    PurchaseRecordPage,
     RequirementBuilding,
     RequirementCompletionResult,
     RequirementDetail,
@@ -50,6 +54,7 @@ from procurement_platform.domain.requirement import (
     RequirementListItem,
     RequirementPage,
     RequirementSummary,
+    RequirementTimeline,
     RequirementTransitionResult,
     ReviewFields,
     ReviewFieldsPatch,
@@ -57,6 +62,8 @@ from procurement_platform.domain.requirement import (
     ReviewRecordSummary,
     SupplierDetail,
     SupplierPage,
+    SupplierRecommendation,
+    SupplierRecommendations,
     SupplierSummary,
     SupplierUpsertCommand,
     WarehouseFields,
@@ -101,6 +108,10 @@ class FakeBackendClient:
         self._next_requirement_id = 1
         self._suppliers: dict[int, SupplierDetail] = {}
         self._next_supplier_id = 1
+        self.purchase_records: list[PurchaseRecord] = []
+        self.timelines: dict[int, RequirementTimeline] = {}
+        self.product_recommendations = ProductRecommendations(items=())
+        self.purchase_history_recommendations = PurchaseHistoryRecommendations(items=())
 
     def seed_supplier(self, supplier: SupplierDetail) -> None:
         self._suppliers[supplier.supplier_id] = supplier
@@ -284,6 +295,89 @@ class FakeBackendClient:
             for item in values[start : start + page_size]
         )
         return RequirementPage(items=items, page=page, page_size=page_size, total=len(values))
+
+    async def get_requirement_timeline(
+        self, *, identity: PlatformIdentity, requirement_id: int
+    ) -> RequirementTimeline:
+        self._record("get_requirement_timeline")
+        self._user(identity)
+        self._require_requirement(requirement_id)
+        return self.timelines.get(requirement_id, RequirementTimeline(items=()))
+
+    async def list_purchase_records(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_no: str | None = None,
+        supplier_id: int | None = None,
+        status: RequirementStatus | None = None,
+        device_name: str | None = None,
+        brand: str | None = None,
+        model: str | None = None,
+        created_from: date | None = None,
+        created_to: date | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> PurchaseRecordPage:
+        self._record("list_purchase_records")
+        self._user(identity)
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("invalid pagination")
+        records = [
+            item
+            for item in self.purchase_records
+            if (requirement_no is None or item.requirement_no == requirement_no)
+            and (supplier_id is None or item.supplier_id == supplier_id)
+            and (status is None or item.status is status)
+            and (
+                device_name is None or device_name.casefold() in (item.device_name or "").casefold()
+            )
+            and (brand is None or brand.casefold() in (item.brand or "").casefold())
+            and (model is None or model.casefold() in (item.model or "").casefold())
+            and (created_from is None or item.created_at.date() >= created_from)
+            and (created_to is None or item.created_at.date() <= created_to)
+        ]
+        start = (page - 1) * page_size
+        return PurchaseRecordPage(
+            items=tuple(records[start : start + page_size]),
+            page=page,
+            page_size=page_size,
+            total=len(records),
+        )
+
+    async def recommend_products(
+        self,
+        *,
+        identity: PlatformIdentity,
+        device_name: str,
+        device_profession: str | None = None,
+        keyword: str | None = None,
+        limit: int = 3,
+    ) -> ProductRecommendations:
+        self._record("recommend_products")
+        self._user(identity)
+        del device_profession
+        if not device_name.strip() or not 1 <= limit <= 3:
+            raise ValueError("invalid product recommendation query")
+        items = self.product_recommendations.items
+        if keyword:
+            key = keyword.casefold()
+            items = tuple(
+                item
+                for item in items
+                if key in (item.brand or "").casefold() or key in (item.model or "").casefold()
+            )
+        return ProductRecommendations(items=items[:limit])
+
+    async def recommend_purchase_history(
+        self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 10
+    ) -> PurchaseHistoryRecommendations:
+        self._record("recommend_purchase_history")
+        self._user(identity)
+        self._require_requirement(requirement_id)
+        return PurchaseHistoryRecommendations(
+            items=self.purchase_history_recommendations.items[:limit]
+        )
 
     async def list_handler_candidates(
         self,
@@ -657,6 +751,32 @@ class FakeBackendClient:
             return self._suppliers[supplier_id]
         except KeyError as exc:
             raise BackendApplicationError("SUPPLIER_NOT_FOUND", "供应商不存在") from exc
+
+    async def recommend_suppliers(
+        self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 3
+    ) -> SupplierRecommendations:
+        self._record("recommend_suppliers")
+        if not 1 <= limit <= 3:
+            raise ValueError("limit must be between 1 and 3")
+        detail = self._require_requirement(requirement_id)
+        self._require_manager_access(detail, self._user(identity))
+        if detail.status is not RequirementStatus.PENDING_REVIEW:
+            raise InvalidStatusError("INVALID_STATUS", "当前状态不可推荐供应商")
+        return SupplierRecommendations(
+            items=tuple(
+                SupplierRecommendation(
+                    supplier_id=supplier.supplier_id,
+                    supplier_name=supplier.supplier_name,
+                    historical_purchase_count=0,
+                    last_purchase_at=datetime(1970, 1, 1, tzinfo=UTC),
+                    blacklist_status="BLACKLISTED"
+                    if supplier.blacklist and supplier.blacklist.active
+                    else "NORMAL",
+                )
+                for supplier in self._suppliers.values()
+                if supplier.blacklist is None or not supplier.blacklist.active
+            )[:limit]
+        )
 
     async def create_supplier(
         self,

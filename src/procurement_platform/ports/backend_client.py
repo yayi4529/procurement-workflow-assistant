@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Protocol
 from uuid import UUID
 
@@ -23,15 +24,20 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsSaveResult,
     FieldsSaveResult,
     HandlerCandidates,
+    ProductRecommendations,
     PurchaseFieldsPatch,
+    PurchaseHistoryRecommendations,
+    PurchaseRecordPage,
     RequirementCompletionResult,
     RequirementDetail,
     RequirementPage,
     RequirementSummary,
+    RequirementTimeline,
     RequirementTransitionResult,
     ReviewFieldsPatch,
     SupplierDetail,
     SupplierPage,
+    SupplierRecommendations,
     SupplierSummary,
     SupplierUpsertCommand,
     WarehouseFieldsPatch,
@@ -68,6 +74,40 @@ class BackendClient(Protocol):
         page: int = 1,
         page_size: int = 20,
     ) -> RequirementPage: ...
+
+    async def get_requirement_timeline(
+        self, *, identity: PlatformIdentity, requirement_id: int
+    ) -> RequirementTimeline: ...
+
+    async def list_purchase_records(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_no: str | None = None,
+        supplier_id: int | None = None,
+        status: RequirementStatus | None = None,
+        device_name: str | None = None,
+        brand: str | None = None,
+        model: str | None = None,
+        created_from: date | None = None,
+        created_to: date | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> PurchaseRecordPage: ...
+
+    async def recommend_products(
+        self,
+        *,
+        identity: PlatformIdentity,
+        device_name: str,
+        device_profession: str | None = None,
+        keyword: str | None = None,
+        limit: int = 3,
+    ) -> ProductRecommendations: ...
+
+    async def recommend_purchase_history(
+        self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 10
+    ) -> PurchaseHistoryRecommendations: ...
 
     async def list_handler_candidates(
         self,
@@ -143,6 +183,10 @@ class BackendClient(Protocol):
         page: int = 1,
         page_size: int = 20,
     ) -> SupplierPage: ...
+
+    async def recommend_suppliers(
+        self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 3
+    ) -> SupplierRecommendations: ...
 
     async def get_supplier(
         self,

@@ -4,7 +4,8 @@ param(
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8002,
     [string]$PythonPath = "",
-    [switch]$AllowTestPlatform
+    [switch]$AllowTestPlatform,
+    [switch]$EnableLlm
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,12 +59,13 @@ $env:PROCUREMENT_ENVIRONMENT = "development"
 $env:PROCUREMENT_BACKEND_MODE = "http"
 $env:PROCUREMENT_BACKEND_BASE_URL = $backendUrl
 $env:PROCUREMENT_BACKEND_REQUEST_TIMEOUT_SECONDS = "10"
-$env:PROCUREMENT_LLM_ENABLED = "false"
+$env:PROCUREMENT_LLM_ENABLED = $EnableLlm.IsPresent.ToString().ToLowerInvariant()
 $env:PROCUREMENT_ALLOW_TEST_PLATFORM = $AllowTestPlatform.IsPresent.ToString().ToLowerInvariant()
 $env:PYTHONPATH = Join-Path $repoRoot "src"
 
 Write-Host "Procurement backend: $backendUrl"
 Write-Host "Agent readiness: http://$HostAddress`:$Port/health/ready"
+Write-Host "LLM enabled: $($env:PROCUREMENT_LLM_ENABLED)"
 Write-Host "The gateway secret is read only from the current process and is never printed."
 
 Set-Location $repoRoot

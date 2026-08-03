@@ -57,6 +57,18 @@ class SupplierPage(RequirementModel):
     total: int
 
 
+class SupplierRecommendation(RequirementModel):
+    supplier_id: int
+    supplier_name: str
+    historical_purchase_count: int
+    last_purchase_at: datetime
+    blacklist_status: str
+
+
+class SupplierRecommendations(RequirementModel):
+    items: tuple[SupplierRecommendation, ...]
+
+
 class SupplierUpsertCommand(RequirementModel):
     supplier_name: str
     supplier_tax_number: str | None = None
@@ -99,6 +111,7 @@ class PurchaseFieldsPatch(BaseModel):
     registered_address: str | None = None
     contract_contact_info: str | None = None
     actual_unit_price: str | None = None
+    actual_total_price: str | None = None
     tax_rate: str | None = None
     purchased_at: datetime | None = None
     purchase_remark: str | None = None
@@ -291,6 +304,78 @@ class RequirementPage(RequirementModel):
     page: int
     page_size: int
     total: int
+
+
+class TimelineItem(RequirementModel):
+    log_id: int
+    action_type: str
+    operator_name: str
+    operator_role_name: str
+    from_status: RequirementStatus | None = None
+    to_status: RequirementStatus | None = None
+    assigned_to_employee_id: int | None = None
+    assigned_to_name: str | None = None
+    operation_summary: str | None = None
+    operated_at: datetime
+
+
+class RequirementTimeline(RequirementModel):
+    items: tuple[TimelineItem, ...]
+
+
+class PurchaseRecord(RequirementModel):
+    requirement_id: int
+    requirement_no: str
+    device_name: str | None = None
+    brand: str | None = None
+    model: str | None = None
+    quantity: str | None = None
+    unit: str | None = None
+    status: RequirementStatus
+    supplier_id: int | None = None
+    supplier_name: str | None = None
+    actual_total_price: str | None = None
+    purchased_at: datetime | None = None
+    created_at: datetime
+    submitted_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    received_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class PurchaseRecordPage(RequirementModel):
+    items: tuple[PurchaseRecord, ...]
+    page: int
+    page_size: int
+    total: int
+
+
+class ProductRecommendation(RequirementModel):
+    brand: str | None
+    model: str | None
+    historical_count: int
+    last_purchased_at: datetime
+
+
+class ProductRecommendations(RequirementModel):
+    items: tuple[ProductRecommendation, ...]
+
+
+class PurchaseHistoryItem(RequirementModel):
+    requirement_id: int
+    device_name: str
+    brand: str | None
+    model: str | None
+    quantity: str
+    supplier_id: int
+    supplier_name: str
+    actual_total_price: str
+    purchased_at: datetime
+    blacklist_status: str
+
+
+class PurchaseHistoryRecommendations(RequirementModel):
+    items: tuple[PurchaseHistoryItem, ...]
 
 
 class HandlerCandidate(RequirementModel):

@@ -138,7 +138,6 @@ async def test_agent_conversation_endpoint_contracts() -> None:
             "items": [
                 {
                     "message_id": 11,
-                    "conversation_id": 10,
                     "external_message_id": "om_1",
                     "sender_type": "USER",
                     "content": "帮助",
@@ -198,6 +197,7 @@ async def test_agent_conversation_endpoint_contracts() -> None:
     )
     assert write.duplicate is False
     assert page.items[0].content == "帮助"
+    assert page.items[0].conversation_id == 10
     assert completion.redis_state_deleted is True
     assert [(r.method, r.url.path) for r in requests] == [
         ("POST", "/api/v1/agent/conversations/active"),

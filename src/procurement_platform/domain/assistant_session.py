@@ -40,7 +40,7 @@ class AgentConversation(SessionModel):
 class AgentMessage(SessionModel):
     message_id: int
     conversation_id: int
-    external_message_id: str
+    external_message_id: str | None
     sender_type: AgentMessageSender
     content: str
     created_at: datetime

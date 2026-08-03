@@ -1,5 +1,5 @@
 import json
-from typing import Generic, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -35,16 +35,20 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, AssistantTool[BaseModel, AssistantToolResult]] = {}
 
-    def register(self, tool: AssistantTool[BaseModel, AssistantToolResult]) -> None:
+    def register(self, tool: AssistantTool[ArgsT, ResultT]) -> None:
         if tool.name in self._tools:
             raise ValueError(f"assistant tool already registered: {tool.name}")
-        self._tools[tool.name] = tool
+        self._tools[tool.name] = cast(AssistantTool[BaseModel, AssistantToolResult], tool)
 
     def get(self, name: str) -> AssistantTool[BaseModel, AssistantToolResult]:
         try:
             return self._tools[name]
         except KeyError as exc:
             raise UnknownAssistantToolError("未知工具") from exc
+
+    @property
+    def registered_names(self) -> frozenset[str]:
+        return frozenset(self._tools)
 
     def definitions(self, *, allowed_names: frozenset[str]) -> tuple[AssistantToolDefinition, ...]:
         return tuple(
@@ -72,6 +76,24 @@ class ToolExecutor:
         context: AssistantToolContext,
         allowed_names: frozenset[str],
     ) -> AssistantMessage:
+        message, _ = await self.execute_result(
+            name=name,
+            arguments_json=arguments_json,
+            tool_call_id=tool_call_id,
+            context=context,
+            allowed_names=allowed_names,
+        )
+        return message
+
+    async def execute_result(
+        self,
+        *,
+        name: str,
+        arguments_json: str,
+        tool_call_id: str,
+        context: AssistantToolContext,
+        allowed_names: frozenset[str],
+    ) -> tuple[AssistantMessage, AssistantToolResult]:
         if name not in allowed_names:
             result = AssistantToolResult(
                 status="PERMISSION_DENIED", user_message="当前不可使用该工具"
@@ -95,4 +117,7 @@ class ToolExecutor:
         content = result.model_dump_json()
         if len(content) > self._max_result_chars:
             content = content[: self._max_result_chars]
-        return AssistantMessage(role="tool", name=name, tool_call_id=tool_call_id, content=content)
+        return (
+            AssistantMessage(role="tool", name=name, tool_call_id=tool_call_id, content=content),
+            result,
+        )

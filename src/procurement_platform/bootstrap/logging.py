@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import UTC, datetime
 
 
@@ -40,13 +41,19 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(*, level: str, log_format: str) -> None:
-    handler = logging.StreamHandler()
-    handler.setFormatter(
+    formatter = (
         JsonFormatter()
         if log_format == "json"
         else logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
     )
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
+    log_file = os.environ.get("PROCUREMENT_LOG_FILE", "").strip()
+    if log_file:
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
     root.setLevel(level)

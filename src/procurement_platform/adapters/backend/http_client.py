@@ -1,3 +1,4 @@
+from datetime import date
 from typing import TypeVar
 from uuid import UUID
 
@@ -6,32 +7,44 @@ from pydantic import ValidationError as PydanticValidationError
 
 from procurement_platform.adapters.backend.dto import (
     BackendAgentConversationDTO,
+    BackendAgentMessagePageDTO,
     BackendCreatedRequirementDTO,
     BackendCurrentUserDTO,
     BackendEnvelope,
     BackendFieldsSaveDTO,
     BackendHandlerCandidatesDTO,
+    BackendProductRecommendationsDTO,
+    BackendPurchaseHistoryRecommendationsDTO,
+    BackendPurchaseRecordPageDTO,
     BackendRequirementDetailDTO,
     BackendRequirementMutationDTO,
     BackendRequirementPageDTO,
     BackendSupplierCreatedDTO,
     BackendSupplierDetailDTO,
     BackendSupplierPageDTO,
+    BackendSupplierRecommendationsDTO,
+    BackendTimelineDTO,
 )
 from procurement_platform.adapters.backend.error_mapping import map_backend_error
 from procurement_platform.adapters.backend.mapper import (
     map_agent_conversation,
+    map_agent_message_page,
     map_created_requirement,
     map_current_user,
     map_fields_save,
     map_handler_candidates,
+    map_product_recommendations,
+    map_purchase_history_recommendations,
+    map_purchase_record_page,
     map_requirement_completion,
     map_requirement_detail,
     map_requirement_page,
+    map_requirement_timeline,
     map_requirement_transition,
     map_supplier_created,
     map_supplier_detail,
     map_supplier_page,
+    map_supplier_recommendations,
 )
 from procurement_platform.adapters.backend.transport import SignedBackendTransport
 from procurement_platform.domain.assistant_session import (
@@ -57,15 +70,20 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsSaveResult,
     FieldsSaveResult,
     HandlerCandidates,
+    ProductRecommendations,
     PurchaseFieldsPatch,
+    PurchaseHistoryRecommendations,
+    PurchaseRecordPage,
     RequirementCompletionResult,
     RequirementDetail,
     RequirementPage,
     RequirementSummary,
+    RequirementTimeline,
     RequirementTransitionResult,
     ReviewFieldsPatch,
     SupplierDetail,
     SupplierPage,
+    SupplierRecommendations,
     SupplierSummary,
     SupplierUpsertCommand,
     WarehouseFieldsPatch,
@@ -198,6 +216,93 @@ class HttpBackendClient:
             },
         )
         return map_requirement_page(dto)
+
+    async def get_requirement_timeline(
+        self, *, identity: PlatformIdentity, requirement_id: int
+    ) -> RequirementTimeline:
+        dto = await self._request_model(
+            BackendTimelineDTO,
+            method="GET",
+            path=f"/api/v1/requirements/{requirement_id}/timeline",
+            identity=identity,
+        )
+        return map_requirement_timeline(dto)
+
+    async def list_purchase_records(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_no: str | None = None,
+        supplier_id: int | None = None,
+        status: RequirementStatus | None = None,
+        device_name: str | None = None,
+        brand: str | None = None,
+        model: str | None = None,
+        created_from: date | None = None,
+        created_to: date | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> PurchaseRecordPage:
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("invalid pagination")
+        dto = await self._request_model(
+            BackendPurchaseRecordPageDTO,
+            method="GET",
+            path="/api/v1/purchase-records",
+            identity=identity,
+            query={
+                "requirement_no": requirement_no,
+                "supplier_id": supplier_id,
+                "status": status.value if status else None,
+                "device_name": device_name,
+                "brand": brand,
+                "model": model,
+                "created_from": created_from.isoformat() if created_from else None,
+                "created_to": created_to.isoformat() if created_to else None,
+                "page": page,
+                "page_size": page_size,
+            },
+        )
+        return map_purchase_record_page(dto)
+
+    async def recommend_products(
+        self,
+        *,
+        identity: PlatformIdentity,
+        device_name: str,
+        device_profession: str | None = None,
+        keyword: str | None = None,
+        limit: int = 3,
+    ) -> ProductRecommendations:
+        if not device_name.strip() or not 1 <= limit <= 3:
+            raise ValueError("invalid product recommendation query")
+        dto = await self._request_model(
+            BackendProductRecommendationsDTO,
+            method="GET",
+            path="/api/v1/recommendations/products",
+            identity=identity,
+            query={
+                "device_name": device_name.strip(),
+                "device_profession": device_profession,
+                "keyword": keyword,
+                "limit": limit,
+            },
+        )
+        return map_product_recommendations(dto)
+
+    async def recommend_purchase_history(
+        self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 10
+    ) -> PurchaseHistoryRecommendations:
+        if requirement_id < 1 or not 1 <= limit <= 30:
+            raise ValueError("invalid purchase history recommendation query")
+        dto = await self._request_model(
+            BackendPurchaseHistoryRecommendationsDTO,
+            method="GET",
+            path="/api/v1/recommendations/purchase-history",
+            identity=identity,
+            query={"requirement_id": requirement_id, "limit": limit},
+        )
+        return map_purchase_history_recommendations(dto)
 
     async def list_handler_candidates(
         self,
@@ -396,6 +501,22 @@ class HttpBackendClient:
         )
         return map_supplier_detail(dto)
 
+    async def recommend_suppliers(
+        self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 3
+    ) -> SupplierRecommendations:
+        if requirement_id < 1:
+            raise ValueError("requirement_id must be positive")
+        if not 1 <= limit <= 3:
+            raise ValueError("limit must be between 1 and 3")
+        dto = await self._request_model(
+            BackendSupplierRecommendationsDTO,
+            method="GET",
+            path="/api/v1/recommendations/suppliers",
+            identity=identity,
+            query={"requirement_id": requirement_id, "limit": limit},
+        )
+        return map_supplier_recommendations(dto)
+
     async def create_supplier(
         self,
         *,
@@ -542,13 +663,14 @@ class HttpBackendClient:
             raise ValueError("page must be at least 1")
         if not 1 <= page_size <= 200:
             raise ValueError("page_size must be between 1 and 200")
-        return await self._request_model(
-            AgentMessagePage,
+        dto = await self._request_model(
+            BackendAgentMessagePageDTO,
             method="GET",
             path=f"/api/v1/agent/conversations/{conversation_id}/messages",
             identity=identity,
             query={"page": page, "page_size": page_size},
         )
+        return map_agent_message_page(dto, conversation_id=conversation_id)
 
     async def get_agent_state(
         self, *, identity: PlatformIdentity, conversation_id: int

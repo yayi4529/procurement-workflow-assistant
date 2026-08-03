@@ -2,26 +2,42 @@ from decimal import Decimal
 
 from procurement_platform.adapters.backend.dto import (
     BackendAgentConversationDTO,
+    BackendAgentMessagePageDTO,
     BackendAllowedRequirementAction,
     BackendCreatedRequirementDTO,
     BackendCurrentUserDTO,
     BackendFieldsSaveDTO,
     BackendHandlerCandidatesDTO,
+    BackendProductRecommendationsDTO,
+    BackendPurchaseHistoryRecommendationsDTO,
+    BackendPurchaseRecordPageDTO,
     BackendRequirementDetailDTO,
     BackendRequirementMutationDTO,
     BackendRequirementPageDTO,
     BackendSupplierCreatedDTO,
     BackendSupplierDetailDTO,
     BackendSupplierPageDTO,
+    BackendSupplierRecommendationsDTO,
+    BackendTimelineDTO,
 )
-from procurement_platform.domain.assistant_session import AgentConversation
-from procurement_platform.domain.enums import AllowedRequirementAction
+from procurement_platform.domain.assistant_session import (
+    AgentConversation,
+    AgentMessage,
+    AgentMessagePage,
+)
+from procurement_platform.domain.enums import AgentMessageSender, AllowedRequirementAction
 from procurement_platform.domain.requirement import (
     ApplicantFields,
     FieldsSaveResult,
     HandlerCandidate,
     HandlerCandidates,
+    ProductRecommendation,
+    ProductRecommendations,
     PurchaseFields,
+    PurchaseHistoryItem,
+    PurchaseHistoryRecommendations,
+    PurchaseRecord,
+    PurchaseRecordPage,
     RequirementBuilding,
     RequirementCompletionResult,
     RequirementDetail,
@@ -29,13 +45,17 @@ from procurement_platform.domain.requirement import (
     RequirementListItem,
     RequirementPage,
     RequirementSummary,
+    RequirementTimeline,
     RequirementTransitionResult,
     ReviewFields,
     ReviewRecordSummary,
     SupplierBlacklistSummary,
     SupplierDetail,
     SupplierPage,
+    SupplierRecommendation,
+    SupplierRecommendations,
     SupplierSummary,
+    TimelineItem,
     WarehouseFields,
 )
 from procurement_platform.domain.user import CurrentUser, UserBuilding, UserRole
@@ -68,6 +88,29 @@ def map_agent_conversation(
         conversation_id=dto.conversation_id,
         current_action=current_action,
         status=dto.status,
+    )
+
+
+def map_agent_message_page(
+    dto: BackendAgentMessagePageDTO, *, conversation_id: int
+) -> AgentMessagePage:
+    """Map backend list items and restore their path-scoped conversation id."""
+
+    return AgentMessagePage(
+        items=tuple(
+            AgentMessage(
+                message_id=item.message_id,
+                conversation_id=conversation_id,
+                external_message_id=item.external_message_id,
+                sender_type=AgentMessageSender(item.sender_type),
+                content=item.content,
+                created_at=item.created_at,
+            )
+            for item in dto.items
+        ),
+        page=dto.page,
+        page_size=dto.page_size,
+        total=dto.total,
     )
 
 
@@ -188,6 +231,94 @@ def map_requirement_page(dto: BackendRequirementPageDTO) -> RequirementPage:
     )
 
 
+def map_requirement_timeline(dto: BackendTimelineDTO) -> RequirementTimeline:
+    return RequirementTimeline(
+        items=tuple(
+            TimelineItem(
+                log_id=item.log_id,
+                action_type=item.action_type,
+                operator_name=item.operator_name,
+                operator_role_name=item.operator_role_name,
+                from_status=item.from_status,
+                to_status=item.to_status,
+                assigned_to_employee_id=item.assigned_to_employee_id,
+                assigned_to_name=item.assigned_to_name,
+                operation_summary=item.operation_summary,
+                operated_at=item.operated_at,
+            )
+            for item in dto.items
+        )
+    )
+
+
+def map_purchase_record_page(dto: BackendPurchaseRecordPageDTO) -> PurchaseRecordPage:
+    return PurchaseRecordPage(
+        items=tuple(
+            PurchaseRecord(
+                requirement_id=item.requirement_id,
+                requirement_no=item.requirement_no,
+                device_name=item.device_name,
+                brand=item.brand,
+                model=item.model,
+                quantity=_decimal_string(item.quantity),
+                unit=item.unit,
+                status=item.status,
+                supplier_id=item.supplier_id,
+                supplier_name=item.supplier_name,
+                actual_total_price=_decimal_string(item.actual_total_price),
+                purchased_at=item.purchased_at,
+                created_at=item.created_at,
+                submitted_at=item.submitted_at,
+                reviewed_at=item.reviewed_at,
+                received_at=item.received_at,
+                completed_at=item.completed_at,
+            )
+            for item in dto.items
+        ),
+        page=dto.page,
+        page_size=dto.page_size,
+        total=dto.total,
+    )
+
+
+def map_product_recommendations(
+    dto: BackendProductRecommendationsDTO,
+) -> ProductRecommendations:
+    return ProductRecommendations(
+        items=tuple(
+            ProductRecommendation(
+                brand=item.brand,
+                model=item.model,
+                historical_count=item.historical_count,
+                last_purchased_at=item.last_purchased_at,
+            )
+            for item in dto.items
+        )
+    )
+
+
+def map_purchase_history_recommendations(
+    dto: BackendPurchaseHistoryRecommendationsDTO,
+) -> PurchaseHistoryRecommendations:
+    return PurchaseHistoryRecommendations(
+        items=tuple(
+            PurchaseHistoryItem(
+                requirement_id=item.requirement_id,
+                device_name=item.device_name,
+                brand=item.brand,
+                model=item.model,
+                quantity=str(item.quantity),
+                supplier_id=item.supplier_id,
+                supplier_name=item.supplier_name,
+                actual_total_price=str(item.actual_total_price),
+                purchased_at=item.purchased_at,
+                blacklist_status=item.blacklist_status,
+            )
+            for item in dto.items
+        )
+    )
+
+
 def map_handler_candidates(dto: BackendHandlerCandidatesDTO) -> HandlerCandidates:
     return HandlerCandidates(
         items=tuple(
@@ -222,6 +353,23 @@ def map_supplier_page(dto: BackendSupplierPageDTO) -> SupplierPage:
         page=dto.page,
         page_size=dto.page_size,
         total=dto.total,
+    )
+
+
+def map_supplier_recommendations(
+    dto: BackendSupplierRecommendationsDTO,
+) -> SupplierRecommendations:
+    return SupplierRecommendations(
+        items=tuple(
+            SupplierRecommendation(
+                supplier_id=item.supplier_id,
+                supplier_name=item.supplier_name,
+                historical_purchase_count=item.historical_purchase_count,
+                last_purchase_at=item.last_purchase_at,
+                blacklist_status=item.blacklist_status,
+            )
+            for item in dto.items
+        )
     )
 
 

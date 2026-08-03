@@ -21,10 +21,24 @@ from procurement_platform.adapters.persistence.memory_notification_delivery_stor
 )
 from procurement_platform.application.applicant.action_router import ApplicantActionRouter
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
+from procurement_platform.application.assistant.agent_tools import (
+    PreparePurchasePrefillTool,
+    PurchasePrefillNotificationService,
+    QueryPurchaseRequestsTool,
+    QuerySupplierProfileTool,
+    RecommendProductOptionsTool,
+    UpdatePurchaseDraftTool,
+    UpdatePurchaseExecutionDraftTool,
+    UpdateReviewDraftTool,
+    UpdateWarehouseReceiptDraftTool,
+)
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
 from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
 from procurement_platform.application.assistant.prompt_builder import PromptBuilder
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.supplier_recommendation import (
+    RecommendSuppliersForRequirementTool,
+)
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
 from procurement_platform.application.building_manager.action_router import (
@@ -126,6 +140,17 @@ class ApplicationContainer:
                 if settings.environment == "production" and settings.llm_base_url is None:
                     raise ValueError("enabled production LLM requires base URL")
                 tool_registry = ToolRegistry()
+                tool_registry.register(QueryPurchaseRequestsTool(container.backend_client))
+                tool_registry.register(RecommendProductOptionsTool(container.backend_client))
+                tool_registry.register(UpdatePurchaseDraftTool(container.backend_client))
+                tool_registry.register(
+                    RecommendSuppliersForRequirementTool(container.backend_client)
+                )
+                tool_registry.register(UpdateReviewDraftTool(container.backend_client))
+                tool_registry.register(QuerySupplierProfileTool(container.backend_client))
+                tool_registry.register(PreparePurchasePrefillTool(container.backend_client))
+                tool_registry.register(UpdatePurchaseExecutionDraftTool(container.backend_client))
+                tool_registry.register(UpdateWarehouseReceiptDraftTool(container.backend_client))
                 container.procurement_assistant = ProcurementAssistant(
                     backend_client=container.backend_client,
                     llm_client=OpenAICompatibleLlmClient(
@@ -180,6 +205,9 @@ class ApplicationContainer:
                     delivery_store=delivery_store,
                     renderer_registry=registry,
                     bearer_token=token.get_secret_value() if token is not None else None,
+                    purchase_prefill_provider=PurchasePrefillNotificationService(
+                        container.backend_client
+                    ),
                 )
         elif settings.notification_gateway.enabled:
             raise ValueError("notification gateway requires Feishu integration")

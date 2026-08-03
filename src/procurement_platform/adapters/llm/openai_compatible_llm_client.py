@@ -35,7 +35,7 @@ class OpenAICompatibleLlmClient:
             )
             response = await client.chat.completions.create(
                 model=self._model,
-                messages=[message.model_dump(exclude_none=True) for message in messages],
+                messages=[self._message_payload(message) for message in messages],
                 tools=[
                     {
                         "type": "function",
@@ -68,3 +68,17 @@ class OpenAICompatibleLlmClient:
         if not (message.content and message.content.strip()) and not calls:
             raise LlmInvalidResponseError("LLM returned empty response")
         return AssistantTurn(content=message.content, tool_calls=calls)
+
+    @staticmethod
+    def _message_payload(message: AssistantMessage) -> dict[str, object]:
+        payload = message.model_dump(exclude_none=True, exclude={"tool_calls"})
+        if message.tool_calls:
+            payload["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": call.arguments_json},
+                }
+                for call in message.tool_calls
+            ]
+        return payload

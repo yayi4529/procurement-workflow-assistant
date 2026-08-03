@@ -192,6 +192,80 @@ class BackendRequirementPageDTO(BackendDTO):
     total: int
 
 
+class BackendTimelineItemDTO(BackendDTO):
+    log_id: int
+    action_type: str
+    operator_name: str
+    operator_role_name: str
+    operator_mobile_masked: str | None
+    from_status: RequirementStatus | None
+    to_status: RequirementStatus | None
+    assigned_to_employee_id: int | None
+    assigned_to_name: str | None
+    assigned_to_mobile_masked: str | None
+    operation_summary: str | None
+    operated_at: datetime
+
+
+class BackendTimelineDTO(BackendDTO):
+    items: tuple[BackendTimelineItemDTO, ...]
+
+
+class BackendPurchaseRecordDTO(BackendDTO):
+    requirement_id: int
+    requirement_no: str
+    device_name: str | None
+    brand: str | None
+    model: str | None
+    quantity: Decimal | None
+    unit: str | None
+    status: RequirementStatus
+    supplier_id: int | None
+    supplier_name: str | None
+    actual_total_price: Decimal | None
+    purchased_at: datetime | None
+    created_at: datetime
+    submitted_at: datetime | None
+    reviewed_at: datetime | None
+    received_at: datetime | None
+    completed_at: datetime | None
+
+
+class BackendPurchaseRecordPageDTO(BackendDTO):
+    items: tuple[BackendPurchaseRecordDTO, ...]
+    page: int
+    page_size: int
+    total: int
+
+
+class BackendProductRecommendationDTO(BackendDTO):
+    brand: str | None
+    model: str | None
+    historical_count: int
+    last_purchased_at: datetime
+
+
+class BackendProductRecommendationsDTO(BackendDTO):
+    items: tuple[BackendProductRecommendationDTO, ...]
+
+
+class BackendPurchaseHistoryDTO(BackendDTO):
+    requirement_id: int
+    device_name: str
+    brand: str | None
+    model: str | None
+    quantity: Decimal
+    supplier_id: int
+    supplier_name: str
+    actual_total_price: Decimal
+    purchased_at: datetime
+    blacklist_status: str
+
+
+class BackendPurchaseHistoryRecommendationsDTO(BackendDTO):
+    items: tuple[BackendPurchaseHistoryDTO, ...]
+
+
 class BackendHandlerCandidateDTO(BackendDTO):
     employee_id: int
     name: str
@@ -226,6 +300,18 @@ class BackendSupplierPageDTO(BackendDTO):
     total: int
 
 
+class BackendSupplierRecommendationDTO(BackendDTO):
+    supplier_id: int
+    supplier_name: str
+    historical_purchase_count: int
+    last_purchase_at: datetime
+    blacklist_status: str
+
+
+class BackendSupplierRecommendationsDTO(BackendDTO):
+    items: tuple[BackendSupplierRecommendationDTO, ...]
+
+
 class BackendSupplierBlacklistDTO(BackendDTO):
     status: str
     history_count: int
@@ -252,6 +338,27 @@ class BackendAgentConversationDTO(BackendDTO):
     status: AgentConversationStatus
     purchase_request_id: int | None
     redis_state_exists: bool
+
+
+class BackendAgentMessageDTO(BackendDTO):
+    """Message shape returned by the backend conversation endpoint.
+
+    The conversation id is intentionally not repeated in each response item: it
+    is already part of the request path and is supplied by the adapter mapper.
+    """
+
+    message_id: int
+    external_message_id: str | None
+    sender_type: str
+    content: str
+    created_at: datetime
+
+
+class BackendAgentMessagePageDTO(BackendDTO):
+    items: tuple[BackendAgentMessageDTO, ...]
+    page: int
+    page_size: int
+    total: int
 
 
 @dataclass(frozen=True, slots=True)

@@ -108,3 +108,15 @@ Schema（包括字段是否必返、时间字段和分页元数据的精确命�
 - 未提供可用本地后端地址、四角色测试账号及隔离测试数据，因此未执行真实 OpenAPI 或
  真实写入 smoke；自动验收使用严格 Fake/HTTP Contract。
 - 通知网关生产持久化幂等方案仍未冻结，内存 Store 继续只允许 development/test。
+
+## Task 9 契约差异与待确认
+
+- `/api/v1/requirements` 当前没有设备名或业务时间过滤参数。Agent 查询先使用
+  `/api/v1/purchase-records` 的可用过滤条件，并在需要业务节点时间时读取单据 timeline
+  做应用层确认；不会把 `created_at` 冒充提交、审批或完成时间。
+- 仓库保存契约当前只支持 `warehouse_location`、`received_quantity` 和 `receipt_remark`。
+  `received_at` 与 `acceptance_result` 不会被 Agent 猜测或写入，等待后端冻结字段。
+- 采购历史推荐响应没有完整供应商主数据或税率证据。精确供应商字段只来自供应商详情；
+  历史税率只作为推荐，并通过历史需求详情快照解析，不能标记为精确值。
+- `REQUIREMENT_PENDING_PURCHASE` 主动预填复用后端 Outbox 通知。预填失败会降级为普通
+  待办通知，不重试业务动作；生产通知幂等存储方案仍沿用既有待确认项。

@@ -23,19 +23,20 @@ ToolResultStatus = Literal[
 ]
 
 
-class AssistantMessage(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    role: AssistantRole
-    content: str
-    tool_call_id: str | None = None
-    name: str | None = None
-
-
 class AssistantToolCall(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: str = Field(min_length=1, max_length=200)
     name: str = Field(min_length=1, max_length=100)
     arguments_json: str
+
+
+class AssistantMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    role: AssistantRole
+    content: str | None
+    tool_call_id: str | None = None
+    name: str | None = None
+    tool_calls: tuple[AssistantToolCall, ...] = ()
 
 
 class AssistantTurn(BaseModel):

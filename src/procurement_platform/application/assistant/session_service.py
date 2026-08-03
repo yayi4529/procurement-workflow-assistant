@@ -1,6 +1,7 @@
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
     AgentMessagePage,
+    AgentMessageWriteResult,
     AgentSessionState,
     AgentSessionStateUpdate,
 )
@@ -26,8 +27,8 @@ class AssistantSessionService:
         external_message_id: str,
         sender: AgentMessageSender,
         content: str,
-    ) -> None:
-        await self._backend_client.append_agent_message(
+    ) -> AgentMessageWriteResult:
+        return await self._backend_client.append_agent_message(
             identity=identity,
             conversation_id=conversation_id,
             external_message_id=external_message_id,

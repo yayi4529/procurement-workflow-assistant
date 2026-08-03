@@ -117,3 +117,37 @@ async def test_building_manager_endpoint_contracts() -> None:
     assert requests[2].url.query == b"target_role=PURCHASER"
     assert "operator_employee_id" not in json.loads(requests[4].content)
     await raw.aclose()
+
+
+@pytest.mark.asyncio
+async def test_supplier_recommendation_contract_uses_openapi_query_and_strict_dto() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=envelope(
+                {
+                    "items": [
+                        {
+                            "supplier_id": 3,
+                            "supplier_name": "供应商A",
+                            "historical_purchase_count": 5,
+                            "last_purchase_at": "2026-07-30T10:00:00+08:00",
+                            "blacklist_status": "NORMAL",
+                        }
+                    ]
+                }
+            ),
+        )
+
+    client, raw = make_client(handler)
+    result = await client.recommend_suppliers(identity=identity(), requirement_id=8, limit=3)
+
+    assert result.items[0].supplier_id == 3
+    assert [(item.method, item.url.path) for item in requests] == [
+        ("GET", "/api/v1/recommendations/suppliers")
+    ]
+    assert requests[0].url.query == b"requirement_id=8&limit=3"
+    await raw.aclose()

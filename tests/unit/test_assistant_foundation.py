@@ -1,14 +1,19 @@
 import asyncio
+from datetime import datetime
 
 import pytest
 
 from procurement_platform.adapters.llm.echo_tool import EchoTool
 from procurement_platform.adapters.llm.fake_llm_client import FakeLlmClient
+from procurement_platform.adapters.llm.openai_compatible_llm_client import OpenAICompatibleLlmClient
 from procurement_platform.adapters.persistence.local_conversation_lock import (
     LocalConversationLockManager,
 )
+from procurement_platform.application.assistant.context_builder import _beijing_timezone
+from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
 from procurement_platform.domain.assistant import (
+    AssistantMessage,
     AssistantToolCall,
     AssistantToolContext,
     AssistantTurn,
@@ -116,3 +121,39 @@ async def test_local_conversation_lock_serializes_one_user_and_allows_other_user
     await asyncio.gather(*tasks)
     assert entered == ["first", "second"]
     assert manager._locks == {}
+
+
+def test_openai_message_payload_preserves_preceding_assistant_tool_call() -> None:
+    call = AssistantToolCall(id="call-1", name="echo_tool", arguments_json='{"text":"hello"}')
+
+    payload = OpenAICompatibleLlmClient._message_payload(
+        AssistantMessage(role="assistant", content=None, tool_calls=(call,))
+    )
+
+    assert payload == {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "echo_tool", "arguments": '{"text":"hello"}'},
+            }
+        ],
+    }
+
+
+def test_beijing_timezone_has_stable_eight_hour_offset() -> None:
+    offset = datetime.now(_beijing_timezone()).utcoffset()
+    assert offset is not None
+    assert offset.total_seconds() == 8 * 60 * 60
+
+
+def test_purchase_query_intent_requires_query_tool_before_text_reply() -> None:
+    allowed = frozenset({"query_purchase_requests", "update_purchase_draft"})
+
+    assert (
+        ProcurementAssistant._required_tool("请查询我的采购需求列表", allowed)
+        == "query_purchase_requests"
+    )
+    assert ProcurementAssistant._required_tool("你好", allowed) is None
+    assert ProcurementAssistant._required_tool("请提交采购需求", allowed) is None

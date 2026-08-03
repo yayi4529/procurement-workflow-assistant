@@ -6,10 +6,10 @@
 
 > **真实飞书 + 真实采购后端联调阶段**
 
-Task 8 已完成可选、默认关闭的文本 Assistant 基础设施。详见 [Agent 架构](docs/agent-architecture.md)；正式采购卡片不依赖，也不会进入 LLM。
+Task 8～Task 9 已完成可选、默认关闭的文本 Assistant 基础设施和九个角色工具。详见 [Agent 架构](docs/agent-architecture.md) 与 [Agent 工具](docs/agent-tools.md)；正式采购卡片不依赖，也不会进入 LLM。
 
 启用文本 Assistant 需要显式设置 `PROCUREMENT_LLM_ENABLED=true`，并提供
-`PROCUREMENT_LLM_API_KEY` 与 `PROCUREMENT_LLM_MODEL`（可选 `PROCUREMENT_LLM_BASE_URL`）。生产 ToolPolicy 当前不开放业务工具；卡片操作仍只走后端签名、版本号与 action token 流程。
+`PROCUREMENT_LLM_API_KEY` 与 `PROCUREMENT_LLM_MODEL`（可选 `PROCUREMENT_LLM_BASE_URL`）。启用后，ToolPolicy 按后端当前用户角色开放 Task 9 工具；草稿工具只保存字段，提交、驳回、开始采购和确认完成仍只能使用正式卡片，并继续走后端签名、版本号与 action token 流程。
 
 正式业务事实、身份、角色、楼宇、状态、处理人、版本、幂等和审计全部以后端为准。本项目负责飞书消息与卡片交互、后端 HTTP 适配、通知网关和后续智能助手能力。
 
@@ -697,8 +697,11 @@ Task 7
 → 四个真实飞书身份映射
 → 四角色真实业务写入联调
 
+当前阶段
+→ Task 9 角色工具、候选引用、精确字段输出和采购预填已实现
+→ 继续执行真实四角色对话 Smoke
+
 后续
-→ 正式 Outbox 通知契约
-→ Task 9～12 智能助手扩展
+→ Task 10～12 智能助手扩展
 → Task 13 生产化
 ```

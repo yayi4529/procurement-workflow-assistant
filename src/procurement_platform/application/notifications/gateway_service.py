@@ -1,6 +1,8 @@
 import hashlib
 import hmac
 import json
+import logging
+from typing import Protocol
 
 from pydantic import ValidationError
 
@@ -28,6 +30,12 @@ from procurement_platform.ports.notification_delivery_store import (
 )
 
 
+class PurchasePrefillNotificationProvider(Protocol):
+    async def render(
+        self, request: NotificationGatewayRequest
+    ) -> InteractionNotification | None: ...
+
+
 class NotificationGatewayService:
     def __init__(
         self,
@@ -36,11 +44,14 @@ class NotificationGatewayService:
         delivery_store: NotificationDeliveryStore,
         renderer_registry: NotificationRendererRegistry,
         bearer_token: str | None,
+        purchase_prefill_provider: PurchasePrefillNotificationProvider | None = None,
     ) -> None:
         self._channel = channel_client
         self._store = delivery_store
         self._registry = renderer_registry
         self._bearer_token = bearer_token
+        self._purchase_prefill_provider = purchase_prefill_provider
+        self._logger = logging.getLogger(__name__)
 
     async def deliver(
         self,
@@ -79,7 +90,7 @@ class NotificationGatewayService:
             raise NotificationInProgressError("notification delivery is in progress")
 
         try:
-            content = self._registry.resolve(request.event_type).render(request)
+            content = await self._render_content(request)
             recipient = ChannelRecipient(
                 channel=ChannelType.FEISHU,
                 platform_user_id=request.receiver_platform_user_id,
@@ -108,6 +119,25 @@ class NotificationGatewayService:
             dedup_key=request.dedup_key,
             external_message_id=result.external_message_id,
         )
+
+    async def _render_content(
+        self, request: NotificationGatewayRequest
+    ) -> TextNotification | InteractionNotification:
+        fallback = self._registry.resolve(request.event_type).render(request)
+        if (
+            request.event_type != "REQUIREMENT_PENDING_PURCHASE"
+            or self._purchase_prefill_provider is None
+        ):
+            return fallback
+        try:
+            proactive = await self._purchase_prefill_provider.render(request)
+            return proactive or fallback
+        except Exception as exc:
+            self._logger.warning(
+                "purchase_prefill_notification_fallback",
+                extra={"error_code": type(exc).__name__},
+            )
+            return fallback
 
     def _authenticate(self, authorization: str | None) -> None:
         if self._bearer_token is None:
