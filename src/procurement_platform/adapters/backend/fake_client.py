@@ -357,7 +357,7 @@ class FakeBackendClient:
         self._record("recommend_products")
         self._user(identity)
         del device_profession
-        if not device_name.strip() or not 1 <= limit <= 3:
+        if not device_name.strip() or not 1 <= limit <= 30:
             raise ValueError("invalid product recommendation query")
         items = self.product_recommendations.items
         if keyword:
@@ -1134,7 +1134,6 @@ class FakeBackendClient:
     ) -> AgentStateSaveResult:
         self._record("update_agent_state", conversation_id)
         self._require_conversation(conversation_id)
-        now = datetime.now(UTC)
         saved = AgentSessionState(
             conversation_id=conversation_id,
             expires_in_seconds=259200,
@@ -1142,9 +1141,8 @@ class FakeBackendClient:
         )
         self._states[conversation_id] = saved
         return AgentStateSaveResult(
-            conversation_id=conversation_id,
+            saved=True,
             expires_in_seconds=saved.expires_in_seconds,
-            updated_at=now,
         )
 
     async def snapshot_agent_state(

@@ -76,7 +76,9 @@ class SupplierRecommendationReferenceStore:
                 identity=identity, conversation_id=conversation_id
             )
             state = AgentSessionStateUpdate.model_validate(
-                current.model_dump(exclude={"conversation_id", "expires_in_seconds"})
+                current.model_dump(
+                    exclude={"conversation_id", "expires_in_seconds", "restored_from_snapshot"}
+                )
             )
         except SessionNotFoundError:
             state = AgentSessionStateUpdate()

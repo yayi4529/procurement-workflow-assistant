@@ -361,6 +361,24 @@ class BackendAgentMessagePageDTO(BackendDTO):
     total: int
 
 
+class BackendAgentSessionStateDTO(BackendDTO):
+    conversation_id: int
+    purchase_request_id: int | None = None
+    current_action: str
+    collected_data: dict[str, object]
+    missing_fields: tuple[str, ...]
+    pending_field: str | None = None
+    awaiting_confirmation: bool
+    recent_messages: tuple[dict[str, object], ...]
+    last_recommendations: tuple[dict[str, object], ...]
+    restored_from_snapshot: bool = False
+
+
+class BackendAgentStateSaveDTO(BackendDTO):
+    saved: bool = True
+    expires_in_seconds: int
+
+
 @dataclass(frozen=True, slots=True)
 class BackendRawResponse:
     status_code: int

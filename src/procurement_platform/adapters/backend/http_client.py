@@ -8,6 +8,8 @@ from pydantic import ValidationError as PydanticValidationError
 from procurement_platform.adapters.backend.dto import (
     BackendAgentConversationDTO,
     BackendAgentMessagePageDTO,
+    BackendAgentSessionStateDTO,
+    BackendAgentStateSaveDTO,
     BackendCreatedRequirementDTO,
     BackendCurrentUserDTO,
     BackendEnvelope,
@@ -29,6 +31,8 @@ from procurement_platform.adapters.backend.error_mapping import map_backend_erro
 from procurement_platform.adapters.backend.mapper import (
     map_agent_conversation,
     map_agent_message_page,
+    map_agent_session_state,
+    map_agent_state_save,
     map_created_requirement,
     map_current_user,
     map_fields_save,
@@ -675,12 +679,13 @@ class HttpBackendClient:
     async def get_agent_state(
         self, *, identity: PlatformIdentity, conversation_id: int
     ) -> AgentSessionState:
-        return await self._request_model(
-            AgentSessionState,
+        dto = await self._request_model(
+            BackendAgentSessionStateDTO,
             method="GET",
             path=f"/api/v1/agent/conversations/{conversation_id}/state",
             identity=identity,
         )
+        return map_agent_session_state(dto)
 
     async def update_agent_state(
         self,
@@ -689,13 +694,14 @@ class HttpBackendClient:
         conversation_id: int,
         state: AgentSessionStateUpdate,
     ) -> AgentStateSaveResult:
-        return await self._request_model(
-            AgentStateSaveResult,
+        dto = await self._request_model(
+            BackendAgentStateSaveDTO,
             method="PUT",
             path=f"/api/v1/agent/conversations/{conversation_id}/state",
             identity=identity,
             json_body=state.model_dump(mode="json"),
         )
+        return map_agent_state_save(dto)
 
     async def snapshot_agent_state(
         self,

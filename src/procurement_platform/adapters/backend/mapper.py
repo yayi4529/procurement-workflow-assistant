@@ -3,6 +3,8 @@ from decimal import Decimal
 from procurement_platform.adapters.backend.dto import (
     BackendAgentConversationDTO,
     BackendAgentMessagePageDTO,
+    BackendAgentSessionStateDTO,
+    BackendAgentStateSaveDTO,
     BackendAllowedRequirementAction,
     BackendCreatedRequirementDTO,
     BackendCurrentUserDTO,
@@ -24,6 +26,8 @@ from procurement_platform.domain.assistant_session import (
     AgentConversation,
     AgentMessage,
     AgentMessagePage,
+    AgentSessionState,
+    AgentStateSaveResult,
 )
 from procurement_platform.domain.enums import AgentMessageSender, AllowedRequirementAction
 from procurement_platform.domain.requirement import (
@@ -111,6 +115,17 @@ def map_agent_message_page(
         page=dto.page,
         page_size=dto.page_size,
         total=dto.total,
+    )
+
+
+def map_agent_session_state(dto: BackendAgentSessionStateDTO) -> AgentSessionState:
+    return AgentSessionState.model_validate(dto.model_dump(mode="python"))
+
+
+def map_agent_state_save(dto: BackendAgentStateSaveDTO) -> AgentStateSaveResult:
+    return AgentStateSaveResult(
+        saved=dto.saved,
+        expires_in_seconds=dto.expires_in_seconds,
     )
 
 

@@ -75,13 +75,13 @@ class AgentSessionStateUpdate(SessionModel):
 
 class AgentSessionState(AgentSessionStateUpdate):
     conversation_id: int
-    expires_in_seconds: int = Field(gt=0)
+    restored_from_snapshot: bool = False
+    expires_in_seconds: int | None = Field(default=None, gt=0)
 
 
 class AgentStateSaveResult(SessionModel):
-    conversation_id: int
+    saved: bool = True
     expires_in_seconds: int = Field(gt=0)
-    updated_at: datetime
 
 
 class AgentSessionSnapshot(SessionModel):

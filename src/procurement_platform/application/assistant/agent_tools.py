@@ -17,6 +17,7 @@ from procurement_platform.domain.assistant import AssistantToolContext, Assistan
 from procurement_platform.domain.assistant_session import (
     AgentSessionState,
     AgentSessionStateUpdate,
+    JsonValue,
     RecommendationReference,
 )
 from procurement_platform.domain.enums import (
@@ -124,24 +125,40 @@ class SessionReferenceStore:
         requirement_id: int | None,
         references: tuple[RecommendationReference, ...] = (),
         focused_role: RoleCode | None = None,
+        focused_field: str | None = None,
+        missing_fields: tuple[str, ...] | None = None,
+        pending_field: str | None = None,
+        collected_data: dict[str, JsonValue] | None = None,
         awaiting_confirmation: bool = False,
+        clear_recommendations: bool = False,
     ) -> str:
         try:
             current = await self.state(identity, context.conversation_id)
             update = AgentSessionStateUpdate.model_validate(
-                current.model_dump(exclude={"conversation_id", "expires_in_seconds"})
+                current.model_dump(
+                    exclude={"conversation_id", "expires_in_seconds", "restored_from_snapshot"}
+                )
             )
         except SessionNotFoundError:
             update = AgentSessionStateUpdate()
         candidate_set_id = f"candidates:{context.conversation_id}:{context.external_message_id}"
+        merged_data = dict(update.collected_data)
+        if collected_data:
+            merged_data.update(collected_data)
         await self._backend.update_agent_state(
             identity=identity,
             conversation_id=context.conversation_id,
             state=update.model_copy(
                 update={
                     "purchase_request_id": requirement_id,
-                    "last_recommendations": references,
+                    "collected_data": merged_data,
+                    "missing_fields": (
+                        missing_fields if missing_fields is not None else update.missing_fields
+                    ),
+                    "pending_field": pending_field,
+                    "last_recommendations": () if clear_recommendations else references,
                     "focused_role": focused_role,
+                    "focused_field": focused_field,
                     "awaiting_confirmation": awaiting_confirmation,
                 }
             ),
@@ -378,6 +395,7 @@ class ProductOptionCandidate(BaseModel):
 
 class RecommendProductOptionsResult(AssistantToolResult):
     candidates: tuple[ProductOptionCandidate, ...] = ()
+    focused_field: str | None = None
 
 
 class RecommendProductOptionsTool:
@@ -399,6 +417,10 @@ class RecommendProductOptionsTool:
                     status="PERMISSION_DENIED", user_message="当前用户不是有效需求人"
                 )
             identity, _ = resolved
+            try:
+                state = await self._session.state(identity, context.conversation_id)
+            except SessionNotFoundError:
+                state = None
             detail = None
             device_name = args.device_name
             profession = args.device_profession
@@ -417,12 +439,36 @@ class RecommendProductOptionsTool:
                 device_name=device_name,
                 device_profession=profession,
                 keyword=args.keyword,
-                limit=args.limit,
+                limit=30,
             )
-            seen: set[tuple[str, str]] = set()
+            focused_field = state.pending_field if state else None
+            selected_brand = None
+            if detail is not None:
+                selected_brand = detail.applicant_fields.brand
+            if selected_brand is None and state is not None:
+                value = state.collected_data.get("brand")
+                selected_brand = value if isinstance(value, str) else None
+            seen: set[str | tuple[str, str]] = set()
             candidates: list[ProductOptionCandidate] = []
             for item in values.items:
-                key = ((item.brand or "").strip().casefold(), (item.model or "").strip().casefold())
+                if (
+                    focused_field == "model"
+                    and selected_brand
+                    and ((item.brand or "").strip().casefold() != selected_brand.strip().casefold())
+                ):
+                    continue
+                key: str | tuple[str, str]
+                if focused_field == "brand":
+                    key = (item.brand or "").strip().casefold()
+                elif focused_field == "model":
+                    key = (item.model or "").strip().casefold()
+                else:
+                    key = (
+                        (item.brand or "").strip().casefold(),
+                        (item.model or "").strip().casefold(),
+                    )
+                if not key:
+                    continue
                 if key in seen:
                     continue
                 seen.add(key)
@@ -441,16 +487,35 @@ class RecommendProductOptionsTool:
                 )
                 for item in candidates
             )
+            candidate_data: dict[str, JsonValue] = {
+                "product_candidate_set_id": (
+                    f"candidates:{context.conversation_id}:{context.external_message_id}"
+                )
+            }
+            for candidate in candidates:
+                candidate_data[f"product_candidate:{candidate.candidate_ref}:brand"] = (
+                    candidate.brand
+                )
+                candidate_data[f"product_candidate:{candidate.candidate_ref}:model"] = (
+                    candidate.model
+                )
             candidate_set = await self._session.save(
                 identity=identity,
                 context=context,
                 requirement_id=detail.requirement_id if detail else context.active_requirement_id,
                 references=refs,
                 focused_role=RoleCode.APPLICANT,
+                focused_field=focused_field,
+                pending_field=focused_field,
+                missing_fields=state.missing_fields if state else None,
+                collected_data=candidate_data,
                 awaiting_confirmation=True,
             )
             return RecommendProductOptionsResult(
-                status="SUCCESS", candidate_set_id=candidate_set, candidates=tuple(candidates)
+                status="SUCCESS",
+                candidate_set_id=candidate_set,
+                candidates=tuple(candidates),
+                focused_field=focused_field,
             )
         except (BackendUnavailableError, BackendTimeoutError, BackendProtocolError):
             return RecommendProductOptionsResult(
@@ -472,6 +537,7 @@ class RecommendProductOptionsTool:
 
 class UpdatePurchaseDraftArgs(StrictArgs):
     requirement_id: int | None = Field(default=None, gt=0)
+    product_ref: str | None = Field(default=None, max_length=200)
     device_profession: str | None = Field(default=None, max_length=100)
     device_name: str | None = Field(default=None, max_length=200)
     brand: str | None = Field(default=None, max_length=100)
@@ -486,6 +552,7 @@ class UpdatePurchaseDraftResult(AssistantToolResult):
     requirement_no: str | None = None
     status_value: RequirementStatus | None = None
     updated_fields: tuple[str, ...] = ()
+    updated_values: dict[str, str | None] = Field(default_factory=dict)
     missing_fields: tuple[str, ...] = ()
     next_missing_field: str | None = None
     fields_complete: bool = False
@@ -542,7 +609,29 @@ class UpdatePurchaseDraftTool:
                 return UpdatePurchaseDraftResult(
                     status="PERMISSION_DENIED", user_message="当前用户不是该采购单处理人"
                 )
-            raw = args.model_dump(exclude={"requirement_id"}, exclude_unset=True)
+            raw = args.model_dump(exclude={"requirement_id", "product_ref"}, exclude_unset=True)
+            if args.product_ref is not None:
+                state = await self._session.state(identity, context.conversation_id)
+                if state.pending_field not in {"brand", "model"}:
+                    return UpdatePurchaseDraftResult(
+                        status="INVALID_ARGUMENTS", user_message="当前没有可选择的品牌或型号候选"
+                    )
+                if args.product_ref not in {
+                    item.reference_id
+                    for item in state.last_recommendations
+                    if item.kind == "PRODUCT_RECOMMENDATION"
+                }:
+                    return UpdatePurchaseDraftResult(
+                        status="INVALID_ARGUMENTS", user_message="候选引用不存在或已过期"
+                    )
+                value = state.collected_data.get(
+                    f"product_candidate:{args.product_ref}:{state.pending_field}"
+                )
+                if not isinstance(value, str) or not value.strip():
+                    return UpdatePurchaseDraftResult(
+                        status="INVALID_ARGUMENTS", user_message="候选不包含当前所需字段"
+                    )
+                raw[state.pending_field] = value
             if not raw:
                 return UpdatePurchaseDraftResult(
                     status="NEED_MORE_INFORMATION", user_message="请提供需要保存的采购字段"
@@ -557,12 +646,24 @@ class UpdatePurchaseDraftTool:
             latest = await self._backend.get_requirement(
                 identity=identity, requirement_id=requirement_id
             )
+            collection_missing_fields = list(saved.missing_fields)
+            if not latest.applicant_fields.brand:
+                collection_missing_fields.append("brand")
+            elif not latest.applicant_fields.model:
+                collection_missing_fields.append("model")
+            next_missing_field = collection_missing_fields[0] if collection_missing_fields else None
+            fields_complete = saved.fields_complete and not collection_missing_fields
             await self._session.save(
                 identity=identity,
                 context=context,
                 requirement_id=requirement_id,
                 focused_role=RoleCode.APPLICANT,
-                awaiting_confirmation=saved.fields_complete,
+                focused_field=next_missing_field,
+                missing_fields=tuple(collection_missing_fields),
+                pending_field=next_missing_field,
+                collected_data={key: value for key, value in raw.items()},
+                awaiting_confirmation=fields_complete,
+                clear_recommendations=True,
             )
             return UpdatePurchaseDraftResult(
                 status="SUCCESS",
@@ -571,13 +672,14 @@ class UpdatePurchaseDraftTool:
                 requirement_no=latest.requirement_no,
                 status_value=latest.status,
                 updated_fields=tuple(raw),
-                missing_fields=saved.missing_fields,
-                next_missing_field=saved.next_missing_field,
-                fields_complete=saved.fields_complete,
+                updated_values={key: value for key, value in raw.items()},
+                missing_fields=tuple(collection_missing_fields),
+                next_missing_field=next_missing_field,
+                fields_complete=fields_complete,
                 user_message=(
                     "字段已完整, 请在正式需求卡片中确认并提交"
-                    if saved.fields_complete
-                    else f"下一项请补充: {saved.next_missing_field}"
+                    if fields_complete
+                    else f"下一项请补充: {next_missing_field}"
                 ),
             )
         except ConcurrentModificationError:
