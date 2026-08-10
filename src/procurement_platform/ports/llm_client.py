@@ -13,4 +13,5 @@ class LlmClient(Protocol):
         *,
         messages: tuple[AssistantMessage, ...],
         tools: tuple[AssistantToolDefinition, ...],
+        tool_choice: str | None = None,
     ) -> AssistantTurn: ...

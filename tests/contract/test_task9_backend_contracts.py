@@ -111,6 +111,9 @@ async def test_task9_read_endpoint_contracts_and_explicit_mapping() -> None:
         "/api/v1/recommendations/purchase-history",
     ]
     assert requests[0].url.params["device_name"] == "服务器"
+    assert "supplier_id" not in requests[0].url.params
+    assert "status" not in requests[0].url.params
+    assert "created_from" not in requests[0].url.params
     assert requests[2].url.params["limit"] == "3"
     assert requests[3].url.params["requirement_id"] == "1"
     assert json.loads(requests[0].headers["x-gateway-timestamp"]) > 0

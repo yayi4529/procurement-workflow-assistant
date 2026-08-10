@@ -228,6 +228,41 @@ async def test_query_purchase_requests_uses_backend_time_filter_and_returns_late
     assert result.requirement_id == 1
     assert client.call_counts["list_purchase_records"] == 1
     assert client.call_counts["get_requirement"] == 1
+    assert result.total_count is None
+
+
+@pytest.mark.asyncio
+async def test_query_purchase_requests_returns_backend_total_for_unfiltered_history() -> None:
+    client = FakeBackendClient(user(RoleCode.APPLICANT))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.APPLICANT), current_action="ASSISTANT_CHAT"
+    )
+    client.purchase_records.extend(
+        (
+            PurchaseRecord(
+                requirement_id=1,
+                requirement_no="PR-1",
+                device_name="服务器",
+                status=RequirementStatus.DRAFT,
+                created_at=datetime(2026, 8, 1, tzinfo=UTC),
+            ),
+            PurchaseRecord(
+                requirement_id=2,
+                requirement_no="PR-2",
+                device_name="交换机",
+                status=RequirementStatus.COMPLETED,
+                created_at=datetime(2026, 8, 2, tzinfo=UTC),
+            ),
+        )
+    )
+
+    result = await QueryPurchaseRequestsTool(client).execute(
+        args=QueryPurchaseRequestsArgs(operation="SEARCH", result_limit=2),
+        context=context(RoleCode.APPLICANT, conversation_id=conversation.conversation_id),
+    )
+
+    assert result.status == "MULTIPLE_MATCHES"
+    assert result.total_count == 2
 
 
 @pytest.mark.asyncio
@@ -299,7 +334,7 @@ async def test_brand_recommendation_deduplicates_brand_and_replaces_old_candidat
 
 
 @pytest.mark.asyncio
-async def test_product_reference_resolves_pending_brand_without_guessing_model() -> None:
+async def test_selection_index_resolves_pending_brand_without_guessing_model() -> None:
     client = FakeBackendClient(user(RoleCode.APPLICANT))
     client.seed_requirement(detail(RoleCode.APPLICANT, RequirementStatus.DRAFT))
     conversation = await client.get_or_create_agent_conversation(
@@ -324,7 +359,7 @@ async def test_product_reference_resolves_pending_brand_without_guessing_model()
         ),
     )
     result = await UpdatePurchaseDraftTool(client).execute(
-        args=UpdatePurchaseDraftArgs(product_ref=ref),
+        args=UpdatePurchaseDraftArgs(selection_index=1),
         context=context(
             RoleCode.APPLICANT, conversation_id=conversation.conversation_id
         ).model_copy(update={"active_requirement_id": 1}),
@@ -334,6 +369,70 @@ async def test_product_reference_resolves_pending_brand_without_guessing_model()
     assert result.updated_fields == ("brand",)
     assert latest.applicant_fields.brand == "华为"
     assert latest.applicant_fields.model == "R750"
+
+
+@pytest.mark.asyncio
+async def test_selection_index_out_of_range_fails_without_saving() -> None:
+    client = FakeBackendClient(user(RoleCode.APPLICANT))
+    client.seed_requirement(detail(RoleCode.APPLICANT, RequirementStatus.DRAFT))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.APPLICANT), current_action="ASSISTANT_CHAT"
+    )
+    ref = "product:1:test"
+    await client.update_agent_state(
+        identity=identity(RoleCode.APPLICANT),
+        conversation_id=conversation.conversation_id,
+        state=AgentSessionStateUpdate(
+            purchase_request_id=1,
+            pending_field="brand",
+            last_recommendations=(
+                RecommendationReference(
+                    reference_id=ref, kind="PRODUCT_RECOMMENDATION", label="华为 S5735"
+                ),
+            ),
+            collected_data={f"product_candidate:{ref}:brand": "华为"},
+        ),
+    )
+
+    result = await UpdatePurchaseDraftTool(client).execute(
+        args=UpdatePurchaseDraftArgs(selection_index=4),
+        context=context(
+            RoleCode.APPLICANT, conversation_id=conversation.conversation_id
+        ).model_copy(update={"active_requirement_id": 1}),
+    )
+
+    assert result.status == "INVALID_ARGUMENTS"
+    assert client.call_counts["update_applicant_fields"] == 0
+
+
+@pytest.mark.asyncio
+async def test_direct_model_value_completes_applicant_collection() -> None:
+    client = FakeBackendClient(user(RoleCode.APPLICANT))
+    client.seed_requirement(detail(RoleCode.APPLICANT, RequirementStatus.DRAFT))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.APPLICANT), current_action="ASSISTANT_CHAT"
+    )
+    await client.update_agent_state(
+        identity=identity(RoleCode.APPLICANT),
+        conversation_id=conversation.conversation_id,
+        state=AgentSessionStateUpdate(
+            purchase_request_id=1,
+            pending_field="model",
+            missing_fields=("model",),
+        ),
+    )
+
+    result = await UpdatePurchaseDraftTool(client).execute(
+        args=UpdatePurchaseDraftArgs(model="PEX4"),
+        context=context(
+            RoleCode.APPLICANT, conversation_id=conversation.conversation_id
+        ).model_copy(update={"active_requirement_id": 1}),
+    )
+
+    latest = await client.get_requirement(identity=identity(RoleCode.APPLICANT), requirement_id=1)
+    assert result.status == "SUCCESS"
+    assert result.fields_complete is True
+    assert latest.applicant_fields.model == "PEX4"
 
 
 @pytest.mark.asyncio
@@ -366,6 +465,63 @@ async def test_applicant_draft_creates_single_building_requirement_and_never_sub
     assert client.call_counts["create_requirement"] == 1
     assert client.call_counts["update_applicant_fields"] == 1
     assert client.call_counts["submit_review"] == 0
+
+
+@pytest.mark.asyncio
+async def test_start_new_draft_ignores_submitted_requirement_focus() -> None:
+    client = FakeBackendClient(user(RoleCode.APPLICANT))
+    client.seed_requirement(
+        detail(RoleCode.APPLICANT, RequirementStatus.PENDING_REVIEW, requirement_id=1)
+    )
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.APPLICANT), current_action="ASSISTANT_CHAT"
+    )
+
+    result = await UpdatePurchaseDraftTool(client).execute(
+        args=UpdatePurchaseDraftArgs(
+            start_new=True,
+            device_profession="暖通",
+            device_name="精密空调",
+            quantity="2",
+            unit="台",
+            application_reason="机房制冷扩容",
+        ),
+        context=context(
+            RoleCode.APPLICANT, conversation_id=conversation.conversation_id
+        ).model_copy(update={"active_requirement_id": 1}),
+    )
+
+    assert result.status == "SUCCESS"
+    assert result.requirement_id != 1
+    assert client.call_counts["create_requirement"] == 1
+
+
+@pytest.mark.asyncio
+async def test_field_update_starts_new_draft_when_session_focus_is_submitted() -> None:
+    client = FakeBackendClient(user(RoleCode.APPLICANT))
+    client.seed_requirement(
+        detail(RoleCode.APPLICANT, RequirementStatus.PENDING_REVIEW, requirement_id=1)
+    )
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.APPLICANT), current_action="ASSISTANT_CHAT"
+    )
+
+    result = await UpdatePurchaseDraftTool(client).execute(
+        args=UpdatePurchaseDraftArgs(
+            device_profession="电气",
+            device_name="UPS",
+            quantity="2",
+            unit="台",
+        ),
+        context=context(
+            RoleCode.APPLICANT, conversation_id=conversation.conversation_id
+        ).model_copy(update={"active_requirement_id": 1}),
+    )
+
+    assert result.status == "SUCCESS"
+    assert result.requirement_id != 1
+    assert result.next_missing_field == "application_reason"
+    assert client.call_counts["create_requirement"] == 1
 
 
 @pytest.mark.asyncio

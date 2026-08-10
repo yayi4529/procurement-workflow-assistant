@@ -198,6 +198,7 @@ class QueryPurchaseRequestsArgs(StrictArgs):
 
 class QueryPurchaseRequestsResult(AssistantToolResult):
     records: tuple[PurchaseRequestCandidate, ...] = ()
+    total_count: int | None = Field(default=None, ge=0)
     timeline: tuple[str, ...] = ()
     requirement_no: str | None = None
     status_value: RequirementStatus | None = None
@@ -271,14 +272,16 @@ class QueryPurchaseRequestsTool:
                     break
             if not matched:
                 return QueryPurchaseRequestsResult(
-                    status="NOT_FOUND", user_message="未找到符合条件的采购单"
+                    status="NOT_FOUND",
+                    user_message="未找到符合条件的采购单",
+                    total_count=page.total if window is None else None,
                 )
             if len(matched) == 1:
                 return self._detail(
                     await self._backend.get_requirement(
                         identity=identity, requirement_id=matched[0][0].requirement_id
                     )
-                )
+                ).model_copy(update={"total_count": page.total if window is None else None})
             candidates = tuple(self._candidate(item, at) for item, at in matched)
             candidate_set = await self._session.save(
                 identity=identity,
@@ -295,7 +298,10 @@ class QueryPurchaseRequestsTool:
                 awaiting_confirmation=True,
             )
             return QueryPurchaseRequestsResult(
-                status="MULTIPLE_MATCHES", candidate_set_id=candidate_set, records=candidates
+                status="MULTIPLE_MATCHES",
+                candidate_set_id=candidate_set,
+                records=candidates,
+                total_count=page.total if window is None else None,
             )
         except ValueError as exc:
             return QueryPurchaseRequestsResult(status="INVALID_ARGUMENTS", user_message=str(exc))
@@ -537,7 +543,16 @@ class RecommendProductOptionsTool:
 
 class UpdatePurchaseDraftArgs(StrictArgs):
     requirement_id: int | None = Field(default=None, gt=0)
+    start_new: bool = Field(
+        default=False,
+        description="用户明确要求新建另一张采购草稿时设为 true",
+    )
     product_ref: str | None = Field(default=None, max_length=200)
+    selection_index: int | None = Field(
+        default=None,
+        ge=1,
+        description="用户选择最近一次推荐列表中的第几个选项, 从 1 开始",
+    )
     device_profession: str | None = Field(default=None, max_length=100)
     device_name: str | None = Field(default=None, max_length=200)
     brand: str | None = Field(default=None, max_length=100)
@@ -577,7 +592,27 @@ class UpdatePurchaseDraftTool:
                     status="PERMISSION_DENIED", user_message="当前用户不是有效需求人"
                 )
             identity, user = resolved
-            requirement_id = args.requirement_id or context.active_requirement_id
+            if args.start_new and args.requirement_id is not None:
+                return UpdatePurchaseDraftResult(
+                    status="INVALID_ARGUMENTS",
+                    user_message="新建草稿时不能同时指定已有采购单",
+                )
+            requirement_id = (
+                None if args.start_new else args.requirement_id or context.active_requirement_id
+            )
+            detail = None
+            if requirement_id is not None:
+                detail = await self._backend.get_requirement(
+                    identity=identity, requirement_id=requirement_id
+                )
+                if (
+                    detail.status not in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}
+                    and args.requirement_id is None
+                    and args.selection_index is None
+                    and args.product_ref is None
+                ):
+                    requirement_id = None
+                    detail = None
             if requirement_id is None:
                 primary = [item for item in user.buildings if item.is_primary]
                 building = (
@@ -595,9 +630,10 @@ class UpdatePurchaseDraftTool:
                     identity=identity, building_id=building.building_id
                 )
                 requirement_id = summary.requirement_id
-            detail = await self._backend.get_requirement(
-                identity=identity, requirement_id=requirement_id
-            )
+                detail = await self._backend.get_requirement(
+                    identity=identity, requirement_id=requirement_id
+                )
+            assert detail is not None
             if detail.status not in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}:
                 return UpdatePurchaseDraftResult(
                     status="INVALID_STATUS", user_message="当前状态不可修改需求草稿"
@@ -609,23 +645,37 @@ class UpdatePurchaseDraftTool:
                 return UpdatePurchaseDraftResult(
                     status="PERMISSION_DENIED", user_message="当前用户不是该采购单处理人"
                 )
-            raw = args.model_dump(exclude={"requirement_id", "product_ref"}, exclude_unset=True)
-            if args.product_ref is not None:
+            raw = args.model_dump(
+                exclude={"requirement_id", "start_new", "product_ref", "selection_index"},
+                exclude_unset=True,
+            )
+            if args.selection_index is not None or args.product_ref is not None:
                 state = await self._session.state(identity, context.conversation_id)
                 if state.pending_field not in {"brand", "model"}:
                     return UpdatePurchaseDraftResult(
                         status="INVALID_ARGUMENTS", user_message="当前没有可选择的品牌或型号候选"
                     )
-                if args.product_ref not in {
-                    item.reference_id
+                recommendations = tuple(
+                    item
                     for item in state.last_recommendations
                     if item.kind == "PRODUCT_RECOMMENDATION"
-                }:
+                )
+                if args.selection_index is not None:
+                    if args.selection_index > len(recommendations):
+                        return UpdatePurchaseDraftResult(
+                            status="INVALID_ARGUMENTS",
+                            user_message="推荐序号超出当前候选范围",
+                        )
+                    reference_id = recommendations[args.selection_index - 1].reference_id
+                else:
+                    assert args.product_ref is not None
+                    reference_id = args.product_ref
+                if reference_id not in {item.reference_id for item in recommendations}:
                     return UpdatePurchaseDraftResult(
                         status="INVALID_ARGUMENTS", user_message="候选引用不存在或已过期"
                     )
                 value = state.collected_data.get(
-                    f"product_candidate:{args.product_ref}:{state.pending_field}"
+                    f"product_candidate:{reference_id}:{state.pending_field}"
                 )
                 if not isinstance(value, str) or not value.strip():
                     return UpdatePurchaseDraftResult(

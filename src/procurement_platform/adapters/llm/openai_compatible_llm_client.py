@@ -25,7 +25,11 @@ class OpenAICompatibleLlmClient:
         self._base_url = base_url
 
     async def complete(
-        self, *, messages: tuple[AssistantMessage, ...], tools: tuple[AssistantToolDefinition, ...]
+        self,
+        *,
+        messages: tuple[AssistantMessage, ...],
+        tools: tuple[AssistantToolDefinition, ...],
+        tool_choice: str | None = None,
     ) -> AssistantTurn:
         try:
             client = import_module("openai").AsyncOpenAI(
@@ -33,10 +37,10 @@ class OpenAICompatibleLlmClient:
                 base_url=self._base_url,
                 timeout=self._timeout_seconds,
             )
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=[self._message_payload(message) for message in messages],
-                tools=[
+            request: dict[str, object] = {
+                "model": self._model,
+                "messages": [self._message_payload(message) for message in messages],
+                "tools": [
                     {
                         "type": "function",
                         "function": {
@@ -48,7 +52,22 @@ class OpenAICompatibleLlmClient:
                     for tool in tools
                 ]
                 or None,
-            )
+            }
+            # Some OpenAI-compatible providers reject the presence of
+            # ``tool_choice`` in thinking mode, even when its value is null.
+            # Omit it unless the caller explicitly asks for a tool call.
+            if tool_choice is not None:
+                request["tool_choice"] = tool_choice
+            try:
+                response = await client.chat.completions.create(**request)
+            except Exception as exc:
+                if tool_choice is None or not self._tool_choice_is_unsupported(exc):
+                    raise
+                # Thinking-mode providers may support function tools but reject
+                # the forced-choice extension. Retrying without it still lets
+                # the model elect a tool call and keeps the turn responsive.
+                request.pop("tool_choice", None)
+                response = await client.chat.completions.create(**request)
         except ImportError as exc:
             raise LlmUnavailableError("OpenAI SDK is unavailable") from exc
         except Exception as exc:
@@ -82,3 +101,7 @@ class OpenAICompatibleLlmClient:
                 for call in message.tool_calls
             ]
         return payload
+
+    @staticmethod
+    def _tool_choice_is_unsupported(exc: Exception) -> bool:
+        return "thinking mode does not support this tool_choice" in str(exc).lower()

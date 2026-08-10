@@ -93,13 +93,6 @@ class PurchaserCardFactory:
                     "实际单价 (元)",
                     purchase.actual_unit_price if purchase else None,
                 ),
-                (
-                    "purchased_at",
-                    "采购时间 (YYYY-MM-DD HH:MM)",
-                    purchase.purchased_at.strftime("%Y-%m-%d %H:%M")
-                    if purchase and purchase.purchased_at
-                    else None,
-                ),
                 ("tax_rate", "税率 (%)", purchase.tax_rate if purchase else None),
                 (
                     "supplier_tax_number",
@@ -125,7 +118,7 @@ class PurchaserCardFactory:
                     name=name,
                     label=label,
                     default_value=default,
-                    required=name in {"actual_unit_price", "purchased_at"},
+                    required=name == "actual_unit_price",
                 )
                 for name, label, default in specs
             )

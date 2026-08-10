@@ -11,6 +11,7 @@ from procurement_platform.adapters.persistence.local_conversation_lock import (
     LocalConversationLockManager,
 )
 from procurement_platform.application.assistant.agent_tools import (
+    QueryPurchaseRequestsTool,
     RecommendProductOptionsTool,
     UpdatePurchaseDraftResult,
     UpdatePurchaseDraftTool,
@@ -33,10 +34,7 @@ from procurement_platform.domain.assistant import (
     AssistantTurn,
 )
 from procurement_platform.domain.assistant_errors import LlmUnavailableError
-from procurement_platform.domain.assistant_session import (
-    AgentSessionStateUpdate,
-    RecommendationReference,
-)
+from procurement_platform.domain.assistant_session import AgentSessionStateUpdate
 from procurement_platform.domain.enums import PlatformType, RequirementStatus, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
@@ -44,6 +42,7 @@ from procurement_platform.domain.requirement import (
     ApplicantFields,
     ProductRecommendation,
     ProductRecommendations,
+    PurchaseRecord,
     RequirementBuilding,
     RequirementDetail,
     RequirementHandler,
@@ -176,33 +175,13 @@ def test_beijing_timezone_has_stable_eight_hour_offset() -> None:
     assert offset.total_seconds() == 8 * 60 * 60
 
 
-def test_purchase_query_intent_requires_query_tool_before_text_reply() -> None:
-    allowed = frozenset({"query_purchase_requests", "update_purchase_draft"})
-
-    assert (
-        ProcurementAssistant._required_tool("请查询我的采购需求列表", allowed)
-        == "query_purchase_requests"
-    )
-    assert (
-        ProcurementAssistant._required_tool("我要购买一台服务器, 整理成草稿", allowed)
-        == "update_purchase_draft"
-    )
-    assert (
-        ProcurementAssistant._required_tool("请补充信息", allowed, active_requirement_id=123)
-        == "update_purchase_draft"
-    )
-    assert ProcurementAssistant._required_tool("你好", allowed) is None
-    assert ProcurementAssistant._required_tool("请提交采购需求", allowed) is None
-
-
 @pytest.mark.asyncio
-async def test_draft_intent_forces_tool_and_asks_only_next_field() -> None:
+async def test_llm_draft_tool_call_asks_only_next_field() -> None:
     backend = FakeBackendClient(user())
     registry = ToolRegistry()
     registry.register(UpdatePurchaseDraftTool(backend))
     llm = FakeLlmClient(
         turns=(
-            AssistantTurn(content="我来帮您保存草稿。"),
             AssistantTurn(
                 tool_calls=(
                     AssistantToolCall(
@@ -244,13 +223,20 @@ async def test_draft_intent_forces_tool_and_asks_only_next_field() -> None:
     assert "设备类型" in response.text
     assert "待补充字段" not in response.text
     assert backend.call_counts["update_applicant_fields"] == 1
-    assert len(llm.calls) == 2
+    assert len(llm.calls) == 1
+    assert llm.tool_choices == [None]
 
 
-def _assistant(backend: FakeBackendClient, registry: ToolRegistry) -> ProcurementAssistant:
-    return ProcurementAssistant(
+@pytest.mark.asyncio
+async def test_plain_text_query_response_never_forces_a_draft_write() -> None:
+    backend = FakeBackendClient(user())
+    registry = ToolRegistry()
+    registry.register(QueryPurchaseRequestsTool(backend))
+    registry.register(UpdatePurchaseDraftTool(backend))
+    llm = FakeLlmClient(turns=())
+    assistant = ProcurementAssistant(
         backend_client=backend,
-        llm_client=FakeLlmClient(turns=()),
+        llm_client=llm,
         session_service=AssistantSessionService(backend),
         context_builder=AssistantContextBuilder(),
         prompt_builder=PromptBuilder(),
@@ -261,9 +247,134 @@ def _assistant(backend: FakeBackendClient, registry: ToolRegistry) -> Procuremen
         max_history_messages=20,
     )
 
+    response = await assistant.handle(
+        TextMessageEvent(
+            event_id="query-event",
+            external_user_id="ou_test",
+            external_message_id="query-message",
+            chat_id="query-chat",
+            text="帮我查一下我之前一共提交了多少采购申请",
+        )
+    )
+
+    assert isinstance(response, AssistantInteractionResponse)
+    assert "共 **0** 条采购申请" in response.view.elements[0].markdown
+    assert backend.call_counts["create_requirement"] == 0
+    assert backend.call_counts["update_applicant_fields"] == 0
+    assert backend.call_counts["list_purchase_records"] == 1
+    assert llm.tool_choices == [None]
+
 
 @pytest.mark.asyncio
-async def test_explicit_new_draft_does_not_reuse_submitted_requirement() -> None:
+async def test_query_blocks_an_unexpected_draft_tool_call() -> None:
+    backend = FakeBackendClient(user())
+    registry = ToolRegistry()
+    registry.register(QueryPurchaseRequestsTool(backend))
+    registry.register(UpdatePurchaseDraftTool(backend))
+    llm = FakeLlmClient(
+        turns=(
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(
+                        id="unexpected-write",
+                        name="update_purchase_draft",
+                        arguments_json='{"device_name":"不应保存"}',
+                    ),
+                )
+            ),
+            AssistantTurn(content="查询工具调用失败, 请稍后重试。"),
+        )
+    )
+    assistant = ProcurementAssistant(
+        backend_client=backend,
+        llm_client=llm,
+        session_service=AssistantSessionService(backend),
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=PromptBuilder(),
+        tool_registry=registry,
+        tool_executor=ToolExecutor(registry, max_result_chars=20000),
+        tool_policy=ToolPolicy(),
+        max_tool_steps=4,
+        max_history_messages=20,
+    )
+
+    await assistant.handle(
+        TextMessageEvent(
+            event_id="blocked-write-event",
+            external_user_id="ou_test",
+            external_message_id="blocked-write-message",
+            chat_id="query-chat",
+            text="帮我查看采购申请详情",
+        )
+    )
+
+    assert backend.call_counts["create_requirement"] == 0
+    assert backend.call_counts["update_applicant_fields"] == 0
+    assert backend.call_counts["list_purchase_records"] == 0
+
+
+@pytest.mark.asyncio
+async def test_applicant_history_query_returns_a_clickable_card_with_backend_total() -> None:
+    backend = FakeBackendClient(user())
+    backend.purchase_records.extend(
+        (
+            PurchaseRecord(
+                requirement_id=1,
+                requirement_no="PR-1",
+                device_name="服务器",
+                status=RequirementStatus.PENDING_REVIEW,
+                created_at=datetime(2026, 8, 1, tzinfo=UTC),
+            ),
+            PurchaseRecord(
+                requirement_id=2,
+                requirement_no="PR-2",
+                device_name="交换机",
+                status=RequirementStatus.COMPLETED,
+                created_at=datetime(2026, 8, 2, tzinfo=UTC),
+            ),
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(QueryPurchaseRequestsTool(backend))
+    registry.register(UpdatePurchaseDraftTool(backend))
+    llm = FakeLlmClient(turns=(AssistantTurn(content="您之前共提交了 2 条采购申请, 详情如下。"),))
+    assistant = ProcurementAssistant(
+        backend_client=backend,
+        llm_client=llm,
+        session_service=AssistantSessionService(backend),
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=PromptBuilder(),
+        tool_registry=registry,
+        tool_executor=ToolExecutor(registry, max_result_chars=20000),
+        tool_policy=ToolPolicy(),
+        max_tool_steps=4,
+        max_history_messages=20,
+    )
+
+    response = await assistant.handle(
+        TextMessageEvent(
+            event_id="history-card-event",
+            external_user_id="ou_test",
+            external_message_id="history-card-message",
+            chat_id="history-chat",
+            text="帮我查一下我之前一共提交了多少采购申请",
+        )
+    )
+
+    assert isinstance(response, AssistantInteractionResponse)
+    assert response.view.title == "我的采购申请"
+    assert "您之前共提交了 2 条采购申请" in response.view.elements[0].markdown
+    assert "共 **2** 条采购申请" in response.view.elements[0].markdown
+    assert [action.action_id for action in response.view.actions] == [
+        "applicant.open",
+        "applicant.open",
+    ]
+    assert backend.call_counts["create_requirement"] == 0
+    assert backend.call_counts["update_applicant_fields"] == 0
+
+
+@pytest.mark.asyncio
+async def test_verified_pending_draft_field_reply_retries_the_draft_tool() -> None:
     backend = FakeBackendClient(user())
     identity = PlatformIdentity.create(PlatformType.FEISHU, "ou_test")
     conversation = await backend.get_or_create_agent_conversation(
@@ -272,36 +383,37 @@ async def test_explicit_new_draft_does_not_reuse_submitted_requirement() -> None
     backend.seed_requirement(
         RequirementDetail(
             requirement_id=1,
-            requirement_no="PR-OLD",
-            status=RequirementStatus.PENDING_REVIEW,
-            version=2,
+            requirement_no="PR-1",
+            status=RequirementStatus.DRAFT,
+            version=1,
             building=RequirementBuilding(building_id=1, building_name="A"),
-            current_handler=RequirementHandler(employee_id=2, name="Manager"),
-            applicant_fields=ApplicantFields(device_name="旧设备"),
-            missing_fields=(),
+            current_handler=RequirementHandler(employee_id=1, name="Test"),
+            applicant_fields=ApplicantFields(device_name="交换机"),
+            missing_fields=("brand",),
             allowed_actions=(),
         )
     )
     await backend.update_agent_state(
         identity=identity,
         conversation_id=conversation.conversation_id,
-        state=AgentSessionStateUpdate(purchase_request_id=1),
+        state=AgentSessionStateUpdate(
+            purchase_request_id=1,
+            missing_fields=("brand",),
+            pending_field="brand",
+            focused_field="brand",
+        ),
     )
     registry = ToolRegistry()
     registry.register(UpdatePurchaseDraftTool(backend))
     llm = FakeLlmClient(
         turns=(
+            AssistantTurn(content="我会记录这个品牌。"),
             AssistantTurn(
                 tool_calls=(
                     AssistantToolCall(
-                        id="new-draft",
+                        id="brand-call",
                         name="update_purchase_draft",
-                        arguments_json=(
-                            '{"device_profession":"暖通","device_name":"精密空调",'
-                            '"brand":"维谛","model":"P2",'
-                            '"quantity":"2","unit":"台",'
-                            '"application_reason":"机房制冷扩容"}'
-                        ),
+                        arguments_json='{"brand":"华为"}',
                     ),
                 )
             ),
@@ -320,22 +432,34 @@ async def test_explicit_new_draft_does_not_reuse_submitted_requirement() -> None
         max_history_messages=20,
     )
 
-    response = await assistant.handle(
+    await assistant.handle(
         TextMessageEvent(
-            event_id="new-event",
+            event_id="brand-event",
             external_user_id="ou_test",
-            external_message_id="new-message",
-            chat_id="new-chat",
-            text="帮我新建采购两台精密空调, 用于机房制冷扩容。",
+            external_message_id="brand-message",
+            chat_id="draft-chat",
+            text="华为",
         )
     )
 
-    assert isinstance(response, AssistantInteractionResponse)
-    assert backend.call_counts["create_requirement"] == 1
-    state = await backend.get_agent_state(
-        identity=identity, conversation_id=conversation.conversation_id
+    assert backend.call_counts["get_requirement"] >= 1
+    assert backend.call_counts["update_applicant_fields"] == 1
+    assert llm.tool_choices == [None, "required"]
+
+
+def _assistant(backend: FakeBackendClient, registry: ToolRegistry) -> ProcurementAssistant:
+    return ProcurementAssistant(
+        backend_client=backend,
+        llm_client=FakeLlmClient(turns=()),
+        session_service=AssistantSessionService(backend),
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=PromptBuilder(),
+        tool_registry=registry,
+        tool_executor=ToolExecutor(registry, max_result_chars=20000),
+        tool_policy=ToolPolicy(),
+        max_tool_steps=4,
+        max_history_messages=20,
     )
-    assert state.purchase_request_id != 1
 
 
 @pytest.mark.asyncio
@@ -407,7 +531,7 @@ async def test_brand_missing_forces_history_recommendation_before_reply() -> Non
         allowed=frozenset({"update_purchase_draft", "recommend_product_options"}),
     )
     assert isinstance(response, AssistantTextResponse)
-    assert "根据历史采购记录" in response.text
+    assert "根据采购白名单" in response.text
     assert response.text.count("华为") == 1
     assert "1. 华为" in response.text
     assert "2. H3C" in response.text
@@ -416,97 +540,131 @@ async def test_brand_missing_forces_history_recommendation_before_reply() -> Non
 
 
 @pytest.mark.asyncio
-async def test_invalid_product_selection_is_rejected_without_saving() -> None:
+async def test_three_turn_llm_draft_flow_returns_confirmation_card() -> None:
     backend = FakeBackendClient(user())
-    conversation = await backend.get_or_create_agent_conversation(
-        identity=PlatformIdentity.create(PlatformType.FEISHU, "ou_test"),
-        current_action="ASSISTANT_CHAT",
+    backend.product_recommendations = ProductRecommendations(
+        items=tuple(
+            ProductRecommendation(
+                brand=brand,
+                model=model,
+                historical_count=3,
+                last_purchased_at=datetime(2026, 8, index, tzinfo=UTC),
+            )
+            for index, (brand, model) in enumerate(
+                (
+                    ("维谛", "PEX4"),
+                    ("维谛", "Liebert CRV"),
+                    ("维谛", "Liebert DSE"),
+                    ("施耐德", "Uniflair"),
+                    ("艾特网能", "CyberMate"),
+                ),
+                start=1,
+            )
+        )
     )
-    await backend.update_agent_state(
-        identity=PlatformIdentity.create(PlatformType.FEISHU, "ou_test"),
-        conversation_id=conversation.conversation_id,
-        state=AgentSessionStateUpdate(
-            pending_field="brand",
-            last_recommendations=tuple(
-                RecommendationReference(
-                    reference_id=f"product:{index}:x",
-                    kind="PRODUCT_RECOMMENDATION",
-                    label=str(index),
+    registry = ToolRegistry()
+    registry.register(UpdatePurchaseDraftTool(backend))
+    registry.register(RecommendProductOptionsTool(backend))
+    llm = FakeLlmClient(
+        turns=(
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(
+                        id="base-fields",
+                        name="update_purchase_draft",
+                        arguments_json=(
+                            '{"device_profession":"暖通","device_name":"精密空调",'
+                            '"quantity":"2","unit":"台",'
+                            '"application_reason":"机房制冷扩容"}'
+                        ),
+                    ),
                 )
-                for index in range(1, 4)
             ),
-        ),
-    )
-    registry = ToolRegistry()
-    registry.register(UpdatePurchaseDraftTool(backend))
-    response = await _assistant(backend, registry).handle(
-        TextMessageEvent(
-            event_id="e4",
-            external_user_id="ou_test",
-            external_message_id="m4",
-            chat_id="c4",
-            text="4",
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(
+                        id="brand-selection",
+                        name="update_purchase_draft",
+                        arguments_json='{"selection_index":1}',
+                    ),
+                )
+            ),
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(
+                        id="model-value",
+                        name="update_purchase_draft",
+                        arguments_json='{"model":"PEX4"}',
+                    ),
+                )
+            ),
         )
     )
-    assert isinstance(response, AssistantTextResponse)
-    assert response.text == "当前有 3 个推荐选项, 请回复 1、2、3, 或者直接告诉我您需要的品牌。"
-    assert backend.call_counts["update_applicant_fields"] == 0
+    assistant = ProcurementAssistant(
+        backend_client=backend,
+        llm_client=llm,
+        session_service=AssistantSessionService(backend),
+        context_builder=AssistantContextBuilder(),
+        prompt_builder=PromptBuilder(),
+        tool_registry=registry,
+        tool_executor=ToolExecutor(registry, max_result_chars=20000),
+        tool_policy=ToolPolicy(),
+        max_tool_steps=4,
+        max_history_messages=20,
+    )
 
+    first = await assistant.handle(
+        TextMessageEvent(
+            event_id="e1",
+            external_user_id="ou_test",
+            external_message_id="m1",
+            chat_id="c1",
+            text="帮我采购两台精密空调, 用于机房制冷扩容。",
+        )
+    )
+    second = await assistant.handle(
+        TextMessageEvent(
+            event_id="e2",
+            external_user_id="ou_test",
+            external_message_id="m2",
+            chat_id="c1",
+            text="第一个。",
+        )
+    )
+    third = await assistant.handle(
+        TextMessageEvent(
+            event_id="e3",
+            external_user_id="ou_test",
+            external_message_id="m3",
+            chat_id="c1",
+            text="PEX4。",
+        )
+    )
 
-@pytest.mark.asyncio
-async def test_short_answer_is_bound_to_pending_device_profession_without_llm() -> None:
-    backend = FakeBackendClient(user())
-    identity = PlatformIdentity.create(PlatformType.FEISHU, "ou_test")
+    assert isinstance(first, AssistantTextResponse)
+    assert "根据采购白名单" in first.text
+    assert isinstance(second, AssistantTextResponse)
+    assert "根据历史采购记录" in second.text
+    assert isinstance(third, AssistantInteractionResponse)
     conversation = await backend.get_or_create_agent_conversation(
-        identity=identity,
+        identity=PlatformIdentity.create(PlatformType.FEISHU, "ou_test"),
         current_action="ASSISTANT_CHAT",
     )
-    backend.seed_requirement(
-        RequirementDetail(
-            requirement_id=1,
-            requirement_no="PR-1",
-            status=RequirementStatus.DRAFT,
-            version=1,
-            building=RequirementBuilding(building_id=1, building_name="A"),
-            current_handler=RequirementHandler(employee_id=1, name="Test"),
-            applicant_fields=ApplicantFields(
-                device_name="精密空调",
-                quantity="2",
-                unit="台",
-                application_reason="机房制冷扩容",
-            ),
-            missing_fields=("device_profession",),
-            allowed_actions=(),
-        )
-    )
-    await backend.update_agent_state(
-        identity=identity,
-        conversation_id=conversation.conversation_id,
-        state=AgentSessionStateUpdate(
-            purchase_request_id=1,
-            missing_fields=("device_profession",),
-            pending_field="device_profession",
-            focused_field="device_profession",
-        ),
-    )
-    registry = ToolRegistry()
-    registry.register(UpdatePurchaseDraftTool(backend))
-
-    response = await _assistant(backend, registry).handle(
-        TextMessageEvent(
-            event_id="e5",
-            external_user_id="ou_test",
-            external_message_id="m5",
-            chat_id="c5",
-            text="暖通",
-        )
-    )
-
-    assert isinstance(response, AssistantTextResponse)
-    assert backend.call_counts["update_applicant_fields"] == 1
-    saved = await backend.get_requirement(identity=identity, requirement_id=1)
-    assert saved.applicant_fields.device_profession == "暖通"
     state = await backend.get_agent_state(
-        identity=identity, conversation_id=conversation.conversation_id
+        identity=PlatformIdentity.create(PlatformType.FEISHU, "ou_test"),
+        conversation_id=conversation.conversation_id,
     )
-    assert state.pending_field == "brand"
+    assert state.purchase_request_id is not None
+    detail = await backend.get_requirement(
+        identity=PlatformIdentity.create(PlatformType.FEISHU, "ou_test"),
+        requirement_id=state.purchase_request_id,
+    )
+    assert detail.applicant_fields == ApplicantFields(
+        device_profession="暖通",
+        device_name="精密空调",
+        brand="维谛",
+        model="PEX4",
+        quantity="2",
+        unit="台",
+        application_reason="机房制冷扩容",
+    )

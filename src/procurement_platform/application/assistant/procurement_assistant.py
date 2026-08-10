@@ -1,9 +1,9 @@
 import json
-import re
 
 from procurement_platform.application.applicant.card_factory import ApplicantCardFactory
 from procurement_platform.application.assistant.agent_tools import (
     PreparePurchasePrefillResult,
+    QueryPurchaseRequestsResult,
     RecommendProductOptionsResult,
     UpdatePurchaseDraftResult,
 )
@@ -12,23 +12,37 @@ from procurement_platform.application.assistant.prompt_builder import PromptBuil
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
+from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.assistant import (
     AssistantInteractionResponse,
     AssistantMessage,
     AssistantResponse,
     AssistantTextResponse,
+    AssistantToolCall,
     AssistantToolContext,
     AssistantToolResult,
 )
 from procurement_platform.domain.assistant_errors import (
     AssistantToolStepLimitError,
     LlmInvalidResponseError,
+    LlmUnavailableError,
 )
-from procurement_platform.domain.assistant_session import AgentSessionState
-from procurement_platform.domain.enums import AgentMessageSender, PlatformType
+from procurement_platform.domain.enums import (
+    AgentMessageSender,
+    PlatformType,
+    RequirementStatus,
+    RoleCode,
+)
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
-from procurement_platform.domain.interaction import InteractionView, KeyValueField, KeyValueSection
+from procurement_platform.domain.interaction import (
+    ActionButton,
+    InteractionView,
+    KeyValueField,
+    KeyValueSection,
+    MarkdownBlock,
+)
+from procurement_platform.domain.user import CurrentUser
 from procurement_platform.ports.backend_client import BackendClient
 from procurement_platform.ports.llm_client import LlmClient
 
@@ -92,15 +106,13 @@ class ProcurementAssistant:
             )
         except Exception:
             state = None
-        starts_new_draft = self._starts_new_draft(event.text)
-        active_state = None if starts_new_draft else state
         context = self._context_builder.build(
             identity=identity,
             conversation_id=conversation.conversation_id,
             external_message_id=event.external_message_id,
             external_conversation_id=event.chat_id,
             current_user=current_user,
-            state=active_state,
+            state=state,
         )
         page = await self._session_service.messages(
             identity=identity, conversation_id=conversation.conversation_id
@@ -122,84 +134,150 @@ class ProcurementAssistant:
             )
             for item in visible_items[-self._max_history_messages :]
         )
-        if starts_new_draft:
-            history = history[-1:]
         messages = self._prompt_builder.build(context=context, history=history)
         allowed = self._tool_policy.allowed_tool_names(
             current_user=current_user, active_requirement=None
         )
         definitions = self._tool_registry.definitions(allowed_names=allowed)
-        selection_index = self._selection_index(event.text, active_state)
-        if selection_index is not None:
-            references = (
-                tuple(
-                    item
-                    for item in active_state.last_recommendations
-                    if item.kind == "PRODUCT_RECOMMENDATION"
-                )
-                if active_state is not None
-                else ()
+        read_only_query = self._is_read_only_query(event.text)
+        if read_only_query:
+            definitions = tuple(
+                tool for tool in definitions if tool.name == "query_purchase_requests"
             )
-            if selection_index < 1 or selection_index > len(references):
-                field = active_state.pending_field if active_state is not None else None
-                text = self._invalid_selection_text(field, len(references))
-                await self._append_reply(identity, conversation.conversation_id, event, text)
-                return AssistantTextResponse(text=text)
-            _, result = await self._tool_executor.execute_result(
-                name="update_purchase_draft",
-                arguments_json=json.dumps(
-                    {"product_ref": references[selection_index - 1].reference_id},
-                    ensure_ascii=False,
-                ),
-                tool_call_id="deterministic-product-selection",
-                context=context,
-                allowed_names=allowed,
-            )
-            if isinstance(result, UpdatePurchaseDraftResult):
-                return await self._respond_to_draft_update(
-                    result=result,
-                    identity=identity,
-                    context=context,
-                    external_message_id=event.external_message_id,
-                    allowed=allowed,
-                )
-        pending_arguments = self._pending_field_arguments(event.text, active_state)
-        if pending_arguments is not None and "update_purchase_draft" in allowed:
-            _, result = await self._tool_executor.execute_result(
-                name="update_purchase_draft",
-                arguments_json=json.dumps(pending_arguments, ensure_ascii=False),
-                tool_call_id="deterministic-pending-field-answer",
-                context=context,
-                allowed_names=allowed,
-            )
-            if isinstance(result, UpdatePurchaseDraftResult):
-                return await self._respond_to_draft_update(
-                    result=result,
-                    identity=identity,
-                    context=context,
-                    external_message_id=event.external_message_id,
-                    allowed=allowed,
-                )
-        required_tool = self._required_tool(
-            event.text, allowed, active_requirement_id=context.active_requirement_id
+        execution_allowed = (
+            frozenset(tool.name for tool in definitions) if read_only_query else allowed
         )
-        executed_tools: set[str] = set()
+        if read_only_query and self._is_history_summary_query(event.text):
+            query_call = AssistantToolCall(
+                id="deterministic-history-query",
+                name="query_purchase_requests",
+                arguments_json=json.dumps({"operation": "SEARCH", "result_limit": 10}),
+            )
+            _, query_result = await self._tool_executor.execute_result(
+                name="query_purchase_requests",
+                arguments_json=query_call.arguments_json,
+                tool_call_id=query_call.id,
+                context=context,
+                allowed_names=execution_allowed,
+            )
+            if isinstance(query_result, QueryPurchaseRequestsResult):
+                try:
+                    narrative_turn = await self._llm_client.complete(
+                        messages=(
+                            *messages,
+                            AssistantMessage(
+                                role="system",
+                                content=(
+                                    "以下是系统刚从采购后端获得的只读查询结果 JSON: "
+                                    f"{query_result.model_dump_json()}。"
+                                    "请仅依据该结果自然回复用户。"
+                                    "总数只能使用 total_count; 不得声称保存、修改或创建了采购草稿。"
+                                    "回复保持简洁, 卡片将由系统另外渲染。"
+                                ),
+                            ),
+                        ),
+                        tools=(),
+                        tool_choice=None,
+                    )
+                    narrative = (
+                        narrative_turn.content.strip()
+                        if narrative_turn.content is not None and narrative_turn.content.strip()
+                        else None
+                    )
+                except LlmUnavailableError:
+                    narrative = None
+                return await self._history_card_response(
+                    result=query_result,
+                    identity=identity,
+                    conversation_id=conversation.conversation_id,
+                    external_message_id=event.external_message_id,
+                    narrative=narrative,
+                )
+            safe_text = query_result.user_message or "历史采购记录查询失败, 请稍后重试。"
+            await self._append_reply(identity, conversation.conversation_id, event, safe_text)
+            return AssistantTextResponse(text=safe_text)
+        query_tool_required = read_only_query and bool(definitions)
+        content_retries = 0
+        retry_pending_draft = await self._should_retry_pending_draft(
+            identity=identity,
+            active_requirement_id=context.active_requirement_id,
+            pending_field=state.pending_field if state is not None else None,
+            text=event.text,
+            draft_tool_allowed="update_purchase_draft" in allowed and not read_only_query,
+        )
         for _ in range(self._max_tool_steps):
-            turn = await self._llm_client.complete(messages=messages, tools=definitions)
+            retry_tools = tuple(
+                tool for tool in definitions if tool.name == "update_purchase_draft"
+            )
+            turn = await self._llm_client.complete(
+                messages=messages,
+                tools=retry_tools if content_retries > 0 else definitions,
+                tool_choice=("required" if content_retries > 0 or query_tool_required else None),
+            )
             if turn.content is not None and turn.content.strip():
-                if required_tool is not None and required_tool not in executed_tools:
+                # Only retry a structured write for a verified DRAFT whose
+                # currently pending field is being answered.  A plain-text
+                # answer to a list, count, detail, or status query must never
+                # be turned into a draft write.
+                if retry_pending_draft and content_retries == 0:
+                    content_retries += 1
                     messages = (
                         *messages,
                         AssistantMessage(role="assistant", content=turn.content),
                         AssistantMessage(
                             role="system",
                             content=(
-                                f"该请求必须先调用 {required_tool}。"
-                                "不要先回复执行承诺;请立即调用工具。"
+                                "当前会话有一张后端确认的未完成草稿, 用户正在补充待填字段。"
+                                "你刚才没有调用工具;"
+                                "请根据当前待补字段和用户最新消息, 立即调用 update_purchase_draft, "
+                                "不要回复保存承诺或普通文本。"
                             ),
                         ),
                     )
                     continue
+                # If the model still declines the tool after the correction,
+                # preserve a short answer for the single pending field instead
+                # of claiming that it was saved.  The normal tool remains the
+                # only writer and still performs backend validation/versioning.
+                pending_field = state.pending_field if state is not None else None
+                if (
+                    content_retries > 0
+                    and pending_field
+                    in {
+                        "device_profession",
+                        "device_name",
+                        "brand",
+                        "model",
+                        "quantity",
+                        "unit",
+                        "application_reason",
+                        "applicant_remark",
+                    }
+                    and len(event.text.strip()) <= 100
+                ):
+                    fallback_call = AssistantToolCall(
+                        id="pending-field-fallback",
+                        name="update_purchase_draft",
+                        arguments_json=json.dumps(
+                            {pending_field: event.text.strip()}, ensure_ascii=False
+                        ),
+                    )
+                    tool_message, result = await self._tool_executor.execute_result(
+                        name=fallback_call.name,
+                        arguments_json=fallback_call.arguments_json,
+                        tool_call_id=fallback_call.id,
+                        context=context,
+                        allowed_names=execution_allowed,
+                    )
+                    del tool_message
+                    if isinstance(result, UpdatePurchaseDraftResult):
+                        return await self._respond_to_draft_update(
+                            result=result,
+                            identity=identity,
+                            context=context,
+                            external_message_id=event.external_message_id,
+                            allowed=allowed,
+                        )
                 await self._session_service.append(
                     identity=identity,
                     conversation_id=conversation.conversation_id,
@@ -215,14 +293,14 @@ class ProcurementAssistant:
             )
             tool_messages: list[AssistantMessage] = []
             for call in turn.tool_calls:
+                query_tool_required = False
                 tool_message, result = await self._tool_executor.execute_result(
                     name=call.name,
                     arguments_json=call.arguments_json,
                     tool_call_id=call.id,
                     context=context,
-                    allowed_names=allowed,
+                    allowed_names=execution_allowed,
                 )
-                executed_tools.add(call.name)
                 if isinstance(result, UpdatePurchaseDraftResult):
                     return await self._respond_to_draft_update(
                         result=result,
@@ -236,69 +314,86 @@ class ProcurementAssistant:
                     identity=identity,
                     conversation_id=conversation.conversation_id,
                     external_message_id=event.external_message_id,
+                    current_user=current_user,
                 )
                 if deterministic is not None:
                     return deterministic
                 tool_messages.append(tool_message)
             messages = (*messages, assistant_message, *tool_messages)
-        if required_tool is not None and required_tool not in executed_tools:
-            safe_text = (
-                "我没有得到采购后端的确认, 因此没有声称已保存任何内容。请重新描述要保存的采购信息。"
-            )
-            await self._session_service.append(
-                identity=identity,
-                conversation_id=conversation.conversation_id,
-                external_message_id=f"assistant:{event.external_message_id}",
-                sender=AgentMessageSender.AGENT,
-                content=safe_text,
-            )
-            return AssistantTextResponse(text=safe_text)
         raise AssistantToolStepLimitError("assistant tool step limit reached")
 
-    @staticmethod
-    def _required_tool(
-        text: str, allowed: frozenset[str], *, active_requirement_id: int | None = None
-    ) -> str | None:
-        normalized = text.lower()
-        query_terms = ("查询", "查一下", "查看", "列表", "详情", "状态", "时间线")
-        purchase_terms = ("采购", "需求", "申请", "单据")
+    async def _should_retry_pending_draft(
+        self,
+        *,
+        identity: PlatformIdentity,
+        active_requirement_id: int | None,
+        pending_field: str | None,
+        text: str,
+        draft_tool_allowed: bool,
+    ) -> bool:
         if (
-            "query_purchase_requests" in allowed
-            and any(term in normalized for term in query_terms)
-            and any(term in normalized for term in purchase_terms)
+            not draft_tool_allowed
+            or active_requirement_id is None
+            or pending_field
+            not in {
+                "device_profession",
+                "device_name",
+                "brand",
+                "model",
+                "quantity",
+                "unit",
+                "application_reason",
+                "applicant_remark",
+            }
+            or not self._looks_like_pending_field_reply(text)
         ):
-            return "query_purchase_requests"
-        formal_action_terms = ("提交", "审批", "驳回", "开始采购", "完成入库", "确认完成")
-        if any(term in normalized for term in formal_action_terms):
-            return None
-        draft_terms = (
-            "购买",
-            "采购申请",
-            "采购需求",
-            "申请采购",
-            "整理",
-            "草稿",
-            "保存",
-            "补充",
-            "设备",
-            "服务器",
-            "型号",
-            "数量",
-            "品牌",
-        )
-        if "update_purchase_draft" in allowed and (
-            any(term in normalized for term in draft_terms)
-            or (active_requirement_id is not None and normalized not in {"你好", "您好", "在吗"})
-        ):
-            return "update_purchase_draft"
-        return None
+            return False
+        try:
+            detail = await self._backend_client.get_requirement(
+                identity=identity, requirement_id=active_requirement_id
+            )
+        except Exception:
+            # This is a write safeguard: when the current draft cannot be
+            # verified, retain the read-only response path instead of guessing.
+            return False
+        return detail.status is RequirementStatus.DRAFT
 
     @staticmethod
-    def _starts_new_draft(text: str) -> bool:
-        normalized = re.sub(r"\s+", "", text)
+    def _looks_like_pending_field_reply(text: str) -> bool:
+        candidate = text.strip()
+        if not candidate or len(candidate) > 100 or "?" in candidate or "\uff1f" in candidate:
+            return False
+        query_markers = (
+            "多少",
+            "查询",
+            "查一下",
+            "查看",
+            "列表",
+            "详情",
+            "状态",
+            "历史",
+            "提交了",
+            "采购申请",
+            "统计",
+        )
+        return not any(marker in candidate for marker in query_markers)
+
+    @staticmethod
+    def _is_read_only_query(text: str) -> bool:
+        normalized = text.strip()
+        query_markers = ("多少", "查询", "查一下", "查看", "列表", "详情", "状态", "历史", "统计")
+        purchase_markers = ("采购", "申请", "需求", "单据")
+        return any(marker in normalized for marker in query_markers) and any(
+            marker in normalized for marker in purchase_markers
+        )
+
+    @staticmethod
+    def _is_history_summary_query(text: str) -> bool:
+        normalized = text.strip()
+        if "详情" in normalized or "状态" in normalized or "时间线" in normalized:
+            return False
         return any(
-            marker in normalized
-            for marker in ("新建采购", "新建一个采购", "新采购", "新的采购", "重新采购")
+            marker in normalized for marker in ("多少", "一共", "统计", "列表", "历史", "之前")
         )
 
     async def _deterministic_response(
@@ -308,7 +403,19 @@ class ProcurementAssistant:
         identity: PlatformIdentity,
         conversation_id: int,
         external_message_id: str,
+        current_user: CurrentUser,
     ) -> AssistantResponse | None:
+        if (
+            isinstance(result, QueryPurchaseRequestsResult)
+            and result.total_count is not None
+            and RoleCode.APPLICANT in {role.role_code for role in current_user.roles}
+        ):
+            return await self._history_card_response(
+                result=result,
+                identity=identity,
+                conversation_id=conversation_id,
+                external_message_id=external_message_id,
+            )
         if result.exact_render_required and result.user_message:
             await self._session_service.append(
                 identity=identity,
@@ -376,6 +483,7 @@ class ProcurementAssistant:
                 identity=identity,
                 conversation_id=context.conversation_id,
                 external_message_id=external_message_id,
+                current_user=context.current_user,
             )
             assert response is not None
             return response
@@ -420,61 +528,6 @@ class ProcurementAssistant:
             sender=AgentMessageSender.AGENT,
             content=text,
         )
-
-    @staticmethod
-    def _selection_index(text: str, state: AgentSessionState | None) -> int | None:
-        pending_field = state.pending_field if state is not None else None
-        recommendations = state.last_recommendations if state is not None else ()
-        if pending_field not in {"brand", "model"} or not recommendations:
-            return None
-        normalized = re.sub(r"\s+", "", text)
-        digit = re.fullmatch(r"(?:选)?([1-9]\d*)", normalized)
-        if digit:
-            return int(digit.group(1))
-        words = {
-            "第一个": 1,
-            "第一": 1,
-            "选第一个": 1,
-            "选第一": 1,
-            "第二个": 2,
-            "第二": 2,
-            "选第二个": 2,
-            "选第二": 2,
-            "第三个": 3,
-            "第三": 3,
-            "选第三个": 3,
-            "选第三": 3,
-        }
-        return words.get(normalized)
-
-    @staticmethod
-    def _pending_field_arguments(
-        text: str, state: AgentSessionState | None
-    ) -> dict[str, str] | None:
-        if state is None or state.purchase_request_id is None or state.pending_field is None:
-            return None
-        value = text.strip()
-        if not value or len(value) > 100 or re.search(r"[,;\n\u3002\uff0c\uff1b]", value):
-            return None
-        supported_fields = {
-            "device_profession",
-            "device_name",
-            "brand",
-            "model",
-            "quantity",
-            "unit",
-            "application_reason",
-            "applicant_remark",
-        }
-        if state.pending_field not in supported_fields:
-            return None
-        return {state.pending_field: value}
-
-    @staticmethod
-    def _invalid_selection_text(field: str | None, count: int) -> str:
-        label = {"brand": "品牌", "model": "型号"}.get(field or "", "选项")
-        choices = "、".join(str(index) for index in range(1, count + 1))
-        return f"当前有 {count} 个推荐选项, 请回复 {choices}, 或者直接告诉我您需要的{label}。"
 
     @classmethod
     def _draft_followup_text(
@@ -526,11 +579,71 @@ class ProcurementAssistant:
                 options = "\n".join(
                     f"{index}. {value}" for index, value in enumerate(values[:3], start=1)
                 )
+                source_label = "采购白名单" if next_field == "brand" else "历史采购记录"
                 return (
-                    f"{prefix}\n\n{question}\n\n根据历史采购记录, 为您推荐:\n{options}"
+                    f"{prefix}\n\n{question}\n\n根据{source_label}, 为您推荐:\n{options}"
                     f"\n\n请回复序号, 或者直接告诉我您需要的{label}。"
                 )
         return f"{prefix}\n\n{question}\n\n暂未找到可用的推荐, 请直接告诉我您需要的{label}。"
+
+    async def _history_card_response(
+        self,
+        *,
+        result: QueryPurchaseRequestsResult,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        external_message_id: str,
+        narrative: str | None = None,
+    ) -> AssistantResponse:
+        total = result.total_count or 0
+        text = narrative or (
+            f"已查询到您可见的采购申请共 {total} 条。点击下方单据可查看具体需求和当前状态。"
+        )
+        await self._session_service.append(
+            identity=identity,
+            conversation_id=conversation_id,
+            external_message_id=f"assistant:{external_message_id}",
+            sender=AgentMessageSender.AGENT,
+            content=text,
+        )
+        lines = [text, "", f"共 **{total}** 条采购申请"]
+        actions: list[ActionButton] = []
+        for item in result.records:
+            lines.append(
+                f"- {item.requirement_no} | {item.device_name or '未填写'} | "
+                f"{requirement_status_label(item.status)}"
+            )
+            actions.append(
+                ActionButton(
+                    action_id="applicant.open",
+                    label=f"查看 {item.requirement_no}",
+                    value={"requirement_id": item.requirement_id},
+                )
+            )
+        if not result.records and result.requirement_id is not None and result.requirement_no:
+            status = (
+                requirement_status_label(result.status_value)
+                if result.status_value is not None
+                else "状态以详情为准"
+            )
+            lines.append(f"- {result.requirement_no} | {status}")
+            actions.append(
+                ActionButton(
+                    action_id="applicant.open",
+                    label=f"查看 {result.requirement_no}",
+                    value={"requirement_id": result.requirement_id},
+                )
+            )
+        if total > len(result.records):
+            lines.append(f"当前展示前 {len(result.records)} 条")
+        return AssistantInteractionResponse(
+            view=InteractionView(
+                title="我的采购申请",
+                subtitle="后端实时查询结果",
+                elements=(MarkdownBlock(markdown="\n".join(lines)),),
+                actions=tuple(actions),
+            )
+        )
 
     @staticmethod
     def _prefill_view(result: PreparePurchasePrefillResult) -> InteractionView:

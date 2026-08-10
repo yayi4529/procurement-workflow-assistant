@@ -78,6 +78,8 @@ class PurchaserActionRouter:
             raw.pop("supplier_id", None)
             if "purchased_at" in raw:
                 raw["purchased_at"] = _normalize_purchase_datetime(raw["purchased_at"])
+            else:
+                raw["purchased_at"] = datetime.now().astimezone()
             if "update_supplier_profile" in raw:
                 raw["update_supplier_profile"] = raw["update_supplier_profile"] == "true"
             return await self._workflow.save_purchase_fields(
