@@ -39,8 +39,18 @@ class AssistantSessionService:
     async def messages(
         self, *, identity: PlatformIdentity, conversation_id: int
     ) -> AgentMessagePage:
+        probe = await self._backend_client.list_agent_messages(
+            identity=identity, conversation_id=conversation_id, page=1, page_size=1
+        )
+        if probe.total <= 1:
+            return probe
+        page_size = 50
+        last_page = (probe.total - 1) // page_size + 1
         return await self._backend_client.list_agent_messages(
-            identity=identity, conversation_id=conversation_id, page_size=50
+            identity=identity,
+            conversation_id=conversation_id,
+            page=last_page,
+            page_size=page_size,
         )
 
     async def state(self, *, identity: PlatformIdentity, conversation_id: int) -> AgentSessionState:

@@ -66,3 +66,24 @@ def test_notification_gateway_has_no_business_transition_dependency() -> None:
         "complete_requirement",
     )
     assert all(name not in source for name in forbidden)
+
+
+def test_assistant_runtime_has_no_role_business_dependencies() -> None:
+    source = Path("src/procurement_platform/application/assistant/runtime.py").read_text(
+        encoding="utf-8"
+    )
+    forbidden = (
+        "ApplicantCardFactory",
+        "BuildingManagerCardFactory",
+        "PurchaserCardFactory",
+        "WarehouseCardFactory",
+        "UpdatePurchaseDraftResult",
+        "UpdateReviewDraftResult",
+        "UpdatePurchaseExecutionDraftResult",
+        "UpdateWarehouseReceiptDraftResult",
+        "brand",
+        "model",
+        "supplier",
+        "warehouse",
+    )
+    assert all(name not in source for name in forbidden)

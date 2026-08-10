@@ -144,14 +144,15 @@ def test_temporal_range_resolver(expression: str, start: str, end: str) -> None:
 def test_tool_policy_matches_task9_role_matrix() -> None:
     policy = ToolPolicy()
     assert policy.allowed_tool_names(
-        current_user=user(RoleCode.APPLICANT), active_requirement=None
+        current_user=user(RoleCode.APPLICANT), active_role=RoleCode.APPLICANT
     ) == frozenset(
         {"query_purchase_requests", "recommend_product_options", "update_purchase_draft"}
     )
     assert (
         len(
             policy.allowed_tool_names(
-                current_user=user(RoleCode.BUILDING_MANAGER), active_requirement=None
+                current_user=user(RoleCode.BUILDING_MANAGER),
+                active_role=RoleCode.BUILDING_MANAGER,
             )
         )
         == 3
@@ -159,7 +160,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
     assert (
         len(
             policy.allowed_tool_names(
-                current_user=user(RoleCode.PURCHASER), active_requirement=None
+                current_user=user(RoleCode.PURCHASER), active_role=RoleCode.PURCHASER
             )
         )
         == 4
@@ -167,11 +168,36 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
     assert (
         len(
             policy.allowed_tool_names(
-                current_user=user(RoleCode.WAREHOUSE_MANAGER), active_requirement=None
+                current_user=user(RoleCode.WAREHOUSE_MANAGER),
+                active_role=RoleCode.WAREHOUSE_MANAGER,
             )
         )
         == 2
     )
+
+
+def test_tool_policy_does_not_merge_tools_for_multi_role_user() -> None:
+    multi_role = user(RoleCode.APPLICANT).model_copy(
+        update={
+            "roles": (
+                UserRole(role_code=RoleCode.APPLICANT, role_name="Applicant"),
+                UserRole(role_code=RoleCode.PURCHASER, role_name="Purchaser"),
+            )
+        }
+    )
+
+    applicant_tools = ToolPolicy().allowed_tool_names(
+        current_user=multi_role, active_role=RoleCode.APPLICANT
+    )
+    purchaser_tools = ToolPolicy().allowed_tool_names(
+        current_user=multi_role, active_role=RoleCode.PURCHASER
+    )
+
+    assert applicant_tools == frozenset(
+        {"query_purchase_requests", "recommend_product_options", "update_purchase_draft"}
+    )
+    assert "prepare_purchase_prefill" not in applicant_tools
+    assert "update_purchase_draft" not in purchaser_tools
 
 
 def test_registry_contains_only_task9_tools_and_no_formal_actions() -> None:
@@ -497,6 +523,22 @@ async def test_start_new_draft_ignores_submitted_requirement_focus() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_new_without_fields_does_not_create_empty_draft() -> None:
+    client = FakeBackendClient(user(RoleCode.APPLICANT))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.APPLICANT), current_action="ASSISTANT_CHAT"
+    )
+
+    result = await UpdatePurchaseDraftTool(client).execute(
+        args=UpdatePurchaseDraftArgs(start_new=True),
+        context=context(RoleCode.APPLICANT, conversation_id=conversation.conversation_id),
+    )
+
+    assert result.status == "NEED_MORE_INFORMATION"
+    assert client.call_counts["create_requirement"] == 0
+
+
+@pytest.mark.asyncio
 async def test_field_update_starts_new_draft_when_session_focus_is_submitted() -> None:
     client = FakeBackendClient(user(RoleCode.APPLICANT))
     client.seed_requirement(
@@ -534,6 +576,19 @@ async def test_review_draft_resolves_stable_supplier_reference_and_does_not_subm
             supplier_id=10,
             supplier_name="供应商A",
             blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    client.purchase_records.append(
+        PurchaseRecord(
+            requirement_id=99,
+            requirement_no="PR-99",
+            device_name="服务器",
+            brand="戴尔",
+            status=RequirementStatus.COMPLETED,
+            supplier_id=10,
+            supplier_name="供应商A",
+            purchased_at=datetime(2026, 7, 1, tzinfo=UTC),
+            created_at=datetime(2026, 6, 1, tzinfo=UTC),
         )
     )
     conversation = await client.get_or_create_agent_conversation(

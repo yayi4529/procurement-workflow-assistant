@@ -95,7 +95,7 @@ async def test_task9_read_endpoint_contracts_and_explicit_mapping() -> None:
         page_size=20,
     )
     timeline = await client.get_requirement_timeline(identity=identity(), requirement_id=1)
-    products = await client.recommend_products(identity=identity(), device_name="服务器", limit=3)
+    products = await client.recommend_products(identity=identity(), device_name="服务器", limit=30)
     history = await client.recommend_purchase_history(
         identity=identity(), requirement_id=1, limit=10
     )
@@ -111,10 +111,10 @@ async def test_task9_read_endpoint_contracts_and_explicit_mapping() -> None:
         "/api/v1/recommendations/purchase-history",
     ]
     assert requests[0].url.params["device_name"] == "服务器"
+    assert requests[2].url.params["limit"] == "30"
     assert "supplier_id" not in requests[0].url.params
     assert "status" not in requests[0].url.params
     assert "created_from" not in requests[0].url.params
-    assert requests[2].url.params["limit"] == "3"
     assert requests[3].url.params["requirement_id"] == "1"
     assert json.loads(requests[0].headers["x-gateway-timestamp"]) > 0
     await raw_client.aclose()

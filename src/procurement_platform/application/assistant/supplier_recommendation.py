@@ -21,7 +21,7 @@ from procurement_platform.domain.errors import (
     SessionNotFoundError,
 )
 from procurement_platform.domain.identity import PlatformIdentity
-from procurement_platform.domain.requirement import SupplierRecommendation
+from procurement_platform.domain.requirement import PurchaseRecord
 from procurement_platform.ports.backend_client import BackendClient
 
 
@@ -138,12 +138,57 @@ class RecommendSuppliersForRequirementTool:
                 return RecommendSuppliersForRequirementResult(
                     status="PERMISSION_DENIED", user_message="当前用户不是该采购单处理人"
                 )
-            recommendations = await self._backend_client.recommend_suppliers(
-                identity=identity, requirement_id=args.requirement_id, limit=args.limit
+            records: list[PurchaseRecord] = []
+            page = 1
+            while True:
+                history = await self._backend_client.list_purchase_records(
+                    identity=identity,
+                    device_name=detail.applicant_fields.device_name,
+                    brand=detail.applicant_fields.brand,
+                    page=page,
+                    page_size=100,
+                )
+                records.extend(history.items)
+                if len(records) >= history.total:
+                    break
+                page += 1
+
+            grouped: dict[int, list[datetime]] = {}
+            supplier_names: dict[int, str] = {}
+            for record in records:
+                if (
+                    record.status
+                    not in {RequirementStatus.PENDING_WAREHOUSE, RequirementStatus.COMPLETED}
+                    or record.purchased_at is None
+                    or record.supplier_id is None
+                    or record.supplier_name is None
+                ):
+                    continue
+                grouped.setdefault(record.supplier_id, []).append(record.purchased_at)
+                supplier_names[record.supplier_id] = record.supplier_name
+
+            matched: list[SupplierRecommendationCandidate] = []
+            for supplier_id, purchase_dates in grouped.items():
+                supplier = await self._backend_client.get_supplier(
+                    identity=identity, supplier_id=supplier_id
+                )
+                if supplier.blacklist and supplier.blacklist.active:
+                    continue
+                matched.append(
+                    SupplierRecommendationCandidate(
+                        candidate_ref=f"supplier:{supplier_id}",
+                        supplier_id=supplier_id,
+                        supplier_name=supplier.supplier_name or supplier_names[supplier_id],
+                        historical_purchase_count=len(purchase_dates),
+                        last_purchase_at=max(purchase_dates),
+                        blacklist_status="NORMAL",
+                    )
+                )
+            matched.sort(
+                key=lambda item: (item.historical_purchase_count, item.last_purchase_at),
+                reverse=True,
             )
-            candidates = tuple(
-                self._candidate(item) for item in recommendations.items[: args.limit]
-            )
+            candidates = tuple(matched[: args.limit])
             candidate_set_id = await self._reference_store.save(
                 identity=identity,
                 conversation_id=context.conversation_id,
@@ -174,14 +219,3 @@ class RecommendSuppliersForRequirementTool:
             return RecommendSuppliersForRequirementResult(
                 status="BACKEND_UNAVAILABLE", user_message="供应商推荐暂时不可用"
             )
-
-    @staticmethod
-    def _candidate(item: SupplierRecommendation) -> SupplierRecommendationCandidate:
-        return SupplierRecommendationCandidate(
-            candidate_ref=f"supplier:{item.supplier_id}",
-            supplier_id=item.supplier_id,
-            supplier_name=item.supplier_name,
-            historical_purchase_count=item.historical_purchase_count,
-            last_purchase_at=item.last_purchase_at,
-            blacklist_status=item.blacklist_status,
-        )

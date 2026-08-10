@@ -278,7 +278,7 @@ class HttpBackendClient:
         keyword: str | None = None,
         limit: int = 3,
     ) -> ProductRecommendations:
-        if not device_name.strip() or not 1 <= limit <= 3:
+        if not device_name.strip() or not 1 <= limit <= 30:
             raise ValueError("invalid product recommendation query")
         dto = await self._request_model(
             BackendProductRecommendationsDTO,

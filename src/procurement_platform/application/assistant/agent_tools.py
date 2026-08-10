@@ -597,6 +597,15 @@ class UpdatePurchaseDraftTool:
                     status="INVALID_ARGUMENTS",
                     user_message="新建草稿时不能同时指定已有采购单",
                 )
+            raw = args.model_dump(
+                exclude={"requirement_id", "start_new", "product_ref", "selection_index"},
+                exclude_unset=True,
+            )
+            if args.start_new and not raw:
+                return UpdatePurchaseDraftResult(
+                    status="NEED_MORE_INFORMATION",
+                    user_message="请先提供至少一项采购信息, 再新建草稿",
+                )
             requirement_id = (
                 None if args.start_new else args.requirement_id or context.active_requirement_id
             )
@@ -645,10 +654,6 @@ class UpdatePurchaseDraftTool:
                 return UpdatePurchaseDraftResult(
                     status="PERMISSION_DENIED", user_message="当前用户不是该采购单处理人"
                 )
-            raw = args.model_dump(
-                exclude={"requirement_id", "start_new", "product_ref", "selection_index"},
-                exclude_unset=True,
-            )
             if args.selection_index is not None or args.product_ref is not None:
                 state = await self._session.state(identity, context.conversation_id)
                 if state.pending_field not in {"brand", "model"}:

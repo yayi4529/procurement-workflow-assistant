@@ -21,6 +21,7 @@ from procurement_platform.adapters.persistence.memory_notification_delivery_stor
 )
 from procurement_platform.application.applicant.action_router import ApplicantActionRouter
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
+from procurement_platform.application.assistant.agent_router import AgentRouter
 from procurement_platform.application.assistant.agent_tools import (
     PreparePurchasePrefillTool,
     PurchasePrefillNotificationService,
@@ -32,9 +33,14 @@ from procurement_platform.application.assistant.agent_tools import (
     UpdateReviewDraftTool,
     UpdateWarehouseReceiptDraftTool,
 )
+from procurement_platform.application.assistant.agents.applicant import ApplicantAgent
+from procurement_platform.application.assistant.agents.building_manager import BuildingManagerAgent
+from procurement_platform.application.assistant.agents.purchaser import PurchaserAgent
+from procurement_platform.application.assistant.agents.warehouse import WarehouseAgent
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
 from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
-from procurement_platform.application.assistant.prompt_builder import PromptBuilder
+from procurement_platform.application.assistant.runtime import AssistantRuntime
+from procurement_platform.application.assistant.service import AssistantService
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.supplier_recommendation import (
     RecommendSuppliersForRequirementTool,
@@ -86,6 +92,7 @@ class ApplicationContainer:
     notification_renderer_registry: NotificationRendererRegistry | None = None
     notification_gateway_service: NotificationGatewayService | None = None
     procurement_assistant: ProcurementAssistant | None = None
+    assistant_service: AssistantService | None = None
     conversation_lock_manager: LocalConversationLockManager | None = None
 
     @classmethod
@@ -151,30 +158,48 @@ class ApplicationContainer:
                 tool_registry.register(PreparePurchasePrefillTool(container.backend_client))
                 tool_registry.register(UpdatePurchaseExecutionDraftTool(container.backend_client))
                 tool_registry.register(UpdateWarehouseReceiptDraftTool(container.backend_client))
-                container.procurement_assistant = ProcurementAssistant(
-                    backend_client=container.backend_client,
-                    llm_client=OpenAICompatibleLlmClient(
-                        api_key=api_key,
-                        model=model,
-                        timeout_seconds=settings.llm_timeout_seconds,
-                        base_url=settings.llm_base_url,
+                llm_client = OpenAICompatibleLlmClient(
+                    api_key=api_key,
+                    model=model,
+                    timeout_seconds=settings.llm_timeout_seconds,
+                    base_url=settings.llm_base_url,
+                )
+                session_service = AssistantSessionService(container.backend_client)
+                tool_executor = ToolExecutor(
+                    tool_registry, max_result_chars=settings.llm_max_tool_result_chars
+                )
+                agents = (
+                    ApplicantAgent(
+                        backend_client=container.backend_client,
+                        llm_client=llm_client,
+                        session_service=session_service,
+                        tool_executor=tool_executor,
                     ),
-                    session_service=AssistantSessionService(container.backend_client),
-                    context_builder=AssistantContextBuilder(),
-                    prompt_builder=PromptBuilder(),
+                    BuildingManagerAgent(session_service, tool_executor),
+                    PurchaserAgent(session_service),
+                    WarehouseAgent(session_service),
+                )
+                runtime = AssistantRuntime(
+                    llm_client=llm_client,
                     tool_registry=tool_registry,
-                    tool_executor=ToolExecutor(
-                        tool_registry, max_result_chars=settings.llm_max_tool_result_chars
-                    ),
+                    tool_executor=tool_executor,
                     tool_policy=ToolPolicy(),
                     max_tool_steps=settings.llm_max_tool_steps,
+                )
+                container.assistant_service = AssistantService(
+                    backend_client=container.backend_client,
+                    session_service=session_service,
+                    context_builder=AssistantContextBuilder(),
+                    agent_router=AgentRouter(agents),
+                    runtime=runtime,
                     max_history_messages=settings.llm_max_history_messages,
                 )
+                container.procurement_assistant = ProcurementAssistant(container.assistant_service)
             container.message_handler = BaseMessageHandler(
                 channel,
                 debug_identity_probe_enabled=settings.debug_identity_probe_enabled,
                 backend_client=container.backend_client,
-                procurement_assistant=container.procurement_assistant,
+                assistant_service=container.assistant_service,
                 conversation_lock_manager=lock_manager,
             )
             container.card_interaction_handler = BaseCardInteractionHandler(

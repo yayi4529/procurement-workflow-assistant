@@ -51,7 +51,7 @@ class PurchaserActionRouter:
         if action == "purchaser.prepare_create_supplier":
             return self._workflow.prepare_new_supplier()
         if action == "purchaser.create_supplier":
-            raw = {
+            raw: dict[str, object] = {
                 name: event.form_values[name]
                 for name in SupplierUpsertCommand.model_fields
                 if name in event.form_values
@@ -77,7 +77,9 @@ class PurchaserActionRouter:
             }
             raw.pop("supplier_id", None)
             if "purchased_at" in raw:
-                raw["purchased_at"] = _normalize_purchase_datetime(raw["purchased_at"])
+                raw["purchased_at"] = _normalize_purchase_datetime(
+                    event.form_values["purchased_at"]
+                )
             else:
                 raw["purchased_at"] = datetime.now().astimezone()
             if "update_supplier_profile" in raw:

@@ -1,5 +1,4 @@
 from procurement_platform.domain.enums import RoleCode
-from procurement_platform.domain.requirement import RequirementDetail
 from procurement_platform.domain.user import CurrentUser
 
 ROLE_TOOLS: dict[RoleCode, frozenset[str]] = {
@@ -32,13 +31,12 @@ class ToolPolicy:
         self._allow_fake_tools = allow_fake_tools
 
     def allowed_tool_names(
-        self, *, current_user: CurrentUser, active_requirement: RequirementDetail | None
+        self, *, current_user: CurrentUser, active_role: RoleCode
     ) -> frozenset[str]:
-        del active_requirement
+        roles = {item.role_code for item in current_user.roles}
         names: set[str] = set()
-        if current_user.status == "ACTIVE":
-            for role in current_user.roles:
-                names.update(ROLE_TOOLS.get(role.role_code, frozenset()))
+        if current_user.status == "ACTIVE" and active_role in roles:
+            names.update(ROLE_TOOLS.get(active_role, frozenset()))
         if self._allow_fake_tools:
             names.add("echo_tool")
         return frozenset(names)

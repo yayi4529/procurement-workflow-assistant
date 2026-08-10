@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -10,18 +11,21 @@ from procurement_platform.adapters.llm.openai_compatible_llm_client import OpenA
 from procurement_platform.adapters.persistence.local_conversation_lock import (
     LocalConversationLockManager,
 )
+from procurement_platform.application.assistant.agent_router import AgentRouter
 from procurement_platform.application.assistant.agent_tools import (
     QueryPurchaseRequestsTool,
     RecommendProductOptionsTool,
     UpdatePurchaseDraftResult,
     UpdatePurchaseDraftTool,
 )
+from procurement_platform.application.assistant.agents.applicant import ApplicantAgent
 from procurement_platform.application.assistant.context_builder import (
     AssistantContextBuilder,
     _beijing_timezone,
 )
 from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
-from procurement_platform.application.assistant.prompt_builder import PromptBuilder
+from procurement_platform.application.assistant.runtime import AssistantRuntime
+from procurement_platform.application.assistant.service import AssistantService
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
@@ -35,7 +39,12 @@ from procurement_platform.domain.assistant import (
 )
 from procurement_platform.domain.assistant_errors import LlmUnavailableError
 from procurement_platform.domain.assistant_session import AgentSessionStateUpdate
-from procurement_platform.domain.enums import PlatformType, RequirementStatus, RoleCode
+from procurement_platform.domain.enums import (
+    AgentMessageSender,
+    PlatformType,
+    RequirementStatus,
+    RoleCode,
+)
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
 from procurement_platform.domain.requirement import (
@@ -74,6 +83,38 @@ def context() -> AssistantToolContext:
         timezone_name="Asia/Shanghai",
         current_user=user(),
     )
+
+
+def _assistant(
+    backend: FakeBackendClient,
+    registry: ToolRegistry,
+    llm: FakeLlmClient | None = None,
+) -> ProcurementAssistant:
+    resolved_llm = llm or FakeLlmClient(turns=())
+    session_service = AssistantSessionService(backend)
+    executor = ToolExecutor(registry, max_result_chars=20000)
+    applicant = ApplicantAgent(
+        backend_client=backend,
+        llm_client=resolved_llm,
+        session_service=session_service,
+        tool_executor=executor,
+    )
+    runtime = AssistantRuntime(
+        llm_client=resolved_llm,
+        tool_registry=registry,
+        tool_executor=executor,
+        tool_policy=ToolPolicy(),
+        max_tool_steps=4,
+    )
+    service = AssistantService(
+        backend_client=backend,
+        session_service=session_service,
+        context_builder=AssistantContextBuilder(),
+        agent_router=AgentRouter((applicant,)),
+        runtime=runtime,
+        max_history_messages=20,
+    )
+    return ProcurementAssistant(service)
 
 
 @pytest.mark.asyncio
@@ -195,18 +236,7 @@ async def test_llm_draft_tool_call_asks_only_next_field() -> None:
             ),
         )
     )
-    assistant = ProcurementAssistant(
-        backend_client=backend,
-        llm_client=llm,
-        session_service=AssistantSessionService(backend),
-        context_builder=AssistantContextBuilder(),
-        prompt_builder=PromptBuilder(),
-        tool_registry=registry,
-        tool_executor=ToolExecutor(registry, max_result_chars=20000),
-        tool_policy=ToolPolicy(),
-        max_tool_steps=4,
-        max_history_messages=20,
-    )
+    assistant = _assistant(backend, registry, llm)
 
     response = await assistant.handle(
         TextMessageEvent(
@@ -224,7 +254,7 @@ async def test_llm_draft_tool_call_asks_only_next_field() -> None:
     assert "待补充字段" not in response.text
     assert backend.call_counts["update_applicant_fields"] == 1
     assert len(llm.calls) == 1
-    assert llm.tool_choices == [None]
+    assert llm.tool_choices == ["required"]
 
 
 @pytest.mark.asyncio
@@ -234,18 +264,7 @@ async def test_plain_text_query_response_never_forces_a_draft_write() -> None:
     registry.register(QueryPurchaseRequestsTool(backend))
     registry.register(UpdatePurchaseDraftTool(backend))
     llm = FakeLlmClient(turns=())
-    assistant = ProcurementAssistant(
-        backend_client=backend,
-        llm_client=llm,
-        session_service=AssistantSessionService(backend),
-        context_builder=AssistantContextBuilder(),
-        prompt_builder=PromptBuilder(),
-        tool_registry=registry,
-        tool_executor=ToolExecutor(registry, max_result_chars=20000),
-        tool_policy=ToolPolicy(),
-        max_tool_steps=4,
-        max_history_messages=20,
-    )
+    assistant = _assistant(backend, registry, llm)
 
     response = await assistant.handle(
         TextMessageEvent(
@@ -285,18 +304,7 @@ async def test_query_blocks_an_unexpected_draft_tool_call() -> None:
             AssistantTurn(content="查询工具调用失败, 请稍后重试。"),
         )
     )
-    assistant = ProcurementAssistant(
-        backend_client=backend,
-        llm_client=llm,
-        session_service=AssistantSessionService(backend),
-        context_builder=AssistantContextBuilder(),
-        prompt_builder=PromptBuilder(),
-        tool_registry=registry,
-        tool_executor=ToolExecutor(registry, max_result_chars=20000),
-        tool_policy=ToolPolicy(),
-        max_tool_steps=4,
-        max_history_messages=20,
-    )
+    assistant = _assistant(backend, registry, llm)
 
     await assistant.handle(
         TextMessageEvent(
@@ -338,18 +346,7 @@ async def test_applicant_history_query_returns_a_clickable_card_with_backend_tot
     registry.register(QueryPurchaseRequestsTool(backend))
     registry.register(UpdatePurchaseDraftTool(backend))
     llm = FakeLlmClient(turns=(AssistantTurn(content="您之前共提交了 2 条采购申请, 详情如下。"),))
-    assistant = ProcurementAssistant(
-        backend_client=backend,
-        llm_client=llm,
-        session_service=AssistantSessionService(backend),
-        context_builder=AssistantContextBuilder(),
-        prompt_builder=PromptBuilder(),
-        tool_registry=registry,
-        tool_executor=ToolExecutor(registry, max_result_chars=20000),
-        tool_policy=ToolPolicy(),
-        max_tool_steps=4,
-        max_history_messages=20,
-    )
+    assistant = _assistant(backend, registry, llm)
 
     response = await assistant.handle(
         TextMessageEvent(
@@ -419,18 +416,7 @@ async def test_verified_pending_draft_field_reply_retries_the_draft_tool() -> No
             ),
         )
     )
-    assistant = ProcurementAssistant(
-        backend_client=backend,
-        llm_client=llm,
-        session_service=AssistantSessionService(backend),
-        context_builder=AssistantContextBuilder(),
-        prompt_builder=PromptBuilder(),
-        tool_registry=registry,
-        tool_executor=ToolExecutor(registry, max_result_chars=20000),
-        tool_policy=ToolPolicy(),
-        max_tool_steps=4,
-        max_history_messages=20,
-    )
+    assistant = _assistant(backend, registry, llm)
 
     await assistant.handle(
         TextMessageEvent(
@@ -444,22 +430,160 @@ async def test_verified_pending_draft_field_reply_retries_the_draft_tool() -> No
 
     assert backend.call_counts["get_requirement"] >= 1
     assert backend.call_counts["update_applicant_fields"] == 1
-    assert llm.tool_choices == [None, "required"]
+    assert llm.tool_choices == [None]
 
 
-def _assistant(backend: FakeBackendClient, registry: ToolRegistry) -> ProcurementAssistant:
-    return ProcurementAssistant(
+def test_applicant_prompt_history_is_limited_to_the_latest_exchange() -> None:
+    backend = FakeBackendClient(user())
+    registry = ToolRegistry()
+    applicant = ApplicantAgent(
         backend_client=backend,
         llm_client=FakeLlmClient(turns=()),
         session_service=AssistantSessionService(backend),
-        context_builder=AssistantContextBuilder(),
-        prompt_builder=PromptBuilder(),
-        tool_registry=registry,
         tool_executor=ToolExecutor(registry, max_result_chars=20000),
-        tool_policy=ToolPolicy(),
-        max_tool_steps=4,
-        max_history_messages=20,
     )
+    history = tuple(
+        AssistantMessage(role="user", content=f"message-{index}") for index in range(10)
+    )
+
+    messages = applicant.build_messages(context=context(), history=history)
+
+    assert [message.content for message in messages[1:]] == ["message-8", "message-9"]
+
+
+def test_applicant_prompt_is_injected_into_llm_system_context() -> None:
+    backend = FakeBackendClient(user())
+    applicant = ApplicantAgent(
+        backend_client=backend,
+        llm_client=FakeLlmClient(turns=()),
+        session_service=AssistantSessionService(backend),
+        tool_executor=ToolExecutor(ToolRegistry(), max_result_chars=20000),
+    )
+
+    messages = applicant.build_messages(
+        context=context(), history=(AssistantMessage(role="user", content="我要采购服务器"),)
+    )
+    payload = OpenAICompatibleLlmClient._message_payload(messages[0])
+
+    assert payload["role"] == "system"
+    assert "需求人采购助手" in str(payload["content"])
+    assert "update_purchase_draft" in str(payload["content"])
+
+
+@pytest.mark.asyncio
+async def test_session_service_reads_latest_message_page() -> None:
+    backend = FakeBackendClient(user())
+    identity = PlatformIdentity.create(PlatformType.FEISHU, "ou_test")
+    conversation = await backend.get_or_create_agent_conversation(
+        identity=identity, current_action="ASSISTANT_CHAT"
+    )
+    for index in range(55):
+        await backend.append_agent_message(
+            identity=identity,
+            conversation_id=conversation.conversation_id,
+            external_message_id=f"message-{index}",
+            sender_type=AgentMessageSender.USER,
+            content=f"content-{index}",
+        )
+
+    page = await AssistantSessionService(backend).messages(
+        identity=identity, conversation_id=conversation.conversation_id
+    )
+
+    assert page.page == 2
+    assert page.items[-1].external_message_id == "message-54"
+
+
+def test_explicit_new_draft_discards_old_history_and_requires_start_new() -> None:
+    backend = FakeBackendClient(user())
+    registry = ToolRegistry()
+    applicant = ApplicantAgent(
+        backend_client=backend,
+        llm_client=FakeLlmClient(turns=()),
+        session_service=AssistantSessionService(backend),
+        tool_executor=ToolExecutor(registry, max_result_chars=20000),
+    )
+    history = (
+        AssistantMessage(role="assistant", content="申请原因为系统告警"),
+        AssistantMessage(role="user", content="电气"),
+        AssistantMessage(role="assistant", content="申请原因为系统告警"),
+        AssistantMessage(role="user", content="请新建一张采购草稿: 我要购买一块科华的电源整流模块"),
+    )
+
+    messages = applicant.build_messages(context=context(), history=history)
+
+    assert "start_new=true" in (messages[1].content or "")
+    assert [message.content for message in messages[2:]] == [history[-1].content]
+    assert all("系统告警" not in (message.content or "") for message in messages)
+    prepared = applicant.prepare_tool_call(
+        AssistantToolCall(
+            id="new-draft",
+            name="update_purchase_draft",
+            arguments_json='{"requirement_id":91083,"device_name":"电源整流模块"}',
+        ),
+        user_text=history[-1].content or "",
+    )
+    arguments = json.loads(prepared.arguments_json)
+    assert arguments["start_new"] is True
+    assert "requirement_id" not in arguments
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "我要购买一块科华的电源整流模块",
+        "我想采购两台服务器",
+        "帮我买一个交换机",
+        "需要采购三台空调",
+    ],
+)
+def test_natural_purchase_request_starts_a_new_draft(text: str) -> None:
+    assert ApplicantAgent._explicit_new_draft_text(text)
+
+
+def test_purchase_query_does_not_start_a_new_draft() -> None:
+    assert not ApplicantAgent._explicit_new_draft_text("查询我需要采购的设备列表")
+
+
+def test_applicant_history_query_extracts_status_time_and_explicit_fields() -> None:
+    arguments = ApplicantAgent._history_query_arguments(
+        "统计本月待审核采购申请,设备名称是服务器,品牌为戴尔"
+    )
+
+    assert arguments == {
+        "operation": "SEARCH",
+        "result_limit": 10,
+        "status": "PENDING_REVIEW",
+        "time_expression": "本月",
+        "device_name": "服务器",
+        "brand": "戴尔",
+    }
+
+
+@pytest.mark.parametrize(
+    ("pending_field", "reply", "expected"),
+    [
+        ("quantity", "需要 3 台", {"quantity": "3"}),
+        ("quantity", "三个左右", None),
+        ("unit", "按台", {"unit": "台"}),
+        ("unit", "每批", None),
+        ("brand", "品牌是华为", {"brand": "华为"}),
+        ("model", "型号:R760", {"model": "R760"}),
+    ],
+)
+def test_pending_field_arguments_are_field_aware(
+    pending_field: str, reply: str, expected: dict[str, object] | None
+) -> None:
+    assert (
+        ApplicantAgent._pending_field_arguments(pending_field=pending_field, user_text=reply)
+        == expected
+    )
+
+
+@pytest.mark.parametrize("reply", ["算了", "不用了谢谢", "先不填这个", "取消这张草稿"])
+def test_cancel_intent_never_allows_draft_write(reply: str) -> None:
+    assert ApplicantAgent._is_cancel_intent(reply)
+    assert not ApplicantAgent._looks_like_pending_field_reply(pending_field="brand", text=reply)
 
 
 @pytest.mark.asyncio
@@ -507,7 +631,12 @@ async def test_brand_missing_forces_history_recommendation_before_reply() -> Non
     registry = ToolRegistry()
     registry.register(UpdatePurchaseDraftTool(backend))
     registry.register(RecommendProductOptionsTool(backend))
-    assistant = _assistant(backend, registry)
+    applicant = ApplicantAgent(
+        backend_client=backend,
+        llm_client=FakeLlmClient(turns=()),
+        session_service=AssistantSessionService(backend),
+        tool_executor=ToolExecutor(registry, max_result_chars=20000),
+    )
     result = UpdatePurchaseDraftResult(
         status="SUCCESS",
         requirement_id=1,
@@ -518,9 +647,8 @@ async def test_brand_missing_forces_history_recommendation_before_reply() -> Non
         next_missing_field="brand",
         fields_complete=False,
     )
-    response = await assistant._respond_to_draft_update(
+    response = await applicant._respond_to_draft_update(
         result=result,
-        identity=PlatformIdentity.create(PlatformType.FEISHU, "ou_test"),
         context=context().model_copy(
             update={
                 "conversation_id": conversation.conversation_id,
@@ -528,10 +656,9 @@ async def test_brand_missing_forces_history_recommendation_before_reply() -> Non
             }
         ),
         external_message_id="m1",
-        allowed=frozenset({"update_purchase_draft", "recommend_product_options"}),
     )
     assert isinstance(response, AssistantTextResponse)
-    assert "根据采购白名单" in response.text
+    assert "根据系统推荐" in response.text
     assert response.text.count("华为") == 1
     assert "1. 华为" in response.text
     assert "2. H3C" in response.text
@@ -600,18 +727,7 @@ async def test_three_turn_llm_draft_flow_returns_confirmation_card() -> None:
             ),
         )
     )
-    assistant = ProcurementAssistant(
-        backend_client=backend,
-        llm_client=llm,
-        session_service=AssistantSessionService(backend),
-        context_builder=AssistantContextBuilder(),
-        prompt_builder=PromptBuilder(),
-        tool_registry=registry,
-        tool_executor=ToolExecutor(registry, max_result_chars=20000),
-        tool_policy=ToolPolicy(),
-        max_tool_steps=4,
-        max_history_messages=20,
-    )
+    assistant = _assistant(backend, registry, llm)
 
     first = await assistant.handle(
         TextMessageEvent(
@@ -642,9 +758,9 @@ async def test_three_turn_llm_draft_flow_returns_confirmation_card() -> None:
     )
 
     assert isinstance(first, AssistantTextResponse)
-    assert "根据采购白名单" in first.text
+    assert "根据系统推荐" in first.text
     assert isinstance(second, AssistantTextResponse)
-    assert "根据历史采购记录" in second.text
+    assert "根据系统推荐" in second.text
     assert isinstance(third, AssistantInteractionResponse)
     conversation = await backend.get_or_create_agent_conversation(
         identity=PlatformIdentity.create(PlatformType.FEISHU, "ou_test"),

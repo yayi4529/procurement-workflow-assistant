@@ -1,12 +1,15 @@
+from typing import Protocol
+
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
-from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
 from procurement_platform.application.building_manager.workflow_service import (
     BuildingManagerWorkflowService,
 )
 from procurement_platform.application.purchaser.workflow_service import PurchaserWorkflowService
 from procurement_platform.application.warehouse.workflow_service import WarehouseWorkflowService
 from procurement_platform.domain.assistant import (
+    AssistantClarificationResponse,
     AssistantInteractionResponse,
+    AssistantResponse,
     AssistantTextResponse,
 )
 from procurement_platform.domain.enums import PlatformType, RoleCode
@@ -17,6 +20,10 @@ from procurement_platform.ports.channel import ChannelClient
 from procurement_platform.ports.conversation_lock import ConversationLockManager
 
 
+class AssistantHandler(Protocol):
+    async def handle(self, event: TextMessageEvent) -> AssistantResponse: ...
+
+
 class BaseMessageHandler:
     def __init__(
         self,
@@ -24,13 +31,13 @@ class BaseMessageHandler:
         *,
         debug_identity_probe_enabled: bool = False,
         backend_client: BackendClient | None = None,
-        procurement_assistant: ProcurementAssistant | None = None,
+        assistant_service: AssistantHandler | None = None,
         conversation_lock_manager: ConversationLockManager | None = None,
     ) -> None:
         self._channel_client = channel_client
         self._debug_identity_probe_enabled = debug_identity_probe_enabled
         self._backend_client = backend_client
-        self._procurement_assistant = procurement_assistant
+        self._assistant_service = assistant_service
         self._conversation_lock_manager = conversation_lock_manager
 
     async def handle(self, event: TextMessageEvent) -> None:
@@ -72,11 +79,11 @@ class BaseMessageHandler:
                 reply_to_message_id=event.external_message_id, view=view
             )
             return
-        if self._procurement_assistant is not None and self._conversation_lock_manager is not None:
+        if self._assistant_service is not None and self._conversation_lock_manager is not None:
             async with self._conversation_lock_manager.acquire(
                 key=f"FEISHU:{event.external_user_id}"
             ):
-                response = await self._procurement_assistant.handle(event)
+                response = await self._assistant_service.handle(event)
                 if isinstance(response, AssistantTextResponse):
                     await self._channel_client.reply_text(
                         reply_to_message_id=event.external_message_id, text=response.text
@@ -84,6 +91,15 @@ class BaseMessageHandler:
                 elif isinstance(response, AssistantInteractionResponse):
                     await self._channel_client.reply_interaction(
                         reply_to_message_id=event.external_message_id, view=response.view
+                    )
+                elif isinstance(response, AssistantClarificationResponse):
+                    options = "\n".join(
+                        f"{index}. {item.label}"
+                        for index, item in enumerate(response.options, start=1)
+                    )
+                    text = response.question if not options else f"{response.question}\n{options}"
+                    await self._channel_client.reply_text(
+                        reply_to_message_id=event.external_message_id, text=text
                     )
             return
         await self._channel_client.reply_text(

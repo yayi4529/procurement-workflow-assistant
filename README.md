@@ -9,7 +9,10 @@
 Task 8～Task 9 已完成可选、默认关闭的文本 Assistant 基础设施和九个角色工具。详见 [Agent 架构](docs/agent-architecture.md) 与 [Agent 工具](docs/agent-tools.md)；正式采购卡片不依赖，也不会进入 LLM。
 
 启用文本 Assistant 需要显式设置 `PROCUREMENT_LLM_ENABLED=true`，并提供
-`PROCUREMENT_LLM_API_KEY` 与 `PROCUREMENT_LLM_MODEL`（可选 `PROCUREMENT_LLM_BASE_URL`）。启用后，ToolPolicy 按后端当前用户角色开放 Task 9 工具；草稿工具只保存字段，提交、驳回、开始采购和确认完成仍只能使用正式卡片，并继续走后端签名、版本号与 action token 流程。
+`PROCUREMENT_LLM_API_KEY` 与 `PROCUREMENT_LLM_MODEL`（可选 `PROCUREMENT_LLM_BASE_URL`）。
+启用后，文本消息由 `AssistantService → AgentRouter → RoleAgent → AssistantRuntime`
+处理，`ToolPolicy` 只开放当前激活角色的 Task 9 工具；多角色用户需先选择工作角色。
+草稿工具只保存字段，提交、驳回、开始采购和确认完成仍只能使用正式卡片，并继续走后端签名、版本号与 action token 流程。
 
 正式业务事实、身份、角色、楼宇、状态、处理人、版本、幂等和审计全部以后端为准。本项目负责飞书消息与卡片交互、后端 HTTP 适配、通知网关和后续智能助手能力。
 
