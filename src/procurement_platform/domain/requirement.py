@@ -85,6 +85,7 @@ class SupplierUpsertCommand(RequirementModel):
 
 class PurchaseFields(RequirementModel):
     supplier_id: int | None = None
+    supplier_name: str | None = None
     supplier_tax_number: str | None = None
     bank_name: str | None = None
     bank_account: str | None = None
@@ -289,6 +290,11 @@ class RequirementDetail(RequirementSummary):
     fields_complete: bool = False
     rejection_reason: str | None = None
     completed_at: datetime | None = None
+    applicant_name: str | None = None
+    applicant_mobile: str | None = None
+    created_at: datetime | None = None
+    review_manager_name: str | None = None
+    review_manager_mobile: str | None = None
 
 
 class RequirementListItem(RequirementModel):
@@ -311,16 +317,23 @@ class TimelineItem(RequirementModel):
     action_type: str
     operator_name: str
     operator_role_name: str
+    operator_mobile_masked: str | None = None
     from_status: RequirementStatus | None = None
     to_status: RequirementStatus | None = None
     assigned_to_employee_id: int | None = None
     assigned_to_name: str | None = None
+    assigned_to_mobile_masked: str | None = None
     operation_summary: str | None = None
     operated_at: datetime
 
 
 class RequirementTimeline(RequirementModel):
     items: tuple[TimelineItem, ...]
+
+
+class TimelineContact(RequirementModel):
+    employee_name: str
+    mobile: str | None = None
 
 
 class PurchaseRecord(RequirementModel):

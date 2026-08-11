@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from procurement_platform.application.applicant.card_factory import ApplicantCardFactory
@@ -15,7 +16,7 @@ from procurement_platform.domain.errors import (
 )
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.interaction import InteractionView
-from procurement_platform.domain.requirement import ApplicantFieldsPatch
+from procurement_platform.domain.requirement import ApplicantFieldsPatch, RequirementDetail
 from procurement_platform.ports.backend_client import BackendClient
 
 
@@ -23,6 +24,27 @@ class ApplicantWorkflowService:
     def __init__(self, backend: BackendClient, cards: ApplicantCardFactory | None = None) -> None:
         self._backend = backend
         self._cards = cards or ApplicantCardFactory()
+
+    async def _detail(self, identity: PlatformIdentity, requirement_id: int) -> RequirementDetail:
+        detail = await self._backend.get_requirement(
+            identity=identity, requirement_id=requirement_id
+        )
+        user = await self._backend.get_current_user(identity=identity)
+        records = await self._backend.list_purchase_records(
+            identity=identity,
+            requirement_no=detail.requirement_no,
+            page=1,
+            page_size=20,
+        )
+        record = next(
+            (item for item in records.items if item.requirement_id == detail.requirement_id), None
+        )
+        return detail.model_copy(
+            update={
+                "applicant_name": user.name,
+                "created_at": record.created_at if record is not None else datetime.now(UTC),
+            }
+        )
 
     async def home(self) -> InteractionView:
         return self._cards.home()
@@ -51,9 +73,7 @@ class ApplicantWorkflowService:
         summary = await self._backend.create_requirement(
             identity=identity, building_id=building.building_id
         )
-        detail = await self._backend.get_requirement(
-            identity=identity, requirement_id=summary.requirement_id
-        )
+        detail = await self._detail(identity, summary.requirement_id)
         return self._cards.detail(detail)
 
     async def create_draft(self, identity: PlatformIdentity, building_id: int) -> InteractionView:
@@ -65,15 +85,11 @@ class ApplicantWorkflowService:
         if building_id not in {item.building_id for item in user.buildings}:
             return self._cards.message("楼宇不可用", "请选择后端返回的有效楼宇。")
         summary = await self._backend.create_requirement(identity=identity, building_id=building_id)
-        detail = await self._backend.get_requirement(
-            identity=identity, requirement_id=summary.requirement_id
-        )
+        detail = await self._detail(identity, summary.requirement_id)
         return self._cards.detail(detail)
 
     async def open(self, identity: PlatformIdentity, requirement_id: int) -> InteractionView:
-        return self._cards.detail(
-            await self._backend.get_requirement(identity=identity, requirement_id=requirement_id)
-        )
+        return self._cards.detail(await self._detail(identity, requirement_id))
 
     async def save(
         self,
@@ -89,9 +105,7 @@ class ApplicantWorkflowService:
                 expected_version=expected_version,
                 fields=fields,
             )
-            detail = await self._backend.get_requirement(
-                identity=identity, requirement_id=requirement_id
-            )
+            detail = await self._detail(identity, requirement_id)
             notice = (
                 "保存成功, 字段已完整。"
                 if saved.fields_complete
@@ -99,9 +113,7 @@ class ApplicantWorkflowService:
             )
             return self._cards.detail(detail, notice=notice)
         except ConcurrentModificationError:
-            detail = await self._backend.get_requirement(
-                identity=identity, requirement_id=requirement_id
-            )
+            detail = await self._detail(identity, requirement_id)
             return self._cards.detail(
                 detail, notice="版本冲突: 已加载后端最新内容, 请重新确认修改。"
             )
@@ -124,17 +136,13 @@ class ApplicantWorkflowService:
                     fields=fields,
                 )
             except ConcurrentModificationError:
-                detail = await self._backend.get_requirement(
-                    identity=identity, requirement_id=requirement_id
-                )
+                detail = await self._detail(identity, requirement_id)
                 return self._cards.detail(
                     detail,
                     notice="版本已变化，我已刷新后端最新内容，请重新检查后再提交。",  # noqa: RUF001
                 )
             except ValidationError:
-                detail = await self._backend.get_requirement(
-                    identity=identity, requirement_id=requirement_id
-                )
+                detail = await self._detail(identity, requirement_id)
                 return self._cards.detail(
                     detail,
                     notice=(
@@ -142,9 +150,7 @@ class ApplicantWorkflowService:
                         "数量为大于 0 的数字。"
                     ),
                 )
-        detail = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        detail = await self._detail(identity, requirement_id)
         action = (
             AllowedRequirementAction.RESUBMIT_REVIEW
             if resubmit
@@ -172,9 +178,7 @@ class ApplicantWorkflowService:
         *,
         resubmit: bool,
     ) -> InteractionView:
-        detail = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        detail = await self._detail(identity, requirement_id)
         candidates = await self._backend.list_handler_candidates(
             identity=identity,
             requirement_id=requirement_id,
@@ -205,9 +209,7 @@ class ApplicantWorkflowService:
             target_role=RoleCode.BUILDING_MANAGER,
         )
         if employee_id not in {item.employee_id for item in candidates.items}:
-            detail = await self._backend.get_requirement(
-                identity=identity, requirement_id=requirement_id
-            )
+            detail = await self._detail(identity, requirement_id)
             return self._cards.handler_selection(detail, candidates, resubmit=resubmit)
         operation = self._backend.resubmit_review if resubmit else self._backend.submit_review
         try:
@@ -218,23 +220,12 @@ class ApplicantWorkflowService:
                 assigned_to_employee_id=employee_id,
                 action_token=action_token,
             )
-            return self._cards.success(result)
+            detail = await self._detail(identity, result.requirement_id)
+            return self._cards.success(detail)
         except (DuplicateOperationError, ConcurrentModificationError, MissingRequiredFieldsError):
-            detail = await self._backend.get_requirement(
-                identity=identity, requirement_id=requirement_id
-            )
+            detail = await self._detail(identity, requirement_id)
             if detail.status is RequirementStatus.PENDING_REVIEW:
-                from procurement_platform.domain.requirement import RequirementTransitionResult
-
-                return self._cards.success(
-                    RequirementTransitionResult(
-                        requirement_id=detail.requirement_id,
-                        requirement_no=detail.requirement_no,
-                        status=detail.status,
-                        version=detail.version,
-                        current_handler=detail.current_handler,
-                    )
-                )
+                return self._cards.success(detail)
             return self._cards.detail(detail, notice="操作未完成, 已加载后端最新状态。")
 
     async def listing(self, identity: PlatformIdentity, page: int = 1) -> InteractionView:

@@ -23,6 +23,7 @@ from procurement_platform.application.applicant.action_router import ApplicantAc
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
 from procurement_platform.application.assistant.agent_router import AgentRouter
 from procurement_platform.application.assistant.agent_tools import (
+    FillSelectedSupplierProfileTool,
     PreparePurchasePrefillTool,
     PurchasePrefillNotificationService,
     QueryPurchaseRequestsTool,
@@ -62,6 +63,9 @@ from procurement_platform.application.notifications.development_renderer import 
 )
 from procurement_platform.application.notifications.gateway_service import (
     NotificationGatewayService,
+)
+from procurement_platform.application.notifications.pending_review_service import (
+    PendingReviewNotificationService,
 )
 from procurement_platform.application.notifications.renderer_registry import (
     NotificationRendererRegistry,
@@ -156,6 +160,7 @@ class ApplicationContainer:
                 tool_registry.register(UpdateReviewDraftTool(container.backend_client))
                 tool_registry.register(QuerySupplierProfileTool(container.backend_client))
                 tool_registry.register(PreparePurchasePrefillTool(container.backend_client))
+                tool_registry.register(FillSelectedSupplierProfileTool(container.backend_client))
                 tool_registry.register(UpdatePurchaseExecutionDraftTool(container.backend_client))
                 tool_registry.register(UpdateWarehouseReceiptDraftTool(container.backend_client))
                 llm_client = OpenAICompatibleLlmClient(
@@ -175,8 +180,8 @@ class ApplicationContainer:
                         session_service=session_service,
                         tool_executor=tool_executor,
                     ),
-                    BuildingManagerAgent(session_service, tool_executor),
-                    PurchaserAgent(session_service),
+                    BuildingManagerAgent(session_service, tool_executor, container.backend_client),
+                    PurchaserAgent(session_service, tool_executor, container.backend_client),
                     WarehouseAgent(session_service),
                 )
                 runtime = AssistantRuntime(
@@ -231,6 +236,9 @@ class ApplicationContainer:
                     renderer_registry=registry,
                     bearer_token=token.get_secret_value() if token is not None else None,
                     purchase_prefill_provider=PurchasePrefillNotificationService(
+                        container.backend_client
+                    ),
+                    pending_review_provider=PendingReviewNotificationService(
                         container.backend_client
                     ),
                 )

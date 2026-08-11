@@ -1,3 +1,5 @@
+from procurement_platform.application.applicant.options import DEVICE_PROFESSION_OPTIONS
+from procurement_platform.application.card_values import quantity_text
 from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.enums import RequirementStatus
 from procurement_platform.domain.interaction import (
@@ -15,23 +17,15 @@ from procurement_platform.domain.requirement import (
     HandlerCandidates,
     RequirementDetail,
     RequirementPage,
-    RequirementTransitionResult,
 )
 from procurement_platform.domain.user import CurrentUser
 
-DEVICE_PROFESSION_OPTIONS = (
-    "电气",
-    "暖通",
-    "弱电",
-    "机房环境",
-    "工器具",
-    "算力服务器",
-    "IDC网络",
-    "其他",
-)
-
 
 class ApplicantCardFactory:
+    @staticmethod
+    def _application_date(detail: RequirementDetail) -> str:
+        return detail.created_at.astimezone().date().isoformat() if detail.created_at else "-"
+
     def home(self) -> InteractionView:
         return InteractionView(
             title="采购申请",
@@ -79,16 +73,32 @@ class ApplicantCardFactory:
         elements: list[InteractionElement] = []
         if notice:
             elements.append(MarkdownBlock(markdown=notice))
-        elements.append(
-            KeyValueSection(
-                fields=(
-                    KeyValueField(label="采购单编号", value=detail.requirement_no),
-                    KeyValueField(label="状态", value=requirement_status_label(detail.status)),
-                    KeyValueField(label="所属楼宇", value=detail.building.building_name),
-                    KeyValueField(label="版本", value=str(detail.version)),
+        summary_fields = [
+            KeyValueField(label="采购单编号", value=detail.requirement_no),
+            KeyValueField(label="状态", value=requirement_status_label(detail.status)),
+            KeyValueField(label="所属楼宇", value=detail.building.building_name),
+        ]
+        if not editable:
+            summary_fields.extend(
+                (
+                    KeyValueField(label="设备专业", value=fields.device_profession or "-"),
+                    KeyValueField(label="设备名称", value=fields.device_name or "-"),
+                    KeyValueField(label="品牌", value=fields.brand or "未填写"),
+                    KeyValueField(label="型号", value=fields.model or "未填写"),
+                    KeyValueField(
+                        label="数量和单位",
+                        value=f"{quantity_text(fields.quantity)} {fields.unit or ''}".strip(),
+                    ),
+                    KeyValueField(label="需求原因", value=fields.application_reason or "-"),
                 )
             )
+        summary_fields.extend(
+            (
+                KeyValueField(label="申请人", value=detail.applicant_name or "-"),
+                KeyValueField(label="申请时间", value=self._application_date(detail)),
+            )
         )
+        elements.append(KeyValueSection(fields=tuple(summary_fields)))
         if detail.rejection_reason:
             elements.append(MarkdownBlock(markdown=f"**驳回原因:** {detail.rejection_reason}"))
         if editable:
@@ -111,7 +121,7 @@ class ApplicantCardFactory:
                 ("device_name", "设备名称", fields.device_name, True),
                 ("brand", "品牌(选填)", fields.brand, False),
                 ("model", "型号(选填)", fields.model, False),
-                ("quantity", "数量", fields.quantity, True),
+                ("quantity", "数量", quantity_text(fields.quantity, empty=""), True),
                 ("unit", "单位", fields.unit, True),
                 ("application_reason", "需求原因", fields.application_reason, True),
                 ("applicant_remark", "备注(选填)", fields.applicant_remark, False),
@@ -196,10 +206,12 @@ class ApplicantCardFactory:
                         KeyValueField(label="型号", value=fields.model or "未填写"),
                         KeyValueField(
                             label="数量和单位",
-                            value=f"{fields.quantity or '-'} {fields.unit or ''}",
+                            value=f"{quantity_text(fields.quantity)} {fields.unit or ''}".strip(),
                         ),
                         KeyValueField(label="需求原因", value=fields.application_reason or "-"),
                         KeyValueField(label="审批楼长", value=manager_name),
+                        KeyValueField(label="申请人", value=detail.applicant_name or "-"),
+                        KeyValueField(label="申请时间", value=self._application_date(detail)),
                     )
                 ),
             ),
@@ -225,19 +237,35 @@ class ApplicantCardFactory:
             ),
         )
 
-    def success(self, result: RequirementTransitionResult) -> InteractionView:
+    def success(self, detail: RequirementDetail) -> InteractionView:
+        fields = detail.applicant_fields
         return InteractionView(
             title="提交成功",
             elements=(
                 KeyValueSection(
                     fields=(
-                        KeyValueField(label="采购单编号", value=result.requirement_no),
-                        KeyValueField(label="状态", value=requirement_status_label(result.status)),
+                        KeyValueField(label="采购单编号", value=detail.requirement_no),
+                        KeyValueField(label="所属楼宇", value=detail.building.building_name),
+                        KeyValueField(label="设备专业", value=fields.device_profession or "-"),
+                        KeyValueField(label="设备名称", value=fields.device_name or "-"),
+                        KeyValueField(label="品牌", value=fields.brand or "未填写"),
+                        KeyValueField(label="型号", value=fields.model or "未填写"),
+                        KeyValueField(
+                            label="数量和单位",
+                            value=f"{quantity_text(fields.quantity)} {fields.unit or ''}".strip(),
+                        ),
+                        KeyValueField(label="需求原因", value=fields.application_reason or "-"),
+                        KeyValueField(
+                            label="审批楼长",
+                            value=detail.current_handler.name if detail.current_handler else "-",
+                        ),
+                        KeyValueField(label="状态", value=requirement_status_label(detail.status)),
                         KeyValueField(
                             label="当前处理人",
-                            value=result.current_handler.name if result.current_handler else "-",
+                            value=detail.current_handler.name if detail.current_handler else "-",
                         ),
-                        KeyValueField(label="版本", value=str(result.version)),
+                        KeyValueField(label="申请人", value=detail.applicant_name or "-"),
+                        KeyValueField(label="申请时间", value=self._application_date(detail)),
                     )
                 ),
             ),
@@ -245,7 +273,7 @@ class ApplicantCardFactory:
                 ActionButton(
                     action_id="applicant.open",
                     label="查看详情",
-                    value={"requirement_id": result.requirement_id},
+                    value={"requirement_id": detail.requirement_id},
                 ),
                 ActionButton(action_id="applicant.list", label="我的申请"),
             ),

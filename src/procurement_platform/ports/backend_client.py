@@ -40,6 +40,7 @@ from procurement_platform.domain.requirement import (
     SupplierRecommendations,
     SupplierSummary,
     SupplierUpsertCommand,
+    TimelineContact,
     WarehouseFieldsPatch,
 )
 from procurement_platform.domain.user import CurrentUser
@@ -78,6 +79,15 @@ class BackendClient(Protocol):
     async def get_requirement_timeline(
         self, *, identity: PlatformIdentity, requirement_id: int
     ) -> RequirementTimeline: ...
+
+    async def get_timeline_contact(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        log_id: int,
+        subject: str = "operator",
+    ) -> TimelineContact: ...
 
     async def list_purchase_records(
         self,

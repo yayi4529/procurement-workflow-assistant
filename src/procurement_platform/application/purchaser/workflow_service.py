@@ -16,6 +16,7 @@ from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.interaction import InteractionView
 from procurement_platform.domain.requirement import (
     PurchaseFieldsPatch,
+    RequirementDetail,
     SupplierPage,
     SupplierUpsertCommand,
 )
@@ -27,6 +28,38 @@ class PurchaserWorkflowService:
         self._backend = backend
         self._cards = PurchaserCardFactory()
 
+    async def _detail(self, identity: PlatformIdentity, requirement_id: int) -> RequirementDetail:
+        detail = await self._backend.get_requirement(
+            identity=identity, requirement_id=requirement_id
+        )
+        timeline = await self._backend.get_requirement_timeline(
+            identity=identity, requirement_id=requirement_id
+        )
+        manager = next(
+            (
+                item
+                for item in reversed(timeline.items)
+                if item.operator_role_name in {"楼长", "BUILDING_MANAGER"}
+            ),
+            None,
+        )
+        manager_contact = (
+            await self._backend.get_timeline_contact(
+                identity=identity,
+                requirement_id=requirement_id,
+                log_id=manager.log_id,
+                subject="operator",
+            )
+            if manager
+            else None
+        )
+        return detail.model_copy(
+            update={
+                "review_manager_name": manager.operator_name if manager else None,
+                "review_manager_mobile": manager_contact.mobile if manager_contact else None,
+            }
+        )
+
     async def list_pending(self, identity: PlatformIdentity, page: int = 1) -> InteractionView:
         result = await self._backend.list_requirements(
             identity=identity, view=RequirementView.PENDING_FOR_ME, page=page
@@ -36,9 +69,7 @@ class PurchaserWorkflowService:
     async def open_requirement(
         self, identity: PlatformIdentity, requirement_id: int
     ) -> InteractionView:
-        return self._cards.detail(
-            await self._backend.get_requirement(identity=identity, requirement_id=requirement_id)
-        )
+        return self._cards.detail(await self._detail(identity, requirement_id))
 
     async def start_purchase(
         self,
@@ -47,9 +78,7 @@ class PurchaserWorkflowService:
         expected_version: int,
         action_token: UUID,
     ) -> InteractionView:
-        latest = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        latest = await self._detail(identity, requirement_id)
         if latest.version != expected_version:
             return self._cards.detail(latest, "版本已变化, 请重新确认。")
         try:
@@ -106,9 +135,7 @@ class PurchaserWorkflowService:
         expected_version: int,
         fields: PurchaseFieldsPatch,
     ) -> InteractionView:
-        latest = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        latest = await self._detail(identity, requirement_id)
         if latest.version != expected_version:
             return self._cards.detail(latest, "版本已变化, 请重新填写。")
         await self._backend.update_purchase_fields(
@@ -122,9 +149,7 @@ class PurchaserWorkflowService:
     async def prepare_submit_warehouse(
         self, identity: PlatformIdentity, requirement_id: int, employee_id: int | None
     ) -> InteractionView:
-        latest = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        latest = await self._detail(identity, requirement_id)
         if (
             latest.status is not RequirementStatus.PURCHASING
             or not latest.fields_complete
@@ -153,9 +178,7 @@ class PurchaserWorkflowService:
         employee_id: int,
         action_token: UUID,
     ) -> InteractionView:
-        latest = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        latest = await self._detail(identity, requirement_id)
         candidates = await self._backend.list_handler_candidates(
             identity=identity,
             requirement_id=requirement_id,
@@ -174,23 +197,10 @@ class PurchaserWorkflowService:
                 action_token=action_token,
             )
         except (DuplicateOperationError, ConcurrentModificationError):
-            refreshed = await self._backend.get_requirement(
-                identity=identity, requirement_id=requirement_id
-            )
+            refreshed = await self._detail(identity, requirement_id)
             if refreshed.status is RequirementStatus.PENDING_WAREHOUSE:
-                from procurement_platform.domain.requirement import RequirementTransitionResult
-
-                result = RequirementTransitionResult.model_validate(
-                    refreshed.model_dump(
-                        include={
-                            "requirement_id",
-                            "requirement_no",
-                            "status",
-                            "version",
-                            "current_handler",
-                        }
-                    )
-                )
+                return self._cards.result(refreshed)
             else:
                 return self._cards.detail(refreshed, "操作未完成, 已加载后端最新状态。")
-        return self._cards.result(result)
+        refreshed = await self._detail(identity, result.requirement_id)
+        return self._cards.result(refreshed)

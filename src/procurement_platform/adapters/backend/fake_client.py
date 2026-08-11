@@ -32,6 +32,7 @@ from procurement_platform.domain.errors import (
     InvalidStatusError,
     MissingRequiredFieldsError,
     PermissionDeniedError,
+    RequirementNotFoundError,
     SessionNotFoundError,
 )
 from procurement_platform.domain.identity import PlatformIdentity
@@ -66,6 +67,7 @@ from procurement_platform.domain.requirement import (
     SupplierRecommendations,
     SupplierSummary,
     SupplierUpsertCommand,
+    TimelineContact,
     WarehouseFields,
     WarehouseFieldsPatch,
     WarehouseFieldsSaveResult,
@@ -110,6 +112,7 @@ class FakeBackendClient:
         self._next_supplier_id = 1
         self.purchase_records: list[PurchaseRecord] = []
         self.timelines: dict[int, RequirementTimeline] = {}
+        self.timeline_contacts: dict[tuple[int, int, str], TimelineContact] = {}
         self.product_recommendations = ProductRecommendations(items=())
         self.purchase_history_recommendations = PurchaseHistoryRecommendations(items=())
 
@@ -303,6 +306,33 @@ class FakeBackendClient:
         self._user(identity)
         self._require_requirement(requirement_id)
         return self.timelines.get(requirement_id, RequirementTimeline(items=()))
+
+    async def get_timeline_contact(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        log_id: int,
+        subject: str = "operator",
+    ) -> TimelineContact:
+        self._record("get_timeline_contact")
+        self._user(identity)
+        timeline = self.timelines.get(requirement_id, RequirementTimeline(items=()))
+        item = next((entry for entry in timeline.items if entry.log_id == log_id), None)
+        if item is None:
+            raise RequirementNotFoundError("TIMELINE_ITEM_NOT_FOUND", "流程记录不存在")
+        configured = self.timeline_contacts.get((requirement_id, log_id, subject))
+        if configured is not None:
+            return configured
+        if subject == "assignee":
+            return TimelineContact(
+                employee_name=item.assigned_to_name or "-",
+                mobile=item.assigned_to_mobile_masked,
+            )
+        return TimelineContact(
+            employee_name=item.operator_name,
+            mobile=item.operator_mobile_masked,
+        )
 
     async def list_purchase_records(
         self,

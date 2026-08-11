@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from procurement_platform.application.card_values import quantity_text
 from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.interaction import (
     ActionButton,
@@ -35,8 +36,8 @@ class WarehouseCardFactory:
                     ),
                     KeyValueField(
                         label="采购数量",
-                        value=f"{detail.applicant_fields.quantity or '-'} "
-                        f"{detail.applicant_fields.unit or ''}",
+                        value=f"{quantity_text(detail.applicant_fields.quantity)} "
+                        f"{detail.applicant_fields.unit or ''}".strip(),
                     ),
                     KeyValueField(label="供应商", value=self._supplier(detail)),
                     KeyValueField(
@@ -63,7 +64,9 @@ class WarehouseCardFactory:
                 TextInput(
                     name="received_quantity",
                     label="实际入库数量",
-                    default_value=warehouse.received_quantity if warehouse else None,
+                    default_value=(
+                        quantity_text(warehouse.received_quantity, empty="") if warehouse else None
+                    ),
                     required=True,
                 ),
                 TextInput(
@@ -134,7 +137,7 @@ class WarehouseCardFactory:
             elements=(
                 MarkdownBlock(
                     markdown=f"仓库位置: {warehouse.warehouse_location}\n\n"
-                    f"实际入库数量: {warehouse.received_quantity}\n\n"
+                    f"实际入库数量: {quantity_text(warehouse.received_quantity)}\n\n"
                     f"备注: {warehouse.receipt_remark or '-'}{notice}"
                 ),
             ),

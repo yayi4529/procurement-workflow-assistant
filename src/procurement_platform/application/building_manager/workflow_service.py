@@ -17,6 +17,7 @@ from procurement_platform.domain.errors import (
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.interaction import InteractionView
 from procurement_platform.domain.requirement import (
+    RequirementDetail,
     RequirementTransitionResult,
     ReviewFieldsPatch,
 )
@@ -29,6 +30,35 @@ class BuildingManagerWorkflowService:
     ) -> None:
         self._backend = backend
         self._cards = cards or BuildingManagerCardFactory()
+
+    async def _detail(self, identity: PlatformIdentity, requirement_id: int) -> RequirementDetail:
+        detail = await self._backend.get_requirement(
+            identity=identity, requirement_id=requirement_id
+        )
+        timeline = await self._backend.get_requirement_timeline(
+            identity=identity, requirement_id=requirement_id
+        )
+        applicant = next(
+            (item for item in timeline.items if item.operator_role_name in {"需求人", "APPLICANT"}),
+            timeline.items[0] if timeline.items else None,
+        )
+        applicant_contact = (
+            await self._backend.get_timeline_contact(
+                identity=identity,
+                requirement_id=requirement_id,
+                log_id=applicant.log_id,
+                subject="operator",
+            )
+            if applicant
+            else None
+        )
+        return detail.model_copy(
+            update={
+                "applicant_name": applicant.operator_name if applicant else None,
+                "applicant_mobile": applicant_contact.mobile if applicant_contact else None,
+                "created_at": applicant.operated_at if applicant else None,
+            }
+        )
 
     async def list_pending_requirements(
         self, identity: PlatformIdentity, page: int = 1
@@ -44,9 +74,7 @@ class BuildingManagerWorkflowService:
     async def open_requirement(
         self, identity: PlatformIdentity, requirement_id: int
     ) -> InteractionView:
-        return self._cards.detail(
-            await self._backend.get_requirement(identity=identity, requirement_id=requirement_id)
-        )
+        return self._cards.detail(await self._detail(identity, requirement_id))
 
     async def save_review_fields(
         self,
@@ -62,9 +90,7 @@ class BuildingManagerWorkflowService:
                 expected_version=expected_version,
                 fields=fields,
             )
-            detail = await self._backend.get_requirement(
-                identity=identity, requirement_id=requirement_id
-            )
+            detail = await self._detail(identity, requirement_id)
             notice = (
                 "审核字段已完整保存。"
                 if saved.fields_complete
@@ -72,9 +98,7 @@ class BuildingManagerWorkflowService:
             )
             return self._cards.detail(detail, notice)
         except ConcurrentModificationError:
-            detail = await self._backend.get_requirement(
-                identity=identity, requirement_id=requirement_id
-            )
+            detail = await self._detail(identity, requirement_id)
             return self._cards.detail(detail, "版本冲突, 已加载后端最新字段, 请重新确认。")
 
     async def review_validation_error(
@@ -83,17 +107,13 @@ class BuildingManagerWorkflowService:
         requirement_id: int,
         message: str,
     ) -> InteractionView:
-        detail = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        detail = await self._detail(identity, requirement_id)
         return self._cards.detail(detail, message)
 
     async def prepare_reject(
         self, identity: PlatformIdentity, requirement_id: int, reason: str | None
     ) -> InteractionView:
-        detail = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        detail = await self._detail(identity, requirement_id)
         if not reason or not reason.strip():
             return self._cards.reject_form(detail)
         return self._cards.reject_confirmation(detail, reason.strip(), str(uuid4()))
@@ -126,9 +146,7 @@ class BuildingManagerWorkflowService:
         requirement_id: int,
         employee_id: int | None,
     ) -> InteractionView:
-        detail = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        detail = await self._detail(identity, requirement_id)
         if (
             detail.status is not RequirementStatus.PENDING_REVIEW
             or AllowedRequirementAction.SUBMIT_PURCHASER not in detail.allowed_actions
@@ -161,9 +179,7 @@ class BuildingManagerWorkflowService:
         employee_id: int,
         action_token: UUID,
     ) -> InteractionView:
-        latest = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        latest = await self._detail(identity, requirement_id)
         candidates = await self._backend.list_handler_candidates(
             identity=identity,
             requirement_id=requirement_id,
@@ -184,7 +200,9 @@ class BuildingManagerWorkflowService:
                 assigned_to_employee_id=employee_id,
                 action_token=action_token,
             )
-            return self._cards.result(result, "已提交采购员")
+            detail = await self._detail(identity, result.requirement_id)
+            manager = await self._backend.get_current_user(identity=identity)
+            return self._cards.submitted_purchaser(detail, manager.name, manager.mobile)
         except (DuplicateOperationError, ConcurrentModificationError, MissingRequiredFieldsError):
             return await self._transition_after_retry(
                 identity, requirement_id, RequirementStatus.PENDING_PURCHASE, "已提交采购员"
@@ -197,10 +215,11 @@ class BuildingManagerWorkflowService:
         target: RequirementStatus,
         title: str,
     ) -> InteractionView:
-        detail = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        detail = await self._detail(identity, requirement_id)
         if detail.status is target:
+            if target is RequirementStatus.PENDING_PURCHASE:
+                manager = await self._backend.get_current_user(identity=identity)
+                return self._cards.submitted_purchaser(detail, manager.name, manager.mobile)
             return self._cards.result(
                 RequirementTransitionResult(
                     requirement_id=detail.requirement_id,

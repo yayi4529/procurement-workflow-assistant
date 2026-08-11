@@ -211,6 +211,11 @@ class BackendTimelineDTO(BackendDTO):
     items: tuple[BackendTimelineItemDTO, ...]
 
 
+class BackendTimelineContactDTO(BackendDTO):
+    employee_name: str
+    mobile: str | None
+
+
 class BackendPurchaseRecordDTO(BackendDTO):
     requirement_id: int
     requirement_no: str

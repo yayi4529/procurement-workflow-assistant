@@ -1,3 +1,4 @@
+from procurement_platform.application.card_values import quantity_text
 from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.enums import RequirementStatus
 from procurement_platform.domain.interaction import (
@@ -45,11 +46,13 @@ class BuildingManagerCardFactory:
                         value=f"{applicant.brand or '-'} / {applicant.model or '-'}",
                     ),
                     KeyValueField(
-                        label="数量", value=f"{applicant.quantity or '-'} {applicant.unit or ''}"
+                        label="数量",
+                        value=f"{quantity_text(applicant.quantity)} {applicant.unit or ''}".strip(),
                     ),
                     KeyValueField(label="需求原因", value=applicant.application_reason or "-"),
                     KeyValueField(label="状态", value=requirement_status_label(detail.status)),
-                    KeyValueField(label="版本", value=str(detail.version)),
+                    KeyValueField(label="申请人", value=detail.applicant_name or "-"),
+                    KeyValueField(label="申请人联系方式", value=detail.applicant_mobile or "-"),
                 )
             )
         )
@@ -254,6 +257,67 @@ class BuildingManagerCardFactory:
                         KeyValueField(
                             label="当前处理人",
                             value=result.current_handler.name if result.current_handler else "-",
+                        ),
+                    )
+                ),
+            ),
+            actions=(ActionButton(action_id="building_manager.list_pending", label="返回待办"),),
+        )
+
+    def submitted_purchaser(
+        self, detail: RequirementDetail, manager_name: str, manager_mobile: str | None
+    ) -> InteractionView:
+        applicant = detail.applicant_fields
+        review = detail.review_fields
+        return InteractionView(
+            title="已提交采购员",
+            elements=(
+                KeyValueSection(
+                    fields=(
+                        KeyValueField(label="采购单编号", value=detail.requirement_no),
+                        KeyValueField(label="状态", value=requirement_status_label(detail.status)),
+                        KeyValueField(
+                            label="当前处理人",
+                            value=detail.current_handler.name if detail.current_handler else "-",
+                        ),
+                        KeyValueField(label="楼长姓名", value=manager_name),
+                        KeyValueField(label="楼长联系方式", value=manager_mobile or "-"),
+                        KeyValueField(label="设备名称", value=applicant.device_name or "-"),
+                        KeyValueField(
+                            label="品牌/型号",
+                            value=f"{applicant.brand or '-'} / {applicant.model or '-'}",
+                        ),
+                        KeyValueField(
+                            label="数量",
+                            value=(
+                                f"{quantity_text(applicant.quantity)} {applicant.unit or ''}"
+                            ).strip(),
+                        ),
+                        KeyValueField(
+                            label="供应商名称",
+                            value=(review.proposed_supplier_name if review else None) or "-",
+                        ),
+                        KeyValueField(
+                            label="供应商联系人",
+                            value=(review.supplier_contact_name if review else None) or "-",
+                        ),
+                        KeyValueField(
+                            label="供应商联系方式",
+                            value=(review.supplier_contact_info if review else None) or "-",
+                        ),
+                        KeyValueField(
+                            label="预计单价",
+                            value=f"{review.estimated_unit_price} 元"
+                            if review and review.estimated_unit_price
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="付款方式",
+                            value=(review.payment_method if review else None) or "-",
+                        ),
+                        KeyValueField(
+                            label="质保信息",
+                            value=(review.warranty_info if review else None) or "-",
                         ),
                     )
                 ),

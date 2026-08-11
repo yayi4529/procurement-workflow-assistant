@@ -7,6 +7,7 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from procurement_platform.application.applicant.options import DEVICE_PROFESSION_OPTIONS
 from procurement_platform.application.assistant.candidate_resolver import CandidateResolver
 from procurement_platform.application.assistant.exact_field_renderer import ExactFieldRenderer
 from procurement_platform.application.assistant.temporal_range_resolver import (
@@ -32,6 +33,7 @@ from procurement_platform.domain.errors import (
     ConcurrentModificationError,
     InvalidHandlerError,
     PermissionDeniedError,
+    RequirementNotFoundError,
     SessionNotFoundError,
 )
 from procurement_platform.domain.identity import PlatformIdentity
@@ -181,6 +183,7 @@ class PurchaseRequestCandidate(BaseModel):
 class QueryPurchaseRequestsArgs(StrictArgs):
     operation: ToolOperation
     requirement_id: int | None = Field(default=None, gt=0)
+    requirement_no: str | None = Field(default=None, min_length=1, max_length=50)
     time_expression: str | None = Field(default=None, max_length=50)
     time_field: TimeField = "CREATED_AT"
     device_name: str | None = Field(default=None, max_length=200)
@@ -191,8 +194,12 @@ class QueryPurchaseRequestsArgs(StrictArgs):
 
     @model_validator(mode="after")
     def validate_operation(self) -> "QueryPurchaseRequestsArgs":
-        if self.operation != "SEARCH" and self.requirement_id is None:
-            raise ValueError("requirement_id is required for detail or timeline")
+        if (
+            self.operation != "SEARCH"
+            and self.requirement_id is None
+            and self.requirement_no is None
+        ):
+            raise ValueError("requirement_id or requirement_no is required for detail or timeline")
         return self
 
 
@@ -223,18 +230,21 @@ class QueryPurchaseRequestsTool:
         try:
             await self._backend.get_current_user(identity=identity)
             if args.operation == "GET_DETAIL":
+                requirement_id = await self._resolve_requirement_id(identity, args)
                 return self._detail(
                     await self._backend.get_requirement(
-                        identity=identity, requirement_id=args.requirement_id or 0
+                        identity=identity, requirement_id=requirement_id
                     )
                 )
             if args.operation == "GET_TIMELINE":
+                requirement_id = await self._resolve_requirement_id(identity, args)
                 timeline = await self._backend.get_requirement_timeline(
-                    identity=identity, requirement_id=args.requirement_id or 0
+                    identity=identity, requirement_id=requirement_id
                 )
                 return QueryPurchaseRequestsResult(
                     status="SUCCESS",
-                    requirement_id=args.requirement_id,
+                    requirement_id=requirement_id,
+                    requirement_no=args.requirement_no,
                     timeline=tuple(
                         (
                             f"{item.operated_at.isoformat()} {item.action_type}: "
@@ -250,6 +260,7 @@ class QueryPurchaseRequestsTool:
             )
             page = await self._backend.list_purchase_records(
                 identity=identity,
+                requirement_no=args.requirement_no,
                 status=args.status,
                 device_name=args.device_name,
                 brand=args.brand,
@@ -309,10 +320,33 @@ class QueryPurchaseRequestsTool:
             return QueryPurchaseRequestsResult(
                 status="PERMISSION_DENIED", user_message="无权查看该采购单"
             )
+        except RequirementNotFoundError:
+            return QueryPurchaseRequestsResult(
+                status="NOT_FOUND", user_message="未找到该采购单, 请核对完整采购单编号"
+            )
         except (BackendUnavailableError, BackendTimeoutError, BackendProtocolError):
             return QueryPurchaseRequestsResult(
                 status="BACKEND_UNAVAILABLE", user_message="采购后端暂时不可用"
             )
+
+    async def _resolve_requirement_id(
+        self, identity: PlatformIdentity, args: QueryPurchaseRequestsArgs
+    ) -> int:
+        if args.requirement_no:
+            page = await self._backend.list_purchase_records(
+                identity=identity,
+                requirement_no=args.requirement_no,
+                page=1,
+                page_size=20,
+            )
+            exact = tuple(item for item in page.items if item.requirement_no == args.requirement_no)
+            if len(exact) != 1:
+                raise RequirementNotFoundError(
+                    "REQUIREMENT_NOT_FOUND", "采购申请不存在或编号不唯一"
+                )
+            return exact[0].requirement_id
+        assert args.requirement_id is not None
+        return args.requirement_id
 
     async def _matched_at(
         self,
@@ -571,6 +605,7 @@ class UpdatePurchaseDraftResult(AssistantToolResult):
     missing_fields: tuple[str, ...] = ()
     next_missing_field: str | None = None
     fields_complete: bool = False
+    device_profession_recommendations: tuple[str, ...] = ()
 
 
 class UpdatePurchaseDraftTool:
@@ -691,6 +726,24 @@ class UpdatePurchaseDraftTool:
                 return UpdatePurchaseDraftResult(
                     status="NEED_MORE_INFORMATION", user_message="请提供需要保存的采购字段"
                 )
+            profession_recommendations: tuple[str, ...] = ()
+            device_name = raw.get("device_name")
+            if (
+                isinstance(device_name, str)
+                and device_name.strip()
+                and not raw.get("device_profession")
+                and not detail.applicant_fields.device_profession
+            ):
+                (
+                    historical_profession,
+                    profession_recommendations,
+                ) = await self._historical_device_profession(
+                    identity=identity,
+                    device_name=device_name,
+                    current_requirement_id=requirement_id,
+                )
+                if historical_profession is not None:
+                    raw["device_profession"] = historical_profession
             patch = ApplicantFieldsPatch.model_validate(raw)
             saved = await self._backend.update_applicant_fields(
                 identity=identity,
@@ -731,6 +784,7 @@ class UpdatePurchaseDraftTool:
                 missing_fields=tuple(collection_missing_fields),
                 next_missing_field=next_missing_field,
                 fields_complete=fields_complete,
+                device_profession_recommendations=profession_recommendations,
                 user_message=(
                     "字段已完整, 请在正式需求卡片中确认并提交"
                     if fields_complete
@@ -745,6 +799,45 @@ class UpdatePurchaseDraftTool:
             return UpdatePurchaseDraftResult(
                 status="BACKEND_UNAVAILABLE", user_message="采购后端暂时不可用"
             )
+
+    async def _historical_device_profession(
+        self,
+        *,
+        identity: PlatformIdentity,
+        device_name: str,
+        current_requirement_id: int,
+    ) -> tuple[str | None, tuple[str, ...]]:
+        records = await self._backend.list_purchase_records(
+            identity=identity,
+            device_name=device_name.strip(),
+            page=1,
+            page_size=100,
+        )
+        profession_stats: dict[str, tuple[int, datetime]] = {}
+        for record in records.items:
+            if record.requirement_id == current_requirement_id:
+                continue
+            try:
+                historical = await self._backend.get_requirement(
+                    identity=identity, requirement_id=record.requirement_id
+                )
+            except (PermissionDeniedError, RequirementNotFoundError):
+                continue
+            profession = historical.applicant_fields.device_profession
+            if profession and profession in DEVICE_PROFESSION_OPTIONS:
+                count, latest = profession_stats.get(
+                    profession, (0, datetime.min.replace(tzinfo=record.created_at.tzinfo))
+                )
+                profession_stats[profession] = (count + 1, max(latest, record.created_at))
+        ranked = tuple(
+            profession
+            for profession, _ in sorted(
+                profession_stats.items(),
+                key=lambda item: (item[1][0], item[1][1]),
+                reverse=True,
+            )
+        )
+        return (ranked[0], ranked) if len(ranked) == 1 else (None, ranked)
 
 
 class UpdateReviewDraftArgs(StrictArgs):
@@ -764,7 +857,9 @@ class UpdateReviewDraftArgs(StrictArgs):
 
 class UpdateReviewDraftResult(AssistantToolResult):
     updated_fields: tuple[str, ...] = ()
+    updated_values: dict[str, str] = Field(default_factory=dict)
     missing_fields: tuple[str, ...] = ()
+    next_missing_field: str | None = None
     fields_complete: bool = False
 
 
@@ -835,12 +930,26 @@ class UpdateReviewDraftTool:
             latest = await self._backend.get_requirement(
                 identity=identity, requirement_id=args.requirement_id
             )
+            await self._session.save(
+                identity=identity,
+                context=context,
+                requirement_id=args.requirement_id,
+                focused_role=RoleCode.BUILDING_MANAGER,
+                focused_field=saved.next_missing_field,
+                missing_fields=saved.missing_fields,
+                pending_field=saved.next_missing_field,
+            )
             return UpdateReviewDraftResult(
                 status="SUCCESS",
                 requirement_id=args.requirement_id,
                 requirement_version=latest.version,
                 updated_fields=tuple(raw),
+                updated_values={
+                    name: value.isoformat() if isinstance(value, date) else str(value)
+                    for name, value in raw.items()
+                },
                 missing_fields=saved.missing_fields,
+                next_missing_field=saved.next_missing_field,
                 fields_complete=saved.fields_complete,
             )
         except ValueError as exc:
@@ -902,7 +1011,17 @@ class QuerySupplierProfileTool:
     async def execute(
         self, *, args: QuerySupplierProfileArgs, context: AssistantToolContext
     ) -> QuerySupplierProfileResult:
-        resolved = await _active_user(self._backend, context, RoleCode.PURCHASER)
+        identity = _identity(context)
+        user = await self._backend.get_current_user(identity=identity)
+        resolved = (
+            (identity, user)
+            if user.status == "ACTIVE"
+            and {
+                RoleCode.PURCHASER,
+                RoleCode.BUILDING_MANAGER,
+            }.intersection(role.role_code for role in user.roles)
+            else None
+        )
         if resolved is None:
             return QuerySupplierProfileResult(
                 status="PERMISSION_DENIED", user_message="当前用户不是有效采购员"
@@ -915,13 +1034,13 @@ class QuerySupplierProfileTool:
                 detail = await self._backend.get_requirement(
                     identity=identity, requirement_id=requirement_id
                 )
-                supplier_id = (
-                    detail.review_fields.proposed_supplier_id if detail.review_fields else None
-                )
-                if supplier_id is None:
+                selected = await _selected_supplier(self._backend, identity, detail)
+                if selected is None:
                     return QuerySupplierProfileResult(
-                        status="NOT_FOUND", user_message="该采购单尚未确定供应商"
+                        status="NOT_FOUND",
+                        user_message="当前采购单没有可确认的供应商记录",
                     )
+                supplier_id = selected.supplier_id
             elif args.supplier_ref:
                 state = await self._session.state(identity, context.conversation_id)
                 supplier_id = CandidateResolver.resolve(
@@ -1187,13 +1306,107 @@ class PreparePurchasePrefillTool:
             )
 
 
+class FillSelectedSupplierProfileArgs(StrictArgs):
+    requirement_id: int = Field(gt=0)
+
+
+class FillSelectedSupplierProfileResult(AssistantToolResult):
+    supplier_name: str | None = None
+    next_missing_field: Literal["actual_unit_price"] | None = None
+
+
+class FillSelectedSupplierProfileTool:
+    """Resolve supplier facts deterministically before a complete purchase save."""
+
+    name = "fill_selected_supplier_profile"
+    description = (
+        "Use the supplier selected on the current requirement and re-read its master data. "
+        "Use this when the user asks to fill/carry/copy that supplier's information into "
+        "the purchase form. Never copy supplier values from chat history."
+    )
+    args_model = FillSelectedSupplierProfileArgs
+
+    def __init__(self, backend: BackendClient) -> None:
+        self._backend = backend
+        self._session = SessionReferenceStore(backend)
+
+    async def execute(
+        self, *, args: FillSelectedSupplierProfileArgs, context: AssistantToolContext
+    ) -> FillSelectedSupplierProfileResult:
+        resolved = await _active_user(self._backend, context, RoleCode.PURCHASER)
+        if resolved is None:
+            return FillSelectedSupplierProfileResult(
+                status="PERMISSION_DENIED", user_message="当前用户不是有效采购员"
+            )
+        identity, user = resolved
+        detail = await self._backend.get_requirement(
+            identity=identity, requirement_id=args.requirement_id
+        )
+        if detail.status is not RequirementStatus.PURCHASING:
+            return FillSelectedSupplierProfileResult(
+                status="INVALID_STATUS", user_message="只有采购中状态可以填写采购执行信息"
+            )
+        if not _is_handler(detail, user):
+            return FillSelectedSupplierProfileResult(
+                status="PERMISSION_DENIED", user_message="当前用户不是该采购单处理人"
+            )
+        supplier = await _selected_supplier(self._backend, identity, detail)
+        if supplier is None:
+            return FillSelectedSupplierProfileResult(
+                status="NOT_FOUND", user_message="当前采购单没有可确认的供应商记录"
+            )
+        existing = detail.purchase_fields or PurchaseFields()
+        next_missing_field: Literal["actual_unit_price"] | None
+        if not existing.actual_unit_price:
+            next_missing_field = "actual_unit_price"
+            message = (
+                f"已从供应商主数据读取{supplier.supplier_name}的可用资料, "
+                "将在采购执行信息完整后一起保存。请问实际采购单价是多少?"
+            )
+        else:
+            saved = await UpdatePurchaseExecutionDraftTool(self._backend).execute(
+                args=UpdatePurchaseExecutionDraftArgs(
+                    requirement_id=args.requirement_id,
+                    actual_unit_price=existing.actual_unit_price,
+                    tax_rate=existing.tax_rate,
+                    purchased_at=existing.purchased_at or context.current_time,
+                    purchase_remark=existing.purchase_remark,
+                ),
+                context=context,
+            )
+            if saved.status != "SUCCESS":
+                return FillSelectedSupplierProfileResult(
+                    status=saved.status,
+                    requirement_id=args.requirement_id,
+                    user_message=saved.user_message,
+                )
+            return FillSelectedSupplierProfileResult(
+                status="SUCCESS",
+                requirement_id=args.requirement_id,
+                requirement_version=saved.requirement_version,
+                supplier_name=supplier.supplier_name,
+                user_message=f"已将{supplier.supplier_name}的最新主数据保存到采购单。",
+            )
+        await self._session.save(
+            identity=identity,
+            context=context,
+            requirement_id=args.requirement_id,
+            focused_role=RoleCode.PURCHASER,
+            focused_field=next_missing_field,
+            pending_field=next_missing_field,
+        )
+        return FillSelectedSupplierProfileResult(
+            status="NEED_MORE_INFORMATION" if next_missing_field else "SUCCESS",
+            requirement_id=args.requirement_id,
+            requirement_version=detail.version,
+            supplier_name=supplier.supplier_name,
+            next_missing_field=next_missing_field,
+            user_message=message,
+        )
+
+
 class UpdatePurchaseExecutionDraftArgs(StrictArgs):
     requirement_id: int = Field(gt=0)
-    supplier_tax_number: str | None = Field(default=None, max_length=50)
-    bank_name: str | None = Field(default=None, max_length=200)
-    bank_account: str | None = Field(default=None, max_length=255)
-    registered_address: str | None = Field(default=None, max_length=500)
-    contract_contact_info: str | None = Field(default=None, max_length=255)
     actual_unit_price: str | None = None
     tax_rate: str | None = None
     purchased_at: datetime | None = None
@@ -1217,6 +1430,7 @@ class UpdatePurchaseExecutionDraftTool:
 
     def __init__(self, backend: BackendClient) -> None:
         self._backend = backend
+        self._session = SessionReferenceStore(backend)
 
     async def execute(
         self, *, args: UpdatePurchaseExecutionDraftArgs, context: AssistantToolContext
@@ -1239,25 +1453,69 @@ class UpdatePurchaseExecutionDraftTool:
                 return UpdatePurchaseExecutionDraftResult(
                     status="PERMISSION_DENIED", user_message="当前用户不是该采购单处理人"
                 )
-            supplier_id = (
-                detail.review_fields.proposed_supplier_id if detail.review_fields else None
-            )
-            if supplier_id is None:
+            supplier = await _selected_supplier(self._backend, identity, detail)
+            if supplier is None:
                 return UpdatePurchaseExecutionDraftResult(
-                    status="NOT_FOUND", user_message="楼长尚未确定供应商"
+                    status="NOT_FOUND", user_message="当前采购单没有可确认的供应商记录"
                 )
             existing = detail.purchase_fields or PurchaseFields()
             raw = args.model_dump(exclude={"requirement_id"}, exclude_unset=True)
-            unit_price = raw.get("actual_unit_price", existing.actual_unit_price)
-            purchased_at = raw.get("purchased_at", existing.purchased_at)
-            if unit_price is None or purchased_at is None:
+            collected: dict[str, JsonValue] = {}
+            session_exists = False
+            try:
+                state = await self._session.state(identity, context.conversation_id)
+                session_exists = True
+                if state.purchase_request_id == args.requirement_id:
+                    collected.update(
+                        {
+                            key: value
+                            for key, value in state.collected_data.items()
+                            if key
+                            in {
+                                "actual_unit_price",
+                                "tax_rate",
+                                "purchased_at",
+                                "purchase_remark",
+                            }
+                        }
+                    )
+            except SessionNotFoundError:
+                pass
+            collected.update(
+                {
+                    key: value.isoformat() if isinstance(value, datetime) else value
+                    for key, value in raw.items()
+                    if key != "update_supplier_profile"
+                }
+            )
+            unit_price = collected.get("actual_unit_price", existing.actual_unit_price)
+            purchased_value = collected.get(
+                "purchased_at", existing.purchased_at or context.current_time
+            )
+            purchased_at = (
+                datetime.fromisoformat(purchased_value)
+                if isinstance(purchased_value, str)
+                else purchased_value
+            )
+            if unit_price is None:
+                next_missing = "actual_unit_price"
+                await self._session.save(
+                    identity=identity,
+                    context=context,
+                    requirement_id=args.requirement_id,
+                    focused_role=RoleCode.PURCHASER,
+                    focused_field=next_missing,
+                    pending_field=next_missing,
+                    collected_data=collected,
+                )
                 return UpdatePurchaseExecutionDraftResult(
-                    status="NEED_MORE_INFORMATION", user_message="请补充实际单价和采购时间"
+                    status="NEED_MORE_INFORMATION",
+                    user_message="请补充实际采购单价",
                 )
             try:
                 unit_decimal = Decimal(str(unit_price))
                 quantity = Decimal(detail.applicant_fields.quantity or "0")
-                tax_rate = raw.get("tax_rate", existing.tax_rate)
+                tax_rate = collected.get("tax_rate", existing.tax_rate)
                 tax_decimal = Decimal(str(tax_rate)) if tax_rate is not None else None
                 if (
                     unit_decimal < 0
@@ -1274,19 +1532,17 @@ class UpdatePurchaseExecutionDraftTool:
                 )
             total = format(quantity * unit_decimal, "f")
             merged = {
-                "supplier_id": supplier_id,
-                "supplier_tax_number": raw.get("supplier_tax_number", existing.supplier_tax_number),
-                "bank_name": raw.get("bank_name", existing.bank_name),
-                "bank_account": raw.get("bank_account", existing.bank_account),
-                "registered_address": raw.get("registered_address", existing.registered_address),
-                "contract_contact_info": raw.get(
-                    "contract_contact_info", existing.contract_contact_info
-                ),
+                "supplier_id": supplier.supplier_id,
+                "supplier_tax_number": supplier.supplier_tax_number,
+                "bank_name": supplier.bank_name,
+                "bank_account": supplier.bank_account,
+                "registered_address": supplier.registered_address,
+                "contract_contact_info": supplier.contract_contact_info,
                 "actual_unit_price": str(unit_price),
                 "actual_total_price": total,
-                "tax_rate": raw.get("tax_rate", existing.tax_rate),
+                "tax_rate": collected.get("tax_rate", existing.tax_rate),
                 "purchased_at": purchased_at,
-                "purchase_remark": raw.get("purchase_remark", existing.purchase_remark),
+                "purchase_remark": collected.get("purchase_remark", existing.purchase_remark),
                 "update_supplier_profile": args.update_supplier_profile,
             }
             saved = await self._backend.update_purchase_fields(
@@ -1298,6 +1554,15 @@ class UpdatePurchaseExecutionDraftTool:
             latest = await self._backend.get_requirement(
                 identity=identity, requirement_id=args.requirement_id
             )
+            if session_exists:
+                await self._session.save(
+                    identity=identity,
+                    context=context,
+                    requirement_id=args.requirement_id,
+                    focused_role=RoleCode.PURCHASER,
+                    focused_field=None,
+                    pending_field=None,
+                )
             return UpdatePurchaseExecutionDraftResult(
                 status="SUCCESS",
                 requirement_id=args.requirement_id,
@@ -1311,6 +1576,54 @@ class UpdatePurchaseExecutionDraftTool:
             return UpdatePurchaseExecutionDraftResult(
                 status="CONCURRENT_MODIFICATION", user_message="版本已变化, 请重新确认"
             )
+
+
+async def _selected_supplier(
+    backend: BackendClient, identity: PlatformIdentity, detail: RequirementDetail
+) -> SupplierDetail | None:
+    """Resolve the selected supplier from backend facts, including legacy name-only reviews."""
+    purchase = detail.purchase_fields
+    purchase_name = (purchase.supplier_name or "").strip() if purchase is not None else ""
+    if purchase is not None and purchase.supplier_id is not None:
+        supplier = await backend.get_supplier(identity=identity, supplier_id=purchase.supplier_id)
+        if not purchase_name or supplier.supplier_name.strip() == purchase_name:
+            return supplier
+    if purchase_name:
+        page = await backend.search_suppliers(
+            identity=identity, keyword=purchase_name, page_size=20
+        )
+        exact = tuple(item for item in page.items if item.supplier_name.strip() == purchase_name)
+        if len(exact) == 1:
+            return await backend.get_supplier(identity=identity, supplier_id=exact[0].supplier_id)
+    review = detail.review_fields
+    if review is not None and review.proposed_supplier_id is not None:
+        return await backend.get_supplier(
+            identity=identity, supplier_id=review.proposed_supplier_id
+        )
+    name = (review.proposed_supplier_name or "").strip() if review is not None else ""
+    if not name:
+        records = await backend.list_purchase_records(
+            identity=identity,
+            requirement_no=detail.requirement_no,
+            page=1,
+            page_size=20,
+        )
+        exact_records = tuple(
+            item for item in records.items if item.requirement_no == detail.requirement_no
+        )
+        if len(exact_records) == 1 and exact_records[0].supplier_id is not None:
+            return await backend.get_supplier(
+                identity=identity, supplier_id=exact_records[0].supplier_id
+            )
+        if len(exact_records) == 1:
+            name = (exact_records[0].supplier_name or "").strip()
+    if not name:
+        return None
+    page = await backend.search_suppliers(identity=identity, keyword=name, page_size=20)
+    exact = tuple(item for item in page.items if item.supplier_name.strip() == name)
+    if len(exact) != 1:
+        return None
+    return await backend.get_supplier(identity=identity, supplier_id=exact[0].supplier_id)
 
 
 class UpdateWarehouseReceiptDraftArgs(StrictArgs):

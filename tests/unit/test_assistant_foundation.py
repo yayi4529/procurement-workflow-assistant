@@ -250,7 +250,7 @@ async def test_llm_draft_tool_call_asks_only_next_field() -> None:
 
     assert not isinstance(response, AssistantInteractionResponse)
     assert response.text.count("请问") == 1
-    assert "设备类型" in response.text
+    assert "设备专业" in response.text
     assert "待补充字段" not in response.text
     assert backend.call_counts["update_applicant_fields"] == 1
     assert len(llm.calls) == 1
@@ -569,6 +569,8 @@ def test_applicant_history_query_extracts_status_time_and_explicit_fields() -> N
         ("unit", "每批", None),
         ("brand", "品牌是华为", {"brand": "华为"}),
         ("model", "型号:R760", {"model": "R760"}),
+        ("device_profession", "1", {"device_profession": "暖通"}),
+        ("device_profession", "选择8", {"device_profession": "其他"}),
     ],
 )
 def test_pending_field_arguments_are_field_aware(
@@ -658,7 +660,7 @@ async def test_brand_missing_forces_history_recommendation_before_reply() -> Non
         external_message_id="m1",
     )
     assert isinstance(response, AssistantTextResponse)
-    assert "根据系统推荐" in response.text
+    assert "根据历史采购记录" in response.text
     assert response.text.count("华为") == 1
     assert "1. 华为" in response.text
     assert "2. H3C" in response.text
@@ -758,9 +760,9 @@ async def test_three_turn_llm_draft_flow_returns_confirmation_card() -> None:
     )
 
     assert isinstance(first, AssistantTextResponse)
-    assert "根据系统推荐" in first.text
+    assert "根据历史采购记录" in first.text
     assert isinstance(second, AssistantTextResponse)
-    assert "根据系统推荐" in second.text
+    assert "根据历史采购记录" in second.text
     assert isinstance(third, AssistantInteractionResponse)
     conversation = await backend.get_or_create_agent_conversation(
         identity=PlatformIdentity.create(PlatformType.FEISHU, "ou_test"),
@@ -784,3 +786,21 @@ async def test_three_turn_llm_draft_flow_returns_confirmation_card() -> None:
         unit="台",
         application_reason="机房制冷扩容",
     )
+
+
+def test_device_profession_followup_includes_ranked_history_recommendations() -> None:
+    result = UpdatePurchaseDraftResult(
+        status="SUCCESS",
+        updated_fields=("device_name",),
+        updated_values={"device_name": "空调机组"},
+        missing_fields=("device_profession",),
+        next_missing_field="device_profession",
+        device_profession_recommendations=("暖通", "电气"),
+    )
+
+    text = ApplicantAgent._draft_followup_text(result, None)
+
+    assert "1、暖通" in text
+    assert "2、电气" in text
+    assert "推荐优先选择" in text
+    assert "请回复序号选择" in text

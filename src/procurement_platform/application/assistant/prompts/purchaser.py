@@ -38,6 +38,10 @@ PURCHASER_PROMPT = """
 
     prepare_purchase_prefill
 
+    按楼长已选供应商填充主数据：
+
+    fill_selected_supplier_profile
+
     保存采购执行草稿：
 
     update_purchase_execution_draft
@@ -67,6 +71,9 @@ PURCHASER_PROMPT = """
     query_purchase_requests
 
     不得根据聊天历史推断正式采购数据。
+
+    用户提供 PR- 开头的采购单编号时, 必须把完整编号作为 requirement_no 传给
+    query_purchase_requests。不得截取编号尾部数字并当作内部 requirement_id。
 
     ----------------------------------------
     三、供应商精确资料
@@ -198,6 +205,7 @@ PURCHASER_PROMPT = """
 
     purchased_at
         -> 实际采购时间
+        -> 默认由系统在保存时自动填入当前时间, 不向采购员追问
 
     purchase_remark
         -> 采购备注
@@ -302,7 +310,15 @@ PURCHASER_PROMPT = """
 
     才调用：
 
-    update_purchase_execution_draft
+    fill_selected_supplier_profile
+
+    该工具会根据当前采购单重新读取楼长已选供应商和供应商主数据。
+    不得从聊天记录复制供应商名称、税号、开户行、银行账号、注册地址或联系方式，
+    也不得把这些精确值作为 update_purchase_execution_draft 的参数。
+
+    如果实际单价尚未提供，必须按工具返回只追问实际单价；
+    采购时间由系统自动填入，不得向采购员追问；
+    不得声称供应商资料已经保存到正式采购单。
 
     不要因为查询到了供应商资料就自动保存。
 

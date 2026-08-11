@@ -1,5 +1,6 @@
 from uuid import uuid4
 
+from procurement_platform.application.card_values import quantity_text
 from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.enums import RequirementStatus
 from procurement_platform.domain.interaction import (
@@ -17,7 +18,6 @@ from procurement_platform.domain.requirement import (
     HandlerCandidates,
     RequirementDetail,
     RequirementPage,
-    RequirementTransitionResult,
     SupplierDetail,
     SupplierPage,
 )
@@ -70,11 +70,10 @@ class PurchaserCardFactory:
                     KeyValueField(label="设备", value=detail.applicant_fields.device_name or "-"),
                     KeyValueField(
                         label="数量",
-                        value=f"{detail.applicant_fields.quantity or '-'} "
-                        f"{detail.applicant_fields.unit or ''}",
+                        value=f"{quantity_text(detail.applicant_fields.quantity)} "
+                        f"{detail.applicant_fields.unit or ''}".strip(),
                     ),
                     KeyValueField(label="状态", value=requirement_status_label(detail.status)),
-                    KeyValueField(label="版本", value=str(detail.version)),
                     KeyValueField(
                         label="成交供应商",
                         value=(
@@ -82,6 +81,43 @@ class PurchaserCardFactory:
                             if detail.review_fields and detail.review_fields.proposed_supplier_name
                             else "-"
                         ),
+                    ),
+                    KeyValueField(label="楼长", value=detail.review_manager_name or "-"),
+                    KeyValueField(label="楼长联系方式", value=detail.review_manager_mobile or "-"),
+                    KeyValueField(
+                        label="设备品牌/型号",
+                        value=f"{detail.applicant_fields.brand or '-'} / "
+                        f"{detail.applicant_fields.model or '-'}",
+                    ),
+                    KeyValueField(
+                        label="供应商联系人/联系方式",
+                        value=(
+                            f"{detail.review_fields.supplier_contact_name or '-'} / "
+                            f"{detail.review_fields.supplier_contact_info or '-'}"
+                            if detail.review_fields
+                            else "-"
+                        ),
+                    ),
+                    KeyValueField(
+                        label="预计单价",
+                        value=(
+                            f"{detail.review_fields.estimated_unit_price} 元"
+                            if detail.review_fields
+                            and detail.review_fields.estimated_unit_price is not None
+                            else "-"
+                        ),
+                    ),
+                    KeyValueField(
+                        label="付款方式",
+                        value=(detail.review_fields.payment_method or "-")
+                        if detail.review_fields
+                        else "-",
+                    ),
+                    KeyValueField(
+                        label="质保信息",
+                        value=(detail.review_fields.warranty_info or "-")
+                        if detail.review_fields
+                        else "-",
                     ),
                 )
             )
@@ -100,7 +136,11 @@ class PurchaserCardFactory:
                     purchase.supplier_tax_number if purchase else None,
                 ),
                 ("bank_name", "开户银行", purchase.bank_name if purchase else None),
-                ("bank_account", "银行账号", None),
+                (
+                    "bank_account",
+                    "银行账号",
+                    purchase.bank_account if purchase else None,
+                ),
                 (
                     "registered_address",
                     "注册地址",
@@ -261,12 +301,66 @@ class PurchaserCardFactory:
     def submit_confirmation(
         self, detail: RequirementDetail, employee_id: int, employee_name: str, token: str
     ) -> InteractionView:
-        account = detail.purchase_fields.bank_account if detail.purchase_fields else None
-        masked = f"****{account[-4:]}" if account and len(account) >= 4 else "-"
+        purchase = detail.purchase_fields
+        applicant = detail.applicant_fields
+        review = detail.review_fields
         return InteractionView(
             title="确认提交仓库",
             elements=(
-                MarkdownBlock(markdown=f"仓库管理员: {employee_name}\n\n银行账号: {masked}"),
+                KeyValueSection(
+                    fields=(
+                        KeyValueField(label="仓库管理员", value=employee_name),
+                        KeyValueField(label="设备名称", value=applicant.device_name or "-"),
+                        KeyValueField(
+                            label="设备品牌/型号",
+                            value=f"{applicant.brand or '-'} / {applicant.model or '-'}",
+                        ),
+                        KeyValueField(
+                            label="实际单价",
+                            value=f"{purchase.actual_unit_price} 元"
+                            if purchase and purchase.actual_unit_price
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="供应商名称",
+                            value=(review.proposed_supplier_name if review else None) or "-",
+                        ),
+                        KeyValueField(
+                            label="税率",
+                            value=f"{purchase.tax_rate}%"
+                            if purchase and purchase.tax_rate
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="统一社会信用代码",
+                            value=purchase.supplier_tax_number
+                            if purchase and purchase.supplier_tax_number
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="开户银行",
+                            value=purchase.bank_name if purchase and purchase.bank_name else "-",
+                        ),
+                        KeyValueField(
+                            label="银行账号",
+                            value=purchase.bank_account
+                            if purchase and purchase.bank_account
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="注册地址",
+                            value=purchase.registered_address
+                            if purchase and purchase.registered_address
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="合同联系人",
+                            value=purchase.contract_contact_info
+                            if purchase and purchase.contract_contact_info
+                            else "-",
+                        ),
+                    )
+                ),
             ),
             actions=(
                 ActionButton(
@@ -283,17 +377,75 @@ class PurchaserCardFactory:
             ),
         )
 
-    def result(self, result: RequirementTransitionResult) -> InteractionView:
+    def result(self, detail: RequirementDetail) -> InteractionView:
+        purchase = detail.purchase_fields
+        applicant = detail.applicant_fields
+        review = detail.review_fields
         return InteractionView(
             title="已提交仓库",
             elements=(
                 KeyValueSection(
                     fields=(
-                        KeyValueField(label="采购单编号", value=result.requirement_no),
-                        KeyValueField(label="状态", value=requirement_status_label(result.status)),
+                        KeyValueField(label="采购单编号", value=detail.requirement_no),
+                        KeyValueField(label="状态", value=requirement_status_label(detail.status)),
                         KeyValueField(
                             label="当前处理人",
-                            value=result.current_handler.name if result.current_handler else "-",
+                            value=detail.current_handler.name if detail.current_handler else "-",
+                        ),
+                        KeyValueField(label="设备名称", value=applicant.device_name or "-"),
+                        KeyValueField(
+                            label="设备品牌/型号",
+                            value=f"{applicant.brand or '-'} / {applicant.model or '-'}",
+                        ),
+                        KeyValueField(
+                            label="实际单价",
+                            value=f"{purchase.actual_unit_price} 元"
+                            if purchase and purchase.actual_unit_price
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="数量",
+                            value=(
+                                f"{quantity_text(applicant.quantity)} {applicant.unit or ''}"
+                            ).strip(),
+                        ),
+                        KeyValueField(
+                            label="供应商名称",
+                            value=(review.proposed_supplier_name if review else None) or "-",
+                        ),
+                        KeyValueField(
+                            label="税率",
+                            value=f"{purchase.tax_rate}%"
+                            if purchase and purchase.tax_rate
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="统一社会信用代码",
+                            value=purchase.supplier_tax_number
+                            if purchase and purchase.supplier_tax_number
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="开户银行",
+                            value=purchase.bank_name if purchase and purchase.bank_name else "-",
+                        ),
+                        KeyValueField(
+                            label="银行账号",
+                            value=purchase.bank_account
+                            if purchase and purchase.bank_account
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="注册地址",
+                            value=purchase.registered_address
+                            if purchase and purchase.registered_address
+                            else "-",
+                        ),
+                        KeyValueField(
+                            label="合同联系人",
+                            value=purchase.contract_contact_info
+                            if purchase and purchase.contract_contact_info
+                            else "-",
                         ),
                     )
                 ),

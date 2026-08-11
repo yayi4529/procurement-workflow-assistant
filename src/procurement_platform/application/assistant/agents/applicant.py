@@ -6,6 +6,7 @@ import re
 from typing import ClassVar
 
 from procurement_platform.application.applicant.card_factory import ApplicantCardFactory
+from procurement_platform.application.applicant.options import DEVICE_PROFESSION_OPTIONS
 from procurement_platform.application.assistant.agent_tools import (
     QueryPurchaseRequestsResult,
     RecommendProductOptionsResult,
@@ -382,6 +383,12 @@ class ApplicantAgent(BasicRoleAgent):
             )
         except LlmUnavailableError:
             return None
+        except Exception:
+            # The narrative is optional.  A successful deterministic backend
+            # query must still return its card when the best-effort LLM
+            # explanation fails (for example, an invalid/empty model turn).
+            logger.warning("Unable to generate purchase-history narrative", exc_info=True)
+            return None
 
         if turn.content is None:
             return None
@@ -613,6 +620,11 @@ class ApplicantAgent(BasicRoleAgent):
             )
             return {"unit": match.group(1)} if match else None
 
+        if pending_field == "device_profession":
+            selection_index = cls._selection_index(cleaned)
+            if selection_index is not None and selection_index <= len(DEVICE_PROFESSION_OPTIONS):
+                return {"device_profession": DEVICE_PROFESSION_OPTIONS[selection_index - 1]}
+
         if pending_field in {"device_profession", "device_name", "brand", "model"}:
             value = re.sub(
                 rf"^(?:{re.escape(cls._FIELD_LABELS[pending_field])})?(?:是|为|[:：])?\s*",
@@ -667,7 +679,11 @@ class ApplicantAgent(BasicRoleAgent):
     @classmethod
     def _selection_index(cls, text: str) -> int | None:
         normalized = cls._clean_user_value(text).replace(" ", "")
-        return cls._SELECTION_ALIASES.get(normalized)
+        aliased = cls._SELECTION_ALIASES.get(normalized)
+        if aliased is not None:
+            return aliased
+        match = re.fullmatch(r"(?:选(?:择)?|第)?([1-9]\d*)(?:个|项)?", normalized)
+        return int(match.group(1)) if match else None
 
     @classmethod
     def _is_cancel_intent(cls, text: str) -> bool:
@@ -722,6 +738,16 @@ class ApplicantAgent(BasicRoleAgent):
         next_field = result.next_missing_field
         label = cls._FIELD_LABELS.get(next_field or "", "下一项信息")
         question = cls._followup_question(next_field=next_field, label=label)
+
+        if next_field == "device_profession" and result.device_profession_recommendations:
+            recommendations = "、".join(
+                f"{DEVICE_PROFESSION_OPTIONS.index(value) + 1}、{value}"
+                for value in result.device_profession_recommendations
+            )
+            return (
+                f"{prefix}\n\n{question}\n\n"
+                f"根据同名设备的历史采购记录，推荐优先选择：{recommendations}。"
+            )
 
         if next_field not in cls._RECOMMENDABLE_FIELDS:
             return f"{prefix}\n\n{question}"
@@ -781,7 +807,11 @@ class ApplicantAgent(BasicRoleAgent):
         if next_field == "application_reason":
             return "请问本次采购的**申请原因**是什么呢？"
         if next_field == "device_profession":
-            return "请问该设备属于什么**设备类型**呢？"
+            options = " ".join(
+                f"{index}、{value}"
+                for index, value in enumerate(DEVICE_PROFESSION_OPTIONS, start=1)
+            )
+            return f"请问设备专业是？{options}。请回复序号选择。"
         if next_field == "device_name":
             return "请问您需要采购的**设备名称**是什么呢？"
         if next_field == "quantity":
@@ -817,7 +847,7 @@ class ApplicantAgent(BasicRoleAgent):
         recommendation: RecommendProductOptionsResult | None,
     ) -> str:
         if recommendation is None:
-            return "系统推荐"
+            return "历史采购记录"
 
         # Do not infer “采购白名单” merely because the missing field is brand.
         # The current candidate schema can expose purchase-history provenance;
@@ -826,7 +856,7 @@ class ApplicantAgent(BasicRoleAgent):
         sources = {item.source for item in recommendation.candidates}
         if sources == {"PURCHASE_HISTORY"}:
             return "历史采购记录"
-        return "系统推荐"
+        return "历史采购记录"
 
     async def _history_card_response(
         self,
@@ -865,7 +895,7 @@ class ApplicantAgent(BasicRoleAgent):
         return AssistantInteractionResponse(
             view=InteractionView(
                 title="我的采购申请",
-                subtitle="后端实时查询结果",
+                subtitle="实时查询结果",
                 elements=(MarkdownBlock(markdown="\n".join(lines)),),
                 actions=tuple(actions),
             )

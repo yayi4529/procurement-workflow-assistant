@@ -93,7 +93,38 @@ async def test_purchase_card_inherits_supplier_name_without_supplier_id_input() 
     view = await service.open_requirement(identity(), 1)
     serialized = str(view)
     assert "示例供应商" in serialized
+    assert "楼长联系方式" in serialized
+    assert "设备品牌/型号" in serialized
+    assert "供应商联系人/联系方式" in serialized
+    assert "预计单价" in serialized
+    assert "付款方式" in serialized
+    assert "质保信息" in serialized
     assert "supplier_id" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_purchase_card_keeps_existing_bank_account_as_form_default() -> None:
+    fake = backend()
+    service = PurchaserWorkflowService(fake)
+    await service.start_purchase(identity(), 1, 4, UUID("00000000-0000-0000-0000-000000000001"))
+    await service.save_purchase_fields(
+        identity(),
+        1,
+        5,
+        PurchaseFieldsPatch(
+            supplier_id=8,
+            bank_account="6222000012345678",
+            actual_unit_price="12.50",
+            purchased_at=datetime(2026, 7, 30, tzinfo=UTC),
+        ),
+    )
+
+    view = await service.open_requirement(identity(), 1)
+    bank_account = next(
+        element for element in view.elements if getattr(element, "name", None) == "bank_account"
+    )
+
+    assert bank_account.default_value == "6222000012345678"
 
 
 @pytest.mark.asyncio
@@ -124,6 +155,12 @@ async def test_no_llm_purchaser_flow_reaches_pending_warehouse() -> None:
     result = await service.confirm_submit_warehouse(identity(), 1, 6, 12, UUID(token))
     latest = await fake.get_requirement(identity=identity(), requirement_id=1)
     assert result.title == "已提交仓库"
+    rendered = str(result)
+    assert "设备品牌/型号" in rendered
+    assert "实际单价" in rendered
+    assert "数量" in rendered
+    assert "统一社会信用代码" in rendered
+    assert "银行账号" in rendered
     assert latest.status is RequirementStatus.PENDING_WAREHOUSE
     assert latest.purchase_fields is not None
     assert latest.purchase_fields.actual_total_price == "25.00"

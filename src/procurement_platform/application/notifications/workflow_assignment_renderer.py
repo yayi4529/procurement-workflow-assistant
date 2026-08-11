@@ -2,6 +2,8 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
+from procurement_platform.application.status_labels import requirement_status_label
+from procurement_platform.domain.enums import RequirementStatus
 from procurement_platform.domain.interaction import ActionButton, InteractionView, MarkdownBlock
 from procurement_platform.domain.notification import (
     InteractionNotification,
@@ -47,6 +49,10 @@ class WorkflowAssignmentRenderer:
 
     def render(self, request: NotificationGatewayRequest) -> InteractionNotification:
         payload = WorkflowAssignmentPayload.model_validate(request.payload)
+        try:
+            status = requirement_status_label(RequirementStatus(payload.status))
+        except ValueError:
+            status = payload.status
         title, message, button_label, action_id = self._metadata[self.event_type]
         return InteractionNotification(
             view=InteractionView(
@@ -56,7 +62,7 @@ class WorkflowAssignmentRenderer:
                         markdown=(
                             f"{message}\n\n"
                             f"**采购单编号:** {payload.requirement_no}\n"
-                            f"**当前状态:** {payload.status}"
+                            f"**当前状态:** {status}"
                         )
                     ),
                 ),

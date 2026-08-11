@@ -154,15 +154,30 @@ def test_development_notification_is_strict_and_marked() -> None:
 
 
 @pytest.mark.parametrize(
-    ("event_type", "status", "action_id"),
+    ("event_type", "status", "status_label", "action_id"),
     (
-        ("REQUIREMENT_PENDING_REVIEW", "PENDING_REVIEW", "building_manager.open_requirement"),
-        ("REQUIREMENT_PENDING_PURCHASE", "PENDING_PURCHASE", "purchaser.open_requirement"),
-        ("REQUIREMENT_PENDING_WAREHOUSE", "PENDING_WAREHOUSE", "warehouse.open_requirement"),
+        (
+            "REQUIREMENT_PENDING_REVIEW",
+            "PENDING_REVIEW",
+            "待楼长审核",
+            "building_manager.open_requirement",
+        ),
+        (
+            "REQUIREMENT_PENDING_PURCHASE",
+            "PENDING_PURCHASE",
+            "待采购",
+            "purchaser.open_requirement",
+        ),
+        (
+            "REQUIREMENT_PENDING_WAREHOUSE",
+            "PENDING_WAREHOUSE",
+            "待入库",
+            "warehouse.open_requirement",
+        ),
     ),
 )
 def test_workflow_assignment_notification_opens_the_correct_role_card(
-    event_type: str, status: str, action_id: str
+    event_type: str, status: str, status_label: str, action_id: str
 ) -> None:
     renderer = WorkflowAssignmentRenderer(event_type)
     result = renderer.render(
@@ -176,6 +191,8 @@ def test_workflow_assignment_notification_opens_the_correct_role_card(
         )
     )
     assert isinstance(result, InteractionNotification)
+    assert status_label in str(result.view)
+    assert status not in str(result.view)
     assert result.view.actions[0].action_id == action_id
     assert result.view.actions[0].value == {"requirement_id": 1}
 

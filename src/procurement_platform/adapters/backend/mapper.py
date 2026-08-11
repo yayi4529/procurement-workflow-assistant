@@ -20,6 +20,7 @@ from procurement_platform.adapters.backend.dto import (
     BackendSupplierDetailDTO,
     BackendSupplierPageDTO,
     BackendSupplierRecommendationsDTO,
+    BackendTimelineContactDTO,
     BackendTimelineDTO,
 )
 from procurement_platform.domain.assistant_session import (
@@ -59,6 +60,7 @@ from procurement_platform.domain.requirement import (
     SupplierRecommendation,
     SupplierRecommendations,
     SupplierSummary,
+    TimelineContact,
     TimelineItem,
     WarehouseFields,
 )
@@ -187,6 +189,7 @@ def map_requirement_detail(dto: BackendRequirementDetailDTO) -> RequirementDetai
         purchase_fields=(
             PurchaseFields(
                 supplier_id=purchase.supplier_id,
+                supplier_name=purchase.supplier_name,
                 supplier_tax_number=purchase.supplier_tax_number,
                 bank_name=purchase.bank_name,
                 bank_account=purchase.bank_account,
@@ -254,16 +257,22 @@ def map_requirement_timeline(dto: BackendTimelineDTO) -> RequirementTimeline:
                 action_type=item.action_type,
                 operator_name=item.operator_name,
                 operator_role_name=item.operator_role_name,
+                operator_mobile_masked=item.operator_mobile_masked,
                 from_status=item.from_status,
                 to_status=item.to_status,
                 assigned_to_employee_id=item.assigned_to_employee_id,
                 assigned_to_name=item.assigned_to_name,
+                assigned_to_mobile_masked=item.assigned_to_mobile_masked,
                 operation_summary=item.operation_summary,
                 operated_at=item.operated_at,
             )
             for item in dto.items
         )
     )
+
+
+def map_timeline_contact(dto: BackendTimelineContactDTO) -> TimelineContact:
+    return TimelineContact(employee_name=dto.employee_name, mobile=dto.mobile)
 
 
 def map_purchase_record_page(dto: BackendPurchaseRecordPageDTO) -> PurchaseRecordPage:

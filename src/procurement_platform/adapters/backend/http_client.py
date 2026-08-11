@@ -25,6 +25,7 @@ from procurement_platform.adapters.backend.dto import (
     BackendSupplierDetailDTO,
     BackendSupplierPageDTO,
     BackendSupplierRecommendationsDTO,
+    BackendTimelineContactDTO,
     BackendTimelineDTO,
 )
 from procurement_platform.adapters.backend.error_mapping import map_backend_error
@@ -49,6 +50,7 @@ from procurement_platform.adapters.backend.mapper import (
     map_supplier_detail,
     map_supplier_page,
     map_supplier_recommendations,
+    map_timeline_contact,
 )
 from procurement_platform.adapters.backend.transport import SignedBackendTransport
 from procurement_platform.domain.assistant_session import (
@@ -90,6 +92,7 @@ from procurement_platform.domain.requirement import (
     SupplierRecommendations,
     SupplierSummary,
     SupplierUpsertCommand,
+    TimelineContact,
     WarehouseFieldsPatch,
 )
 from procurement_platform.domain.user import CurrentUser
@@ -231,6 +234,25 @@ class HttpBackendClient:
             identity=identity,
         )
         return map_requirement_timeline(dto)
+
+    async def get_timeline_contact(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        log_id: int,
+        subject: str = "operator",
+    ) -> TimelineContact:
+        if subject not in {"operator", "assignee"}:
+            raise ValueError("unsupported timeline contact subject")
+        dto = await self._request_model(
+            BackendTimelineContactDTO,
+            method="GET",
+            path=f"/api/v1/requirements/{requirement_id}/timeline/{log_id}/contact",
+            identity=identity,
+            query={"subject": subject},
+        )
+        return map_timeline_contact(dto)
 
     async def list_purchase_records(
         self,

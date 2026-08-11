@@ -36,6 +36,10 @@ class PurchasePrefillNotificationProvider(Protocol):
     ) -> InteractionNotification | None: ...
 
 
+class PendingReviewNotificationProvider(Protocol):
+    async def render(self, request: NotificationGatewayRequest) -> InteractionNotification: ...
+
+
 class NotificationGatewayService:
     def __init__(
         self,
@@ -45,12 +49,14 @@ class NotificationGatewayService:
         renderer_registry: NotificationRendererRegistry,
         bearer_token: str | None,
         purchase_prefill_provider: PurchasePrefillNotificationProvider | None = None,
+        pending_review_provider: PendingReviewNotificationProvider | None = None,
     ) -> None:
         self._channel = channel_client
         self._store = delivery_store
         self._registry = renderer_registry
         self._bearer_token = bearer_token
         self._purchase_prefill_provider = purchase_prefill_provider
+        self._pending_review_provider = pending_review_provider
         self._logger = logging.getLogger(__name__)
 
     async def deliver(
@@ -124,6 +130,18 @@ class NotificationGatewayService:
         self, request: NotificationGatewayRequest
     ) -> TextNotification | InteractionNotification:
         fallback = self._registry.resolve(request.event_type).render(request)
+        if (
+            request.event_type == "REQUIREMENT_PENDING_REVIEW"
+            and self._pending_review_provider is not None
+        ):
+            try:
+                return await self._pending_review_provider.render(request)
+            except Exception as exc:
+                self._logger.warning(
+                    "pending_review_notification_fallback",
+                    extra={"error_code": type(exc).__name__},
+                )
+                return fallback
         if (
             request.event_type != "REQUIREMENT_PENDING_PURCHASE"
             or self._purchase_prefill_provider is None

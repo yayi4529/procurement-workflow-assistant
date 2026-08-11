@@ -6,7 +6,12 @@ from procurement_platform.adapters.backend.fake_client import FakeBackendClient
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
 from procurement_platform.domain.enums import PlatformType, RequirementStatus, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
-from procurement_platform.domain.interaction import MarkdownBlock, SelectInput, TextInput
+from procurement_platform.domain.interaction import (
+    KeyValueSection,
+    MarkdownBlock,
+    SelectInput,
+    TextInput,
+)
 from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     HandlerCandidate,
@@ -46,6 +51,13 @@ async def test_no_llm_applicant_flow_reaches_pending_review() -> None:
     service = ApplicantWorkflowService(fake)
     draft_view = await service.start_new(identity())
     assert draft_view.title == "采购申请详情"
+    draft_summary = next(
+        element for element in draft_view.elements if isinstance(element, KeyValueSection)
+    )
+    draft_fields = {field.label: field.value for field in draft_summary.fields}
+    assert draft_fields["申请人"] == "申请人"
+    assert len(draft_fields["申请时间"]) == 10
+    assert "版本" not in draft_fields
     assert fake.call_counts["create_requirement"] == 1
     assert fake.call_counts["get_requirement"] == 1
     draft = await fake.create_requirement(identity=identity(), building_id=1)
@@ -70,6 +82,12 @@ async def test_no_llm_applicant_flow_reaches_pending_review() -> None:
     confirmation = await service.confirm_handler(
         identity(), draft.requirement_id, 9, resubmit=False
     )
+    confirmation_summary = next(
+        element for element in confirmation.elements if isinstance(element, KeyValueSection)
+    )
+    confirmation_fields = {field.label: field.value for field in confirmation_summary.fields}
+    assert confirmation_fields["申请人"] == "申请人"
+    assert len(confirmation_fields["申请时间"]) == 10
     button = confirmation.actions[0]
     token = button.value["action_token"]
     assert isinstance(token, str)
@@ -83,6 +101,24 @@ async def test_no_llm_applicant_flow_reaches_pending_review() -> None:
     )
     latest = await fake.get_requirement(identity=identity(), requirement_id=draft.requirement_id)
     assert result.title == "提交成功"
+    success_summary = next(
+        element for element in result.elements if isinstance(element, KeyValueSection)
+    )
+    success_fields = {field.label: field.value for field in success_summary.fields}
+    assert success_fields["采购单编号"].startswith("PR-")
+    assert success_fields["设备名称"] == "硬盘"
+    assert success_fields["申请人"] == "申请人"
+    assert "版本" not in success_fields
+    readonly_view = await service.open(identity(), draft.requirement_id)
+    readonly_summary = next(
+        element for element in readonly_view.elements if isinstance(element, KeyValueSection)
+    )
+    readonly_fields = {field.label: field.value for field in readonly_summary.fields}
+    assert readonly_fields["设备专业"] == "服务器"
+    assert readonly_fields["设备名称"] == "硬盘"
+    assert readonly_fields["数量和单位"] == "5 块"
+    assert readonly_fields["需求原因"] == "故障替换"
+    assert "版本" not in readonly_fields
     assert latest.status is RequirementStatus.PENDING_REVIEW
     assert fake.call_counts["submit_review"] == 1
     assert fake.call_counts["resubmit_review"] == 0

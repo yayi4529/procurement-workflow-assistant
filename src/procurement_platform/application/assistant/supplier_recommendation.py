@@ -1,6 +1,7 @@
 """Building-manager supplier recommendation tool for the optional assistant."""
 
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -41,6 +42,9 @@ class SupplierRecommendationCandidate(BaseModel):
     historical_purchase_count: int
     last_purchase_at: datetime
     blacklist_status: str
+    supplier_contact_name: str | None = None
+    supplier_contact_info: str | None = None
+    historical_unit_prices: tuple[str, ...] = ()
 
 
 class RecommendSuppliersForRequirementResult(AssistantToolResult):
@@ -153,8 +157,9 @@ class RecommendSuppliersForRequirementTool:
                     break
                 page += 1
 
-            grouped: dict[int, list[datetime]] = {}
+            grouped: dict[int, list[tuple[datetime, str | None]]] = {}
             supplier_names: dict[int, str] = {}
+            supplier_contacts: dict[int, tuple[str | None, str | None]] = {}
             for record in records:
                 if (
                     record.status
@@ -164,11 +169,36 @@ class RecommendSuppliersForRequirementTool:
                     or record.supplier_name is None
                 ):
                     continue
-                grouped.setdefault(record.supplier_id, []).append(record.purchased_at)
+                unit_price = self._unit_price(record.actual_total_price, record.quantity)
+                grouped.setdefault(record.supplier_id, []).append(
+                    (
+                        record.purchased_at,
+                        (
+                            f"{record.purchased_at.date().isoformat()}: {unit_price}"
+                            if unit_price is not None
+                            else None
+                        ),
+                    )
+                )
                 supplier_names[record.supplier_id] = record.supplier_name
+                try:
+                    historical_detail = await self._backend_client.get_requirement(
+                        identity=identity, requirement_id=record.requirement_id
+                    )
+                except BackendApplicationError:
+                    historical_detail = None
+                if historical_detail is not None and historical_detail.review_fields is not None:
+                    review = historical_detail.review_fields
+                    old_name, old_info = supplier_contacts.get(record.supplier_id, (None, None))
+                    supplier_contacts[record.supplier_id] = (
+                        old_name or review.supplier_contact_name,
+                        old_info or review.supplier_contact_info,
+                    )
 
             matched: list[SupplierRecommendationCandidate] = []
-            for supplier_id, purchase_dates in grouped.items():
+            for supplier_id, purchases in grouped.items():
+                if not purchases:
+                    continue
                 supplier = await self._backend_client.get_supplier(
                     identity=identity, supplier_id=supplier_id
                 )
@@ -179,9 +209,17 @@ class RecommendSuppliersForRequirementTool:
                         candidate_ref=f"supplier:{supplier_id}",
                         supplier_id=supplier_id,
                         supplier_name=supplier.supplier_name or supplier_names[supplier_id],
-                        historical_purchase_count=len(purchase_dates),
-                        last_purchase_at=max(purchase_dates),
+                        historical_purchase_count=len(purchases),
+                        last_purchase_at=max(item[0] for item in purchases),
                         blacklist_status="NORMAL",
+                        supplier_contact_name=supplier_contacts.get(supplier_id, (None, None))[0],
+                        supplier_contact_info=(
+                            supplier_contacts.get(supplier_id, (None, None))[1]
+                            or supplier.contract_contact_info
+                        ),
+                        historical_unit_prices=tuple(
+                            item[1] for item in purchases if item[1] is not None
+                        ),
                     )
                 )
             matched.sort(
@@ -219,3 +257,13 @@ class RecommendSuppliersForRequirementTool:
             return RecommendSuppliersForRequirementResult(
                 status="BACKEND_UNAVAILABLE", user_message="供应商推荐暂时不可用"
             )
+
+    @staticmethod
+    def _unit_price(total: str | None, quantity: str | None) -> str | None:
+        if total is None or quantity is None:
+            return None
+        try:
+            value = Decimal(total) / Decimal(quantity)
+        except (InvalidOperation, ZeroDivisionError):
+            return None
+        return format(value.quantize(Decimal("0.01")), "f")

@@ -8,6 +8,7 @@ ROLE_TOOLS: dict[RoleCode, frozenset[str]] = {
     RoleCode.BUILDING_MANAGER: frozenset(
         {
             "query_purchase_requests",
+            "query_supplier_profile",
             "recommend_suppliers_for_requirement",
             "update_review_draft",
         }
@@ -17,6 +18,7 @@ ROLE_TOOLS: dict[RoleCode, frozenset[str]] = {
             "query_purchase_requests",
             "query_supplier_profile",
             "prepare_purchase_prefill",
+            "fill_selected_supplier_profile",
             "update_purchase_execution_draft",
         }
     ),
