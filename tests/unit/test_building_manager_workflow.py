@@ -25,6 +25,8 @@ from procurement_platform.domain.requirement import (
     RequirementDetail,
     RequirementHandler,
     ReviewFieldsPatch,
+    SupplierBlacklistSummary,
+    SupplierDetail,
 )
 from procurement_platform.domain.user import CurrentUser, UserBuilding, UserRole
 
@@ -163,3 +165,52 @@ async def test_contract_type_is_conditionally_required_and_null_is_explicit() ->
     detail = await fake.get_requirement(identity=identity(), requirement_id=1)
     assert detail.review_fields is not None
     assert detail.review_fields.contract_type is None
+
+
+@pytest.mark.asyncio
+async def test_review_save_synchronizes_exact_supplier_name_and_id() -> None:
+    fake = backend()
+    fake.seed_supplier(
+        SupplierDetail(
+            supplier_id=18,
+            supplier_name="森赫新材料(大连)有限公司",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    service = BuildingManagerWorkflowService(fake)
+
+    await service.save_review_fields(
+        identity(),
+        1,
+        2,
+        ReviewFieldsPatch(
+            proposed_supplier_id=10,
+            proposed_supplier_name="森赫新材料(大连)有限公司",
+        ),
+    )
+
+    detail = await fake.get_requirement(identity=identity(), requirement_id=1)
+    assert detail.review_fields is not None
+    assert detail.review_fields.proposed_supplier_id == 18
+    assert detail.review_fields.proposed_supplier_name == "森赫新材料(大连)有限公司"
+
+
+@pytest.mark.asyncio
+async def test_review_save_clears_stale_supplier_id_for_unmatched_name() -> None:
+    fake = backend()
+    service = BuildingManagerWorkflowService(fake)
+
+    await service.save_review_fields(
+        identity(),
+        1,
+        2,
+        ReviewFieldsPatch(
+            proposed_supplier_id=10,
+            proposed_supplier_name="临时供应商",
+        ),
+    )
+
+    detail = await fake.get_requirement(identity=identity(), requirement_id=1)
+    assert detail.review_fields is not None
+    assert detail.review_fields.proposed_supplier_id is None
+    assert detail.review_fields.proposed_supplier_name == "临时供应商"

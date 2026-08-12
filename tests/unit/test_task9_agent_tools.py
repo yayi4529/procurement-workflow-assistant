@@ -36,6 +36,7 @@ from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
 from procurement_platform.domain.assistant import (
     AssistantInteractionResponse,
+    AssistantTextResponse,
     AssistantToolContext,
 )
 from procurement_platform.domain.assistant_session import (
@@ -83,7 +84,12 @@ def identity(role: RoleCode) -> PlatformIdentity:
     return PlatformIdentity(PlatformType.FEISHU, f"ou_{role.value.lower()}", "request")
 
 
-def context(role: RoleCode, *, conversation_id: int = 1) -> AssistantToolContext:
+def context(
+    role: RoleCode,
+    *,
+    conversation_id: int = 1,
+    active_requirement_id: int | None = None,
+) -> AssistantToolContext:
     return AssistantToolContext(
         platform_type="FEISHU",
         platform_user_id=f"ou_{role.value.lower()}",
@@ -93,6 +99,7 @@ def context(role: RoleCode, *, conversation_id: int = 1) -> AssistantToolContext
         current_time=datetime(2026, 8, 3, 12, tzinfo=UTC),
         timezone_name="Asia/Shanghai",
         current_user=user(role),
+        active_requirement_id=active_requirement_id,
     )
 
 
@@ -136,6 +143,8 @@ def detail(
     ("expression", "start", "end"),
     [
         ("昨天", "2026-08-02", "2026-08-03"),
+        ("周一", "2026-08-03", "2026-08-04"),
+        ("星期日", "2026-08-02", "2026-08-03"),
         ("上周三", "2026-07-29", "2026-07-30"),
         ("上周", "2026-07-27", "2026-08-03"),
         ("本月", "2026-08-01", "2026-09-01"),
@@ -264,6 +273,36 @@ async def test_query_purchase_requests_uses_backend_time_filter_and_returns_late
     assert client.call_counts["list_purchase_records"] == 1
     assert client.call_counts["get_requirement"] == 1
     assert result.total_count is None
+
+
+@pytest.mark.asyncio
+async def test_query_purchase_requests_compares_naive_backend_business_time_in_local_timezone() -> (
+    None
+):
+    client = FakeBackendClient(user(RoleCode.APPLICANT))
+    client.seed_requirement(detail(RoleCode.APPLICANT, RequirementStatus.PENDING_REVIEW))
+    client.purchase_records.append(
+        PurchaseRecord(
+            requirement_id=1,
+            requirement_no="PR-1",
+            device_name="服务器",
+            status=RequirementStatus.PENDING_REVIEW,
+            created_at=datetime(2026, 8, 2, 9),
+            submitted_at=datetime(2026, 8, 2, 10),
+        )
+    )
+
+    result = await QueryPurchaseRequestsTool(client).execute(
+        args=QueryPurchaseRequestsArgs(
+            operation="SEARCH",
+            time_expression="昨天",
+            time_field="SUBMITTED_AT",
+        ),
+        context=context(RoleCode.APPLICANT),
+    )
+
+    assert result.status == "SUCCESS"
+    assert result.requirement_id == 1
 
 
 @pytest.mark.asyncio
@@ -820,7 +859,7 @@ async def test_supplier_profile_resolves_name_only_supplier_from_requirement() -
     result = await QuerySupplierProfileTool(client).execute(
         args=QuerySupplierProfileArgs(
             requirement_id=1,
-            requested_fields=("BANK_NAME", "BLACKLIST_STATUS"),
+            requested_fields=("BANK_NAME",),
         ),
         context=context(RoleCode.PURCHASER),
     )
@@ -832,13 +871,13 @@ async def test_supplier_profile_resolves_name_only_supplier_from_requirement() -
 
 
 @pytest.mark.asyncio
-async def test_supplier_profile_prefers_actual_supplier_over_review_proposal() -> None:
+async def test_supplier_profile_uses_review_name_when_purchase_supplier_id_is_stale() -> None:
     client = FakeBackendClient(user(RoleCode.PURCHASER))
     requirement = detail(RoleCode.PURCHASER, RequirementStatus.PURCHASING).model_copy(
         update={
             "review_fields": ReviewFields(
                 proposed_supplier_id=10,
-                proposed_supplier_name="南京池润信息科技有限公司",
+                proposed_supplier_name="森赫新材料(大连)有限公司",
             ),
             "purchase_fields": PurchaseFields(supplier_id=11),
         }
@@ -847,8 +886,8 @@ async def test_supplier_profile_prefers_actual_supplier_over_review_proposal() -
     client.seed_supplier(
         SupplierDetail(
             supplier_id=10,
-            supplier_name="南京池润信息科技有限公司",
-            bank_name="南京银行",
+            supplier_name="森赫新材料(大连)有限公司",
+            bank_name="大连银行",
             blacklist=SupplierBlacklistSummary(active=False),
         )
     )
@@ -870,9 +909,9 @@ async def test_supplier_profile_prefers_actual_supplier_over_review_proposal() -
     )
 
     assert result.status == "SUCCESS"
-    assert result.supplier_id == 11
-    assert result.supplier_name == "上海亿清"
-    assert "上海银行" in (result.rendered_text or "")
+    assert result.supplier_id == 10
+    assert result.supplier_name == "森赫新材料(大连)有限公司"
+    assert "大连银行" in (result.rendered_text or "")
 
 
 @pytest.mark.asyncio
@@ -959,6 +998,99 @@ async def test_supplier_profile_falls_back_to_purchase_record_supplier_id() -> N
     assert result.supplier_id == 10
     assert client.call_counts["list_purchase_records"] == 1
     assert client.call_counts["search_suppliers"] == 0
+
+
+@pytest.mark.asyncio
+async def test_purchaser_can_query_any_named_supplier_bank_details() -> None:
+    client = FakeBackendClient(user(RoleCode.PURCHASER))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
+    )
+    client.seed_supplier(
+        SupplierDetail(
+            supplier_id=16,
+            supplier_name="上海亿清",
+            bank_name="测试银行南京数据中心支行16",
+            bank_account="TEST-ACCT-00000016",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    client.seed_supplier(
+        SupplierDetail(
+            supplier_id=6,
+            supplier_name="森赫新材料(大连)有限公司",
+            bank_name="大连银行",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(QuerySupplierProfileTool(client))
+    agent = PurchaserAgent(
+        AssistantSessionService(client),
+        ToolExecutor(registry, max_result_chars=10_000),
+        client,
+    )
+
+    response = await agent.before_run(
+        context=context(
+            RoleCode.PURCHASER,
+            conversation_id=conversation.conversation_id,
+            active_requirement_id=1,
+        ),
+        history=(),
+        user_text="上海亿清的开户行和银行账号是多少",
+        external_message_id="om-named-supplier-bank",
+    )
+
+    assert isinstance(response, AssistantTextResponse)
+    assert "供应商: 上海亿清" in response.text
+    assert "开户行: 测试银行南京数据中心支行16" in response.text
+    assert "银行账号: TEST-ACCT-00000016" in response.text
+    assert "森赫新材料" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "user_text",
+    (
+        "回复 张三: 上海亿清的开户行和银行账号是多少",
+        "帮我查上海亿清开户行和银行账号",
+    ),
+)
+async def test_named_supplier_query_accepts_reply_prefix_and_omitted_de(
+    user_text: str,
+) -> None:
+    client = FakeBackendClient(user(RoleCode.PURCHASER))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
+    )
+    client.seed_supplier(
+        SupplierDetail(
+            supplier_id=16,
+            supplier_name="上海亿清",
+            bank_name="上海银行",
+            bank_account="SH-ACCOUNT",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(QuerySupplierProfileTool(client))
+    agent = PurchaserAgent(
+        AssistantSessionService(client),
+        ToolExecutor(registry, max_result_chars=10_000),
+        client,
+    )
+
+    response = await agent.before_run(
+        context=context(RoleCode.PURCHASER, conversation_id=conversation.conversation_id),
+        history=(),
+        user_text=user_text,
+        external_message_id="om-named-supplier-variant",
+    )
+
+    assert isinstance(response, AssistantTextResponse)
+    assert "供应商: 上海亿清" in response.text
+    assert "银行账号: SH-ACCOUNT" in response.text
 
 
 @pytest.mark.asyncio
@@ -1254,6 +1386,200 @@ async def test_purchaser_open_requirement_number_returns_formal_card_without_llm
     assert fill_response is not None
     assert getattr(fill_response, "text", "").find("实际采购单价") >= 0
     assert client.call_counts["list_purchase_records"] == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_requirement_number_overrides_stale_supplier_focus() -> None:
+    client = FakeBackendClient(user(RoleCode.PURCHASER))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
+    )
+    stale = detail(RoleCode.PURCHASER, RequirementStatus.PURCHASING, requirement_id=1)
+    target = detail(RoleCode.PURCHASER, RequirementStatus.PURCHASING, requirement_id=2).model_copy(
+        update={
+            "requirement_no": "PR-20260811-5FF01FBA",
+            "purchase_fields": PurchaseFields(supplier_id=11, supplier_name="上海亿清"),
+        }
+    )
+    client.seed_requirement(stale)
+    client.seed_requirement(target)
+    client.seed_supplier(
+        SupplierDetail(
+            supplier_id=10,
+            supplier_name="南京池润信息科技有限公司",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    client.seed_supplier(
+        SupplierDetail(
+            supplier_id=11,
+            supplier_name="上海亿清",
+            bank_name="上海银行",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    client.purchase_records.append(
+        PurchaseRecord(
+            requirement_id=2,
+            requirement_no="PR-20260811-5FF01FBA",
+            device_name="保险丝",
+            status=RequirementStatus.PURCHASING,
+            created_at=datetime(2026, 8, 11, tzinfo=UTC),
+        )
+    )
+    await client.update_agent_state(
+        identity=identity(RoleCode.PURCHASER),
+        conversation_id=conversation.conversation_id,
+        state=AgentSessionStateUpdate(purchase_request_id=1),
+    )
+    registry = ToolRegistry()
+    registry.register(QuerySupplierProfileTool(client))
+    agent = PurchaserAgent(
+        AssistantSessionService(client),
+        ToolExecutor(registry, max_result_chars=10_000),
+        client,
+    )
+
+    response = await agent.before_run(
+        context=context(RoleCode.PURCHASER, conversation_id=conversation.conversation_id),
+        history=(),
+        user_text="PR-20260811-5FF01FBA的供应商信息有吗",
+        external_message_id="om-explicit-supplier",
+    )
+
+    assert isinstance(response, AssistantTextResponse)
+    assert "上海亿清" in response.text
+    assert "南京池润" not in response.text
+    state = await client.get_agent_state(
+        identity=identity(RoleCode.PURCHASER),
+        conversation_id=conversation.conversation_id,
+    )
+    assert state.purchase_request_id == 2
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_this_requirement_does_not_use_stale_supplier_focus() -> None:
+    client = FakeBackendClient(user(RoleCode.PURCHASER))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
+    )
+    stale = detail(RoleCode.PURCHASER, RequirementStatus.PURCHASING, requirement_id=1)
+    client.seed_requirement(stale)
+    await client.update_agent_state(
+        identity=identity(RoleCode.PURCHASER),
+        conversation_id=conversation.conversation_id,
+        state=AgentSessionStateUpdate(purchase_request_id=1),
+    )
+    registry = ToolRegistry()
+    registry.register(QuerySupplierProfileTool(client))
+    agent = PurchaserAgent(
+        AssistantSessionService(client),
+        ToolExecutor(registry, max_result_chars=10_000),
+        client,
+    )
+
+    response = await agent.before_run(
+        context=context(RoleCode.PURCHASER, conversation_id=conversation.conversation_id),
+        history=(),
+        user_text="这个采购单的供应商信息",
+        external_message_id="om-ambiguous-supplier",
+    )
+
+    assert isinstance(response, AssistantTextResponse)
+    assert "完整采购单编号" in response.text
+    assert client.call_counts["get_requirement"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fill_this_purchase_order_uses_latest_explicit_focus() -> None:
+    client = FakeBackendClient(user(RoleCode.PURCHASER))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
+    )
+    target = detail(RoleCode.PURCHASER, RequirementStatus.PURCHASING, requirement_id=2).model_copy(
+        update={
+            "requirement_no": "PR-20260811-5FF01FBA",
+            "purchase_fields": PurchaseFields(
+                supplier_id=11,
+                supplier_name="上海亿清",
+                actual_unit_price="100",
+            ),
+        }
+    )
+    client.seed_requirement(target)
+    client.seed_supplier(
+        SupplierDetail(
+            supplier_id=11,
+            supplier_name="上海亿清",
+            bank_name="上海银行",
+            bank_account="SH-ACCOUNT",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    client.purchase_records.append(
+        PurchaseRecord(
+            requirement_id=2,
+            requirement_no="PR-20260811-5FF01FBA",
+            device_name="保险丝",
+            status=RequirementStatus.PURCHASING,
+            created_at=datetime(2026, 8, 11, tzinfo=UTC),
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(QuerySupplierProfileTool(client))
+    registry.register(FillSelectedSupplierProfileTool(client))
+    registry.register(UpdatePurchaseExecutionDraftTool(client))
+    agent = PurchaserAgent(
+        AssistantSessionService(client),
+        ToolExecutor(registry, max_result_chars=10_000),
+        client,
+    )
+
+    await agent.before_run(
+        context=context(RoleCode.PURCHASER, conversation_id=conversation.conversation_id),
+        history=(),
+        user_text="PR-20260811-5FF01FBA",
+        external_message_id="om-focus",
+    )
+    response = await agent.before_run(
+        context=context(RoleCode.PURCHASER, conversation_id=conversation.conversation_id),
+        history=(),
+        user_text="帮我把这个供应商的信息填入这个采购单",
+        external_message_id="om-fill-current",
+    )
+
+    assert isinstance(response, AssistantInteractionResponse)
+    saved = client._requirements[2].purchase_fields
+    assert saved is not None
+    assert saved.supplier_id == 11
+    assert saved.bank_account == "SH-ACCOUNT"
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "帮我把这个供应商的信息填入这个采购单",
+        "把上述资料同步到当前单据里面",
+        "这个供应商资料帮我录入一下这张单",
+        "将这些信息写进采购申请",
+        "该供应商的信息保存到PR-20260811-5FF01FBA",
+    ),
+)
+def test_supplier_profile_fill_intent_accepts_natural_word_order(text: str) -> None:
+    assert PurchaserAgent._is_supplier_profile_fill_request(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "这个采购单的供应商信息有吗",
+        "查询供应商资料",
+        "把实际单价填入采购单",
+        "保存这个采购单",
+    ),
+)
+def test_supplier_profile_fill_intent_rejects_queries_and_other_fields(text: str) -> None:
+    assert not PurchaserAgent._is_supplier_profile_fill_request(text)
 
 
 @pytest.mark.asyncio

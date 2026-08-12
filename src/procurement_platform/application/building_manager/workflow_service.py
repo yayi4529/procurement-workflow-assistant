@@ -84,6 +84,7 @@ class BuildingManagerWorkflowService:
         fields: ReviewFieldsPatch,
     ) -> InteractionView:
         try:
+            fields = await self._synchronize_supplier_reference(identity, fields)
             saved = await self._backend.update_review_fields(
                 identity=identity,
                 requirement_id=requirement_id,
@@ -100,6 +101,34 @@ class BuildingManagerWorkflowService:
         except ConcurrentModificationError:
             detail = await self._detail(identity, requirement_id)
             return self._cards.detail(detail, "版本冲突, 已加载后端最新字段, 请重新确认。")
+
+    async def _synchronize_supplier_reference(
+        self, identity: PlatformIdentity, fields: ReviewFieldsPatch
+    ) -> ReviewFieldsPatch:
+        provided = fields.provided_fields()
+        if "proposed_supplier_name" not in provided:
+            return fields
+        supplier_name = (fields.proposed_supplier_name or "").strip()
+        if not supplier_name:
+            return fields.model_copy(
+                update={"proposed_supplier_name": None, "proposed_supplier_id": None}
+            )
+        page = await self._backend.search_suppliers(
+            identity=identity,
+            keyword=supplier_name,
+            page_size=20,
+        )
+        exact = tuple(item for item in page.items if item.supplier_name.strip() == supplier_name)
+        if len(exact) == 1:
+            return fields.model_copy(
+                update={
+                    "proposed_supplier_id": exact[0].supplier_id,
+                    "proposed_supplier_name": exact[0].supplier_name,
+                }
+            )
+        return fields.model_copy(
+            update={"proposed_supplier_name": supplier_name, "proposed_supplier_id": None}
+        )
 
     async def review_validation_error(
         self,

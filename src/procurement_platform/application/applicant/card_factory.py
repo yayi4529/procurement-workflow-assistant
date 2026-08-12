@@ -15,6 +15,7 @@ from procurement_platform.domain.interaction import (
 )
 from procurement_platform.domain.requirement import (
     HandlerCandidates,
+    PurchaseRecord,
     RequirementDetail,
     RequirementPage,
 )
@@ -67,7 +68,13 @@ class ApplicantCardFactory:
             actions=(ActionButton(action_id="applicant.home", label="返回首页"),),
         )
 
-    def detail(self, detail: RequirementDetail, *, notice: str | None = None) -> InteractionView:
+    def detail(
+        self,
+        detail: RequirementDetail,
+        *,
+        notice: str | None = None,
+        return_requirement_ids: tuple[int, ...] = (),
+    ) -> InteractionView:
         fields = detail.applicant_fields
         editable = detail.status in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}
         elements: list[InteractionElement] = []
@@ -147,7 +154,16 @@ class ApplicantCardFactory:
                     style="primary",
                 )
             )
-        actions.extend((ActionButton(action_id="applicant.list", label="我的申请"),))
+        if return_requirement_ids:
+            actions.append(
+                ActionButton(
+                    action_id="applicant.history_back",
+                    label="返回",
+                    value={"requirement_ids": list(return_requirement_ids)},
+                )
+            )
+        else:
+            actions.append(ActionButton(action_id="applicant.list", label="我的申请"))
         return InteractionView(
             title="采购申请详情", elements=tuple(elements), actions=tuple(actions)
         )
@@ -313,4 +329,30 @@ class ApplicantCardFactory:
             title="我的采购申请",
             elements=(MarkdownBlock(markdown="\n".join(lines) if lines else "暂无申请"),),
             actions=tuple(actions),
+        )
+
+    def history_listing(self, records: tuple[PurchaseRecord, ...]) -> InteractionView:
+        ids = [item.requirement_id for item in records]
+        lines = ["根据刚才的查询结果, 为您匹配到以下采购需求:", ""]
+        lines.extend(
+            f"- {item.requirement_no} | {item.device_name or '未填写'} | "
+            f"{requirement_status_label(item.status)}"
+            for item in records
+        )
+        lines.extend(("", f"共 **{len(records)}** 条采购申请"))
+        return InteractionView(
+            title="我的采购申请",
+            subtitle="实时查询结果",
+            elements=(MarkdownBlock(markdown="\n".join(lines)),),
+            actions=tuple(
+                ActionButton(
+                    action_id="applicant.open",
+                    label=f"查看 {item.requirement_no}",
+                    value={
+                        "requirement_id": item.requirement_id,
+                        "return_requirement_ids": ids,
+                    },
+                )
+                for item in records
+            ),
         )

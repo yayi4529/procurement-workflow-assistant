@@ -7,6 +7,7 @@ from procurement_platform.domain.enums import (
     RequirementView,
 )
 from procurement_platform.domain.errors import (
+    BackendApplicationError,
     ConcurrentModificationError,
     DuplicateOperationError,
 )
@@ -14,6 +15,7 @@ from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.interaction import InteractionView
 from procurement_platform.domain.requirement import (
     RequirementCompletionResult,
+    RequirementDetail,
     WarehouseFieldsPatch,
 )
 from procurement_platform.ports.backend_client import BackendClient
@@ -34,8 +36,27 @@ class WarehouseWorkflowService:
     async def open_requirement(
         self, identity: PlatformIdentity, requirement_id: int
     ) -> InteractionView:
-        return self._cards.detail(
-            await self._backend.get_requirement(identity=identity, requirement_id=requirement_id)
+        return self._cards.detail(await self._detail(identity, requirement_id))
+
+    async def _detail(self, identity: PlatformIdentity, requirement_id: int) -> RequirementDetail:
+        detail = await self._backend.get_requirement(
+            identity=identity, requirement_id=requirement_id
+        )
+        purchase = detail.purchase_fields
+        if purchase is None or purchase.supplier_name or purchase.supplier_id is None:
+            return detail
+        try:
+            supplier = await self._backend.get_supplier(
+                identity=identity, supplier_id=purchase.supplier_id
+            )
+        except BackendApplicationError:
+            return detail
+        return detail.model_copy(
+            update={
+                "purchase_fields": purchase.model_copy(
+                    update={"supplier_name": supplier.supplier_name}
+                )
+            }
         )
 
     async def save_warehouse_fields(
@@ -45,9 +66,7 @@ class WarehouseWorkflowService:
         expected_version: int,
         fields: WarehouseFieldsPatch,
     ) -> InteractionView:
-        latest = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        latest = await self._detail(identity, requirement_id)
         if latest.version != expected_version:
             return self._cards.detail(latest, "版本已变化, 请重新填写。")
         result = await self._backend.update_warehouse_fields(
@@ -56,9 +75,7 @@ class WarehouseWorkflowService:
             expected_version=latest.version,
             fields=fields,
         )
-        refreshed = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        refreshed = await self._detail(identity, requirement_id)
         notice = "保存成功。"
         if "receipt_remark" in result.missing_fields:
             notice = "实际入库数量少于申请数量, 入库备注必填。"
@@ -67,9 +84,7 @@ class WarehouseWorkflowService:
     async def prepare_complete(
         self, identity: PlatformIdentity, requirement_id: int
     ) -> InteractionView:
-        latest = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        latest = await self._detail(identity, requirement_id)
         if (
             latest.status is not RequirementStatus.PENDING_WAREHOUSE
             or not latest.fields_complete
@@ -85,9 +100,7 @@ class WarehouseWorkflowService:
         expected_version: int,
         action_token: UUID,
     ) -> InteractionView:
-        latest = await self._backend.get_requirement(
-            identity=identity, requirement_id=requirement_id
-        )
+        latest = await self._detail(identity, requirement_id)
         if latest.version != expected_version:
             return self._cards.detail(latest, "版本已变化, 请重新确认。")
         try:
@@ -98,9 +111,7 @@ class WarehouseWorkflowService:
                 action_token=action_token,
             )
         except (DuplicateOperationError, ConcurrentModificationError):
-            refreshed = await self._backend.get_requirement(
-                identity=identity, requirement_id=requirement_id
-            )
+            refreshed = await self._detail(identity, requirement_id)
             if (
                 refreshed.status is not RequirementStatus.COMPLETED
                 or refreshed.completed_at is None

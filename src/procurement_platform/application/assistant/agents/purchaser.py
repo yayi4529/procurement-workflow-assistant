@@ -69,13 +69,38 @@ class PurchaserAgent(BasicRoleAgent):
         )
         if opened is not None:
             return opened
+        explicit_requirement = await self._requirement_id_from_text(
+            identity=identity,
+            context=context,
+            user_text=user_text,
+            external_message_id=external_message_id,
+        )
+        if isinstance(explicit_requirement, AssistantTextResponse):
+            return explicit_requirement
+        named_supplier = await self._handle_named_supplier_request(
+            context=context,
+            user_text=user_text,
+            external_message_id=external_message_id,
+        )
+        if named_supplier is not None:
+            return named_supplier
         try:
             state = await self._session_service.state(
                 identity=identity, conversation_id=context.conversation_id
             )
         except SessionNotFoundError:
             return None
-        requirement_id = state.purchase_request_id or context.active_requirement_id
+        if (
+            explicit_requirement is None
+            and self._uses_ambiguous_requirement_reference(user_text)
+            and state.active_card_type != "PURCHASER_REQUIREMENT_DETAIL"
+        ):
+            text = "请提供卡片上的完整采购单编号 (PR-...), 我会查询该采购单的供应商信息。"
+            await self._append_reply(context, external_message_id, text)
+            return AssistantTextResponse(text=text)
+        requirement_id = (
+            explicit_requirement or state.purchase_request_id or context.active_requirement_id
+        )
         if requirement_id is None:
             return None
         contextual = await self._handle_contextual_supplier_request(
@@ -119,6 +144,61 @@ class PurchaserAgent(BasicRoleAgent):
         await self._append_reply(context, external_message_id, text)
         return AssistantTextResponse(text=text)
 
+    async def _requirement_id_from_text(
+        self,
+        *,
+        identity: PlatformIdentity,
+        context: AssistantToolContext,
+        user_text: str,
+        external_message_id: str,
+    ) -> int | AssistantTextResponse | None:
+        match = re.search(
+            r"(?<![A-Za-z0-9-])PR-[A-Za-z0-9-]+(?![A-Za-z0-9-])",
+            user_text,
+            re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        requirement_no = match.group(0).upper()
+        page = await self._backend_client.list_purchase_records(
+            identity=identity,
+            requirement_no=requirement_no,
+            page=1,
+            page_size=20,
+        )
+        exact = tuple(item for item in page.items if item.requirement_no == requirement_no)
+        if len(exact) == 1:
+            try:
+                current = await self._session_service.state(
+                    identity=identity, conversation_id=context.conversation_id
+                )
+                update = AgentSessionStateUpdate.model_validate(
+                    current.model_dump(
+                        exclude={
+                            "conversation_id",
+                            "expires_in_seconds",
+                            "restored_from_snapshot",
+                        }
+                    )
+                )
+            except SessionNotFoundError:
+                update = AgentSessionStateUpdate()
+            await self._session_service.save_state(
+                identity=identity,
+                conversation_id=context.conversation_id,
+                state=update.model_copy(
+                    update={
+                        "purchase_request_id": exact[0].requirement_id,
+                        "focused_role": RoleCode.PURCHASER,
+                        "active_card_type": "PURCHASER_REQUIREMENT_DETAIL",
+                    }
+                ),
+            )
+            return exact[0].requirement_id
+        text = "未找到该采购单, 请核对完整采购单编号。"
+        await self._append_reply(context, external_message_id, text)
+        return AssistantTextResponse(text=text)
+
     async def _open_requirement_card(
         self,
         *,
@@ -129,7 +209,11 @@ class PurchaserAgent(BasicRoleAgent):
     ) -> AssistantResponse | None:
         if "打开" not in user_text:
             return None
-        match = re.search(r"\bPR-[A-Za-z0-9-]+\b", user_text, re.IGNORECASE)
+        match = re.search(
+            r"(?<![A-Za-z0-9-])PR-[A-Za-z0-9-]+(?![A-Za-z0-9-])",
+            user_text,
+            re.IGNORECASE,
+        )
         if match is None:
             return None
         requirement_no = match.group(0).upper()
@@ -165,6 +249,7 @@ class PurchaserAgent(BasicRoleAgent):
                 update={
                     "purchase_request_id": detail.requirement_id,
                     "focused_role": RoleCode.PURCHASER,
+                    "active_card_type": "PURCHASER_REQUIREMENT_DETAIL",
                 }
             ),
         )
@@ -183,9 +268,7 @@ class PurchaserAgent(BasicRoleAgent):
         requirement_id: int,
     ) -> AssistantResponse | None:
         normalized = user_text.replace(" ", "")
-        fill_requested = any(
-            marker in normalized for marker in ("填入采购单", "填到采购单", "带入采购单")
-        )
+        fill_requested = self._is_supplier_profile_fill_request(normalized)
         supplier_info_requested = "供应商" in normalized and any(
             marker in normalized
             for marker in ("信息", "资料", "税号", "开户", "账号", "地址", "联系人")
@@ -205,7 +288,6 @@ class PurchaserAgent(BasicRoleAgent):
                     "BANK_ACCOUNT",
                     "REGISTERED_ADDRESS",
                     "CONTRACT_CONTACT_INFO",
-                    "BLACKLIST_STATUS",
                 ],
             }
         _, result = await self._tool_executor.execute_result(
@@ -231,6 +313,122 @@ class PurchaserAgent(BasicRoleAgent):
             result=result,
             context=context,
             external_message_id=external_message_id,
+        )
+
+    async def _handle_named_supplier_request(
+        self,
+        *,
+        context: AssistantToolContext,
+        user_text: str,
+        external_message_id: str,
+    ) -> AssistantResponse | None:
+        normalized = re.sub(r"\s+", "", user_text)
+        field_markers = {
+            "统一社会信用代码": "UNIFIED_SOCIAL_CREDIT_CODE",
+            "信用代码": "UNIFIED_SOCIAL_CREDIT_CODE",
+            "税号": "UNIFIED_SOCIAL_CREDIT_CODE",
+            "开户行": "BANK_NAME",
+            "银行账号": "BANK_ACCOUNT",
+            "银行账户": "BANK_ACCOUNT",
+            "账号": "BANK_ACCOUNT",
+            "注册地址": "REGISTERED_ADDRESS",
+            "地址": "REGISTERED_ADDRESS",
+            "合同联系方式": "CONTRACT_CONTACT_INFO",
+            "联系方式": "CONTRACT_CONTACT_INFO",
+            "联系人": "CONTRACT_CONTACT_INFO",
+        }
+        requested_fields = tuple(
+            dict.fromkeys(value for marker, value in field_markers.items() if marker in normalized)
+        )
+        if not requested_fields:
+            return None
+        field_positions = tuple(
+            normalized.find(marker) for marker in field_markers if marker in normalized
+        )
+        if not field_positions:
+            return None
+        prefix = normalized[: min(field_positions)]
+        supplier_name = re.split(r"[:\n]|\N{FULLWIDTH COLON}", prefix)[-1]
+        supplier_name = re.sub(
+            r"^(?:请问|查询|查一下|查查|帮我查询|帮我查一下|帮我查查|帮我查)",
+            "",
+            supplier_name,
+        ).rstrip("的 ,:")
+        if not supplier_name or any(
+            marker in supplier_name for marker in ("这个采购单", "该采购单", "这张单")
+        ):
+            return None
+        _, result = await self._tool_executor.execute_result(
+            name="query_supplier_profile",
+            arguments_json=json.dumps(
+                {
+                    "supplier_query": supplier_name,
+                    "requested_fields": requested_fields,
+                },
+                ensure_ascii=False,
+            ),
+            tool_call_id="purchaser-named-supplier",
+            context=context,
+            allowed_names=frozenset({"query_supplier_profile"}),
+        )
+        return await self.handle_tool_result(
+            result=result,
+            context=context,
+            external_message_id=external_message_id,
+        )
+
+    @staticmethod
+    def _uses_ambiguous_requirement_reference(text: str) -> bool:
+        normalized = re.sub(r"\s+", "", text)
+        return any(
+            marker in normalized
+            for marker in ("这个采购单", "该采购单", "这张采购单", "这张单", "该单")
+        ) and (
+            re.search(
+                r"(?<![A-Za-z0-9-])PR-[A-Za-z0-9-]+(?![A-Za-z0-9-])",
+                normalized,
+                re.IGNORECASE,
+            )
+            is None
+        )
+
+    @staticmethod
+    def _is_supplier_profile_fill_request(text: str) -> bool:
+        normalized = re.sub(r"\s+", "", text)
+        action_markers = (
+            "填",
+            "写",
+            "带",
+            "同步",
+            "保存",
+            "录入",
+            "登记",
+            "补充",
+            "更新",
+        )
+        information_markers = (
+            "供应商信息",
+            "供应商资料",
+            "这些信息",
+            "这些资料",
+            "上述信息",
+            "上述资料",
+            "这个供应商",
+            "该供应商",
+        )
+        target_markers = ("采购单", "采购申请", "单据", "这张单", "该单")
+        has_explicit_requirement = (
+            re.search(
+                r"(?<![A-Za-z0-9-])PR-[A-Za-z0-9-]+(?![A-Za-z0-9-])",
+                normalized,
+                re.IGNORECASE,
+            )
+            is not None
+        )
+        return (
+            any(marker in normalized for marker in action_markers)
+            and any(marker in normalized for marker in information_markers)
+            and (any(marker in normalized for marker in target_markers) or has_explicit_requirement)
         )
 
     async def handle_tool_result(

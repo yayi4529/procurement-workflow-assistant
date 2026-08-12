@@ -3,7 +3,9 @@
 import json
 import logging
 import re
-from typing import ClassVar
+from typing import ClassVar, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from procurement_platform.application.applicant.card_factory import ApplicantCardFactory
 from procurement_platform.application.applicant.options import DEVICE_PROFESSION_OPTIONS
@@ -35,6 +37,31 @@ from procurement_platform.ports.backend_client import BackendClient
 from procurement_platform.ports.llm_client import LlmClient
 
 logger = logging.getLogger(__name__)
+
+
+class ApplicantSemanticIntent(BaseModel):
+    """Strict result of one-pass query normalization and intent extraction."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    intent: Literal["QUERY_PURCHASE_HISTORY", "OTHER"]
+    normalized_query: str = Field(min_length=1, max_length=500)
+    time_expression: str | None = Field(default=None, max_length=50)
+    time_field: (
+        Literal[
+            "CREATED_AT",
+            "SUBMITTED_AT",
+            "APPROVED_AT",
+            "REJECTED_AT",
+            "PURCHASED_AT",
+            "WAREHOUSE_SUBMITTED_AT",
+            "COMPLETED_AT",
+        ]
+        | None
+    ) = None
+    status: RequirementStatus | None = None
+    needs_clarification: bool = False
+    clarification_question: str | None = Field(default=None, max_length=300)
 
 
 class ApplicantAgent(BasicRoleAgent):
@@ -279,20 +306,40 @@ class ApplicantAgent(BasicRoleAgent):
             return await self._cancel_pending_collection(
                 context=context, external_message_id=external_message_id
             )
-        # Only historical/list/statistical pure queries bypass normal tool-calling.
-        # Detail/status queries still go through the standard agent path.
-        if not self._is_history_summary_query(user_text):
+        arguments = None
+        if self._is_history_summary_query(user_text):
+            arguments = self._history_query_arguments(user_text)
+        elif self._is_semantic_query_candidate(user_text):
+            intent = await self._semantic_intent(user_text=user_text, context=context)
+            if intent is not None and intent.needs_clarification:
+                text = intent.clarification_question or "请问你希望按哪个业务时间查询采购记录？"
+                await self._append_reply(context, external_message_id, text)
+                return AssistantTextResponse(text=text)
+            if intent is not None and intent.intent == "QUERY_PURCHASE_HISTORY":
+                arguments = {
+                    "operation": "SEARCH",
+                    "result_limit": 10,
+                    "time_expression": intent.time_expression,
+                    "time_field": intent.time_field or "CREATED_AT",
+                    "status": intent.status.value if intent.status else None,
+                }
+                arguments = {key: value for key, value in arguments.items() if value is not None}
+        if arguments is None:
             return None
 
         _, result = await self._tool_executor.execute_result(
             name="query_purchase_requests",
-            arguments_json=json.dumps(self._history_query_arguments(user_text), ensure_ascii=False),
+            arguments_json=json.dumps(arguments, ensure_ascii=False),
             tool_call_id="deterministic-history-query",
             context=context,
             allowed_names=frozenset({"query_purchase_requests"}),
         )
 
         if not isinstance(result, QueryPurchaseRequestsResult):
+            text = result.user_message or "历史采购记录查询失败，请稍后重试。"
+            await self._append_reply(context, external_message_id, text)
+            return AssistantTextResponse(text=text)
+        if result.status not in {"SUCCESS", "MULTIPLE_MATCHES", "NOT_FOUND"}:
             text = result.user_message or "历史采购记录查询失败，请稍后重试。"
             await self._append_reply(context, external_message_id, text)
             return AssistantTextResponse(text=text)
@@ -308,6 +355,38 @@ class ApplicantAgent(BasicRoleAgent):
             external_message_id=external_message_id,
             narrative=narrative,
         )
+
+    async def _semantic_intent(
+        self, *, user_text: str, context: AssistantToolContext
+    ) -> ApplicantSemanticIntent | None:
+        prompt = (
+            "你是采购查询语义解析器。一次完成用户话术规范化和意图提取，只输出 JSON，"
+            "不得回答问题。intent 只能是 QUERY_PURCHASE_HISTORY 或 OTHER。"
+            "只有查询本人已有采购申请/需求/记录时才选 QUERY_PURCHASE_HISTORY。"
+            "‘提交/提报/交了’对应 SUBMITTED_AT；‘创建/新建’对应 CREATED_AT；"
+            "审批通过对应 APPROVED_AT；驳回对应 REJECTED_AT；采购对应 PURCHASED_AT；"
+            "入库提交对应 WAREHOUSE_SUBMITTED_AT；完成对应 COMPLETED_AT。"
+            "相对日期保留原文，例如今天、昨天、本周、上周、本月、上个月、最近三天。"
+            "不确定且会改变查询含义时设置 needs_clarification=true 并给出简短问题。"
+            "JSON 字段必须是 intent, normalized_query, time_expression, time_field, status, "
+            "needs_clarification, clarification_question。status 不明确时为 null。\n"
+            f"当前时间：{context.current_time.isoformat()}\n用户原话：{user_text}"
+        )
+        try:
+            turn = await self._llm_client.complete(
+                messages=(AssistantMessage(role="system", content=prompt),),
+                tools=(),
+                tool_choice=None,
+            )
+            if turn.content is None:
+                return None
+            content = turn.content.strip()
+            if content.startswith("```"):
+                content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.IGNORECASE)
+            return ApplicantSemanticIntent.model_validate_json(content)
+        except (LlmUnavailableError, ValidationError, ValueError):
+            logger.warning("Unable to parse applicant semantic intent", exc_info=True)
+            return None
 
     async def _cancel_pending_collection(
         self, *, context: AssistantToolContext, external_message_id: str
@@ -340,6 +419,8 @@ class ApplicantAgent(BasicRoleAgent):
     @classmethod
     def _history_query_arguments(cls, text: str) -> dict[str, object]:
         arguments: dict[str, object] = {"operation": "SEARCH", "result_limit": 10}
+        if any(marker in text for marker in ("提交", "提报", "交了")):
+            arguments["time_field"] = "SUBMITTED_AT"
         for marker, status in cls._STATUS_MARKERS.items():
             if marker in text:
                 arguments["status"] = status.value
@@ -729,6 +810,15 @@ class ApplicantAgent(BasicRoleAgent):
         return any(marker in text for marker in ("多少", "一共", "统计", "列表", "历史", "之前"))
 
     @classmethod
+    def _is_semantic_query_candidate(cls, text: str) -> bool:
+        normalized = text.strip()
+        if not any(marker in normalized for marker in ("采购", "申请", "需求", "单据", "采购单")):
+            return False
+        if cls._explicit_new_draft_text(normalized):
+            return False
+        return not any(marker in normalized for marker in cls._MUTATION_OR_RECOMMENDATION_MARKERS)
+
+    @classmethod
     def _draft_followup_text(
         cls,
         result: UpdatePurchaseDraftResult,
@@ -866,7 +956,7 @@ class ApplicantAgent(BasicRoleAgent):
         external_message_id: str,
         narrative: str | None = None,
     ) -> AssistantResponse:
-        total = result.total_count or 0
+        total = result.total_count if result.total_count is not None else len(result.records)
         text = (
             narrative
             or f"已查询到您可见的采购申请共 {total} 条。点击下方单据可查看具体需求和当前状态。"
@@ -875,6 +965,7 @@ class ApplicantAgent(BasicRoleAgent):
 
         lines = [text, "", f"共 **{total}** 条采购申请"]
         actions: list[ActionButton] = []
+        return_requirement_ids = [item.requirement_id for item in result.records]
 
         for item in result.records:
             lines.append(
@@ -885,7 +976,10 @@ class ApplicantAgent(BasicRoleAgent):
                 ActionButton(
                     action_id="applicant.open",
                     label=f"查看 {item.requirement_no}",
-                    value={"requirement_id": item.requirement_id},
+                    value={
+                        "requirement_id": item.requirement_id,
+                        "return_requirement_ids": return_requirement_ids,
+                    },
                 )
             )
 

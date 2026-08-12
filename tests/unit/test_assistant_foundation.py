@@ -371,6 +371,126 @@ async def test_applicant_history_query_returns_a_clickable_card_with_backend_tot
 
 
 @pytest.mark.asyncio
+async def test_nonstandard_history_question_uses_one_pass_semantic_intent() -> None:
+    backend = FakeBackendClient(user())
+    backend.purchase_records.append(
+        PurchaseRecord(
+            requirement_id=1,
+            requirement_no="PR-1",
+            device_name="服务器",
+            status=RequirementStatus.PENDING_REVIEW,
+            created_at=datetime(2026, 8, 11, tzinfo=UTC),
+            submitted_at=datetime(2026, 8, 11, 3, tzinfo=UTC),
+        )
+    )
+    registry = ToolRegistry()
+    registry.register(QueryPurchaseRequestsTool(backend))
+    llm = FakeLlmClient(
+        turns=(
+            AssistantTurn(
+                content=(
+                    '{"intent":"QUERY_PURCHASE_HISTORY",'
+                    '"normalized_query":"查询我昨天提交的采购需求",'
+                    '"time_expression":"昨天","time_field":"SUBMITTED_AT",'
+                    '"status":null,"needs_clarification":false,'
+                    '"clarification_question":null}'
+                )
+            ),
+            AssistantTurn(content="这是您昨天提交的采购需求。"),
+        )
+    )
+    assistant = _assistant(backend, registry, llm)
+
+    response = await assistant.handle(
+        TextMessageEvent(
+            event_id="semantic-history-event",
+            external_user_id="ou_test",
+            external_message_id="semantic-history-message",
+            chat_id="semantic-history-chat",
+            text="我昨天交了哪些采购需求",
+        )
+    )
+
+    assert isinstance(response, AssistantInteractionResponse)
+    assert response.view.title == "我的采购申请"
+    assert backend.call_counts["list_purchase_records"] == 1
+    assert backend.call_counts["create_requirement"] == 0
+    assert len(llm.calls) == 2
+    assert "只输出 JSON" in (llm.calls[0][0].content or "")
+
+
+@pytest.mark.asyncio
+async def test_semantic_intent_can_request_clarification_without_querying_backend() -> None:
+    backend = FakeBackendClient(user())
+    registry = ToolRegistry()
+    registry.register(QueryPurchaseRequestsTool(backend))
+    llm = FakeLlmClient(
+        turns=(
+            AssistantTurn(
+                content=(
+                    '{"intent":"QUERY_PURCHASE_HISTORY",'
+                    '"normalized_query":"查询之前的采购需求",'
+                    '"time_expression":null,"time_field":null,"status":null,'
+                    '"needs_clarification":true,'
+                    '"clarification_question":"你想按创建时间还是提交时间查询?"}'
+                )
+            ),
+        )
+    )
+    assistant = _assistant(backend, registry, llm)
+
+    response = await assistant.handle(
+        TextMessageEvent(
+            event_id="semantic-clarify-event",
+            external_user_id="ou_test",
+            external_message_id="semantic-clarify-message",
+            chat_id="semantic-clarify-chat",
+            text="看看我交过什么采购需求",
+        )
+    )
+
+    assert isinstance(response, AssistantTextResponse)
+    assert response.text == "你想按创建时间还是提交时间查询?"
+    assert backend.call_counts["list_purchase_records"] == 0
+
+
+@pytest.mark.asyncio
+async def test_semantic_weekday_history_query_uses_supported_recent_weekday() -> None:
+    backend = FakeBackendClient(user())
+    registry = ToolRegistry()
+    registry.register(QueryPurchaseRequestsTool(backend))
+    llm = FakeLlmClient(
+        turns=(
+            AssistantTurn(
+                content=(
+                    '{"intent":"QUERY_PURCHASE_HISTORY",'
+                    '"normalized_query":"查询我周一提交的采购需求",'
+                    '"time_expression":"周一","time_field":"SUBMITTED_AT",'
+                    '"status":null,"needs_clarification":false,'
+                    '"clarification_question":null}'
+                )
+            ),
+            AssistantTurn(content="没有找到周一提交的采购需求。"),
+        )
+    )
+    assistant = _assistant(backend, registry, llm)
+
+    response = await assistant.handle(
+        TextMessageEvent(
+            event_id="weekday-history-event",
+            external_user_id="ou_test",
+            external_message_id="weekday-history-message",
+            chat_id="weekday-history-chat",
+            text="我周一提交了哪些采购需求",
+        )
+    )
+
+    assert isinstance(response, AssistantInteractionResponse)
+    assert "后端提示不支持" not in response.view.elements[0].markdown
+    assert backend.call_counts["list_purchase_records"] == 1
+
+
+@pytest.mark.asyncio
 async def test_verified_pending_draft_field_reply_retries_the_draft_tool() -> None:
     backend = FakeBackendClient(user())
     identity = PlatformIdentity.create(PlatformType.FEISHU, "ou_test")
@@ -558,6 +678,13 @@ def test_applicant_history_query_extracts_status_time_and_explicit_fields() -> N
         "device_name": "服务器",
         "brand": "戴尔",
     }
+
+
+def test_history_query_maps_submit_wording_to_submitted_time() -> None:
+    arguments = ApplicantAgent._history_query_arguments("查询我昨天提交了哪些采购需求")
+
+    assert arguments["time_expression"] == "昨天"
+    assert arguments["time_field"] == "SUBMITTED_AT"
 
 
 @pytest.mark.parametrize(

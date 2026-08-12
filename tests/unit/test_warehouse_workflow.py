@@ -18,6 +18,8 @@ from procurement_platform.domain.requirement import (
     RequirementBuilding,
     RequirementDetail,
     RequirementHandler,
+    SupplierBlacklistSummary,
+    SupplierDetail,
     WarehouseFieldsPatch,
 )
 from procurement_platform.domain.user import CurrentUser, UserBuilding, UserRole
@@ -103,3 +105,23 @@ def test_received_quantity_must_be_positive_string_decimal() -> None:
     for value in ("0", "-1"):
         with pytest.raises(ValidationError):
             WarehouseFieldsPatch(received_quantity=value)
+
+
+@pytest.mark.asyncio
+async def test_warehouse_card_resolves_supplier_name_from_master_data() -> None:
+    fake = backend()
+    fake.seed_supplier(
+        SupplierDetail(
+            supplier_id=8,
+            supplier_name="森赫新材料(大连)有限公司",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+
+    view = await WarehouseWorkflowService(fake).open_requirement(identity(), 1)
+
+    section = view.elements[0]
+    supplier = next(field for field in section.fields if field.label == "供应商")
+    assert supplier.value == "森赫新材料(大连)有限公司"
+    assert supplier.value != "8"
+    assert fake.call_counts["get_supplier"] == 1

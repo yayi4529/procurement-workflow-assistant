@@ -88,8 +88,27 @@ class ApplicantWorkflowService:
         detail = await self._detail(identity, summary.requirement_id)
         return self._cards.detail(detail)
 
-    async def open(self, identity: PlatformIdentity, requirement_id: int) -> InteractionView:
-        return self._cards.detail(await self._detail(identity, requirement_id))
+    async def open(
+        self,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        *,
+        return_requirement_ids: tuple[int, ...] = (),
+    ) -> InteractionView:
+        return self._cards.detail(
+            await self._detail(identity, requirement_id),
+            return_requirement_ids=return_requirement_ids,
+        )
+
+    async def history_listing(
+        self, identity: PlatformIdentity, requirement_ids: tuple[int, ...]
+    ) -> InteractionView:
+        if not requirement_ids:
+            return await self.listing(identity)
+        page = await self._backend.list_purchase_records(identity=identity, page=1, page_size=100)
+        by_id = {item.requirement_id: item for item in page.items}
+        records = tuple(by_id[item_id] for item_id in requirement_ids if item_id in by_id)
+        return self._cards.history_listing(records)
 
     async def save(
         self,

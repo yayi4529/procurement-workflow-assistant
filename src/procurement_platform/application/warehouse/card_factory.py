@@ -175,6 +175,8 @@ class WarehouseCardFactory:
 
     @staticmethod
     def _supplier(detail: RequirementDetail) -> str:
-        if detail.purchase_fields and detail.purchase_fields.supplier_id is not None:
-            return str(detail.purchase_fields.supplier_id)
+        if detail.purchase_fields and detail.purchase_fields.supplier_name:
+            return detail.purchase_fields.supplier_name
+        if detail.review_fields and detail.review_fields.proposed_supplier_name:
+            return detail.review_fields.proposed_supplier_name
         return "-"

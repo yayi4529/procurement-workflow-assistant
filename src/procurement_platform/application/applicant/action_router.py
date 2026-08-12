@@ -32,6 +32,12 @@ def _form_scalar(value: JsonValue) -> JsonValue:
     return value
 
 
+def _integer_list(value: JsonValue | None) -> tuple[int, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(_integer(item, "requirement_id") for item in value)
+
+
 def _applicant_patch(values: JsonObject) -> ApplicantFieldsPatch:
     names = ApplicantFieldsPatch.model_fields
     return ApplicantFieldsPatch.model_validate(
@@ -59,7 +65,13 @@ class ApplicantActionRouter:
             return await self._workflow.create_draft(identity, _integer(raw, "building_id"))
         if action in {"applicant.open", "applicant.refresh"}:
             return await self._workflow.open(
-                identity, _integer(value.get("requirement_id"), "requirement_id")
+                identity,
+                _integer(value.get("requirement_id"), "requirement_id"),
+                return_requirement_ids=_integer_list(value.get("return_requirement_ids")),
+            )
+        if action == "applicant.history_back":
+            return await self._workflow.history_listing(
+                identity, _integer_list(value.get("requirement_ids"))
             )
         if action == "applicant.save":
             return await self._workflow.save(

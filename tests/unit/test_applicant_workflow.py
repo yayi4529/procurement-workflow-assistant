@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,6 +17,7 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
     HandlerCandidate,
     HandlerCandidates,
+    PurchaseRecord,
 )
 from procurement_platform.domain.user import CurrentUser, UserBuilding, UserRole
 
@@ -180,6 +182,49 @@ async def test_non_applicant_cannot_create_and_form_marks_brand_model_optional()
         action for action in detail_view.actions if action.action_id == "applicant.prepare_submit"
     )
     assert prepare.value["expected_version"] == summary.version
+
+
+@pytest.mark.asyncio
+async def test_history_detail_uses_back_button_and_restores_history_results() -> None:
+    fake = backend()
+    first = await fake.create_requirement(identity=identity(), building_id=1)
+    second = await fake.create_requirement(identity=identity(), building_id=1)
+    fake.purchase_records.extend(
+        (
+            PurchaseRecord(
+                requirement_id=first.requirement_id,
+                requirement_no=first.requirement_no or "PR-1",
+                device_name="服务器",
+                status=RequirementStatus.DRAFT,
+                created_at=datetime.now(UTC),
+            ),
+            PurchaseRecord(
+                requirement_id=second.requirement_id,
+                requirement_no=second.requirement_no or "PR-2",
+                device_name="交换机",
+                status=RequirementStatus.DRAFT,
+                created_at=datetime.now(UTC),
+            ),
+        )
+    )
+    service = ApplicantWorkflowService(fake)
+    ids = (first.requirement_id, second.requirement_id)
+
+    detail_view = await service.open(identity(), first.requirement_id, return_requirement_ids=ids)
+
+    back = next(action for action in detail_view.actions if action.label == "返回")
+    assert back.action_id == "applicant.history_back"
+    assert back.value["requirement_ids"] == list(ids)
+    assert all(action.label != "我的申请" for action in detail_view.actions)
+
+    history_view = await service.history_listing(identity(), ids)
+
+    assert history_view.title == "我的采购申请"
+    assert history_view.subtitle == "实时查询结果"
+    assert [action.label for action in history_view.actions] == [
+        f"查看 {first.requirement_no}",
+        f"查看 {second.requirement_no}",
+    ]
 
 
 @pytest.mark.asyncio

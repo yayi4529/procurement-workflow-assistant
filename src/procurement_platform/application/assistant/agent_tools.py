@@ -77,7 +77,6 @@ SupplierProfileField = Literal[
     "BANK_ACCOUNT",
     "REGISTERED_ADDRESS",
     "CONTRACT_CONTACT_INFO",
-    "BLACKLIST_STATUS",
 ]
 
 
@@ -381,6 +380,8 @@ class QueryPurchaseRequestsTool:
             )
         if window is None:
             return direct
+        if direct is not None and direct.tzinfo is None:
+            direct = direct.replace(tzinfo=window.start.tzinfo)
         return (
             direct if direct is not None and window.start <= direct < window.end_exclusive else None
         )
@@ -1001,7 +1002,6 @@ class QuerySupplierProfileTool:
         "BANK_ACCOUNT": "银行账号",
         "REGISTERED_ADDRESS": "注册地址",
         "CONTRACT_CONTACT_INFO": "合同联系方式",
-        "BLACKLIST_STATUS": "黑名单状态",
     }
 
     def __init__(self, backend: BackendClient) -> None:
@@ -1029,24 +1029,8 @@ class QuerySupplierProfileTool:
         identity, _ = resolved
         try:
             supplier_id: int | None = None
-            requirement_id = args.requirement_id or context.active_requirement_id
-            if requirement_id:
-                detail = await self._backend.get_requirement(
-                    identity=identity, requirement_id=requirement_id
-                )
-                selected = await _selected_supplier(self._backend, identity, detail)
-                if selected is None:
-                    return QuerySupplierProfileResult(
-                        status="NOT_FOUND",
-                        user_message="当前采购单没有可确认的供应商记录",
-                    )
-                supplier_id = selected.supplier_id
-            elif args.supplier_ref:
-                state = await self._session.state(identity, context.conversation_id)
-                supplier_id = CandidateResolver.resolve(
-                    args.supplier_ref, kind="SUPPLIER_PROFILE", state=state
-                )
-            elif args.supplier_query:
+            requirement_id = args.requirement_id
+            if args.supplier_query:
                 page = await self._backend.search_suppliers(
                     identity=identity, keyword=args.supplier_query, page_size=20
                 )
@@ -1054,7 +1038,14 @@ class QuerySupplierProfileTool:
                     return QuerySupplierProfileResult(
                         status="NOT_FOUND", user_message="未找到供应商"
                     )
-                if len(page.items) > 1:
+                exact = tuple(
+                    item
+                    for item in page.items
+                    if item.supplier_name.strip() == args.supplier_query.strip()
+                )
+                if len(exact) == 1:
+                    supplier_id = exact[0].supplier_id
+                elif len(page.items) > 1:
                     candidates = tuple(
                         SupplierProfileCandidate(
                             candidate_ref=f"supplier:{item.supplier_id}",
@@ -1083,7 +1074,28 @@ class QuerySupplierProfileTool:
                         candidate_set_id=candidate_set,
                         candidates=candidates,
                     )
-                supplier_id = page.items[0].supplier_id
+                else:
+                    supplier_id = page.items[0].supplier_id
+            elif args.supplier_ref:
+                state = await self._session.state(identity, context.conversation_id)
+                supplier_id = CandidateResolver.resolve(
+                    args.supplier_ref, kind="SUPPLIER_PROFILE", state=state
+                )
+            else:
+                requirement_id = requirement_id or context.active_requirement_id
+            if supplier_id is not None:
+                pass
+            elif requirement_id:
+                detail = await self._backend.get_requirement(
+                    identity=identity, requirement_id=requirement_id
+                )
+                selected = await _selected_supplier(self._backend, identity, detail)
+                if selected is None:
+                    return QuerySupplierProfileResult(
+                        status="NOT_FOUND",
+                        user_message="当前采购单没有可确认的供应商记录",
+                    )
+                supplier_id = selected.supplier_id
             assert supplier_id is not None
             supplier = await self._backend.get_supplier(identity=identity, supplier_id=supplier_id)
             values = self._values(supplier)
@@ -1110,9 +1122,6 @@ class QuerySupplierProfileTool:
             "BANK_ACCOUNT": supplier.bank_account,
             "REGISTERED_ADDRESS": supplier.registered_address,
             "CONTRACT_CONTACT_INFO": supplier.contract_contact_info,
-            "BLACKLIST_STATUS": "ACTIVE"
-            if supplier.blacklist and supplier.blacklist.active
-            else "INACTIVE",
         }
 
 
@@ -1584,24 +1593,11 @@ async def _selected_supplier(
     """Resolve the selected supplier from backend facts, including legacy name-only reviews."""
     purchase = detail.purchase_fields
     purchase_name = (purchase.supplier_name or "").strip() if purchase is not None else ""
-    if purchase is not None and purchase.supplier_id is not None:
-        supplier = await backend.get_supplier(identity=identity, supplier_id=purchase.supplier_id)
-        if not purchase_name or supplier.supplier_name.strip() == purchase_name:
-            return supplier
-    if purchase_name:
-        page = await backend.search_suppliers(
-            identity=identity, keyword=purchase_name, page_size=20
-        )
-        exact = tuple(item for item in page.items if item.supplier_name.strip() == purchase_name)
-        if len(exact) == 1:
-            return await backend.get_supplier(identity=identity, supplier_id=exact[0].supplier_id)
     review = detail.review_fields
-    if review is not None and review.proposed_supplier_id is not None:
-        return await backend.get_supplier(
-            identity=identity, supplier_id=review.proposed_supplier_id
-        )
-    name = (review.proposed_supplier_name or "").strip() if review is not None else ""
-    if not name:
+    review_name = (review.proposed_supplier_name or "").strip() if review is not None else ""
+    record: PurchaseRecord | None = None
+    record_name = ""
+    if not purchase_name and not review_name:
         records = await backend.list_purchase_records(
             identity=identity,
             requirement_no=detail.requirement_no,
@@ -1611,19 +1607,33 @@ async def _selected_supplier(
         exact_records = tuple(
             item for item in records.items if item.requirement_no == detail.requirement_no
         )
-        if len(exact_records) == 1 and exact_records[0].supplier_id is not None:
-            return await backend.get_supplier(
-                identity=identity, supplier_id=exact_records[0].supplier_id
-            )
-        if len(exact_records) == 1:
-            name = (exact_records[0].supplier_name or "").strip()
-    if not name:
-        return None
-    page = await backend.search_suppliers(identity=identity, keyword=name, page_size=20)
-    exact = tuple(item for item in page.items if item.supplier_name.strip() == name)
-    if len(exact) != 1:
-        return None
-    return await backend.get_supplier(identity=identity, supplier_id=exact[0].supplier_id)
+        record = exact_records[0] if len(exact_records) == 1 else None
+        record_name = (record.supplier_name or "").strip() if record is not None else ""
+
+    # A name stored on the requirement/record is a visible business fact. When it
+    # disagrees with a legacy supplier ID, resolve the exact name instead of silently
+    # returning an unrelated supplier profile.
+    selected_name = purchase_name or record_name or review_name
+    candidate_ids = (
+        purchase.supplier_id if purchase is not None else None,
+        record.supplier_id if record is not None else None,
+        review.proposed_supplier_id if review is not None else None,
+    )
+    for supplier_id in candidate_ids:
+        if supplier_id is None:
+            continue
+        supplier = await backend.get_supplier(identity=identity, supplier_id=supplier_id)
+        if not selected_name or supplier.supplier_name.strip() == selected_name:
+            return supplier
+
+    if selected_name:
+        page = await backend.search_suppliers(
+            identity=identity, keyword=selected_name, page_size=20
+        )
+        exact = tuple(item for item in page.items if item.supplier_name.strip() == selected_name)
+        if len(exact) == 1:
+            return await backend.get_supplier(identity=identity, supplier_id=exact[0].supplier_id)
+    return None
 
 
 class UpdateWarehouseReceiptDraftArgs(StrictArgs):

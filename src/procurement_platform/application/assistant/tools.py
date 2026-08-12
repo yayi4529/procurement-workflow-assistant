@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Generic, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
@@ -16,6 +17,8 @@ from procurement_platform.domain.assistant_errors import (
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ResultT = TypeVar("ResultT", bound=AssistantToolResult, covariant=True)
+
+logger = logging.getLogger(__name__)
 
 
 class AssistantTool(Protocol, Generic[ArgsT, ResultT]):
@@ -113,6 +116,7 @@ class ToolExecutor:
             except UnknownAssistantToolError:
                 result = AssistantToolResult(status="NOT_FOUND", user_message="未知工具")
             except Exception:
+                logger.exception("Assistant tool execution failed", extra={"tool_name": name})
                 result = AssistantToolResult(status="INTERNAL_ERROR", user_message="工具暂时不可用")
         content = result.model_dump_json()
         if len(content) > self._max_result_chars:
