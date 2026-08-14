@@ -48,7 +48,14 @@ class AssistantRuntime:
         )
         if prepared is not None:
             return prepared
-        messages = agent.build_messages(context=context, history=history)
+        context_builder = getattr(agent, "working_context", None)
+        working_context = await context_builder(context) if context_builder else None
+        if context_builder:
+            messages = agent.build_messages(
+                context=context, history=history, working_context=working_context
+            )
+        else:
+            messages = agent.build_messages(context=context, history=history)
         policy_allowed = self._tool_policy.allowed_tool_names(
             current_user=context.current_user, active_role=agent.role
         )
@@ -70,6 +77,8 @@ class AssistantRuntime:
                 tool_choice="required" if content_retries or initial_tool_required else None,
             )
             if turn.tool_calls:
+                initial_tool_required = False
+                content_retries = 0
                 assistant_message = AssistantMessage(
                     role="assistant", content=turn.content, tool_calls=turn.tool_calls
                 )

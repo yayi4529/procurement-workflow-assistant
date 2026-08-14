@@ -15,6 +15,7 @@ from procurement_platform.domain.assistant import (
 from procurement_platform.domain.enums import PlatformType, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
+from procurement_platform.domain.interaction import InteractionView, MarkdownBlock
 from procurement_platform.ports.backend_client import BackendClient
 from procurement_platform.ports.channel import ChannelClient
 from procurement_platform.ports.conversation_lock import ConversationLockManager
@@ -83,12 +84,36 @@ class BaseMessageHandler:
             async with self._conversation_lock_manager.acquire(
                 key=f"FEISHU:{event.external_user_id}"
             ):
+                stream = await self._channel_client.begin_streaming_reply(
+                    reply_to_message_id=event.external_message_id
+                )
                 response = await self._assistant_service.handle(event)
                 if isinstance(response, AssistantTextResponse):
-                    await self._channel_client.reply_text(
-                        reply_to_message_id=event.external_message_id, text=response.text
-                    )
+                    if stream is not None:
+                        try:
+                            await self._channel_client.update_streaming_reply(
+                                handle=stream, text=response.text, finish=True
+                            )
+                        except Exception:
+                            await self._channel_client.reply_interaction(
+                                reply_to_message_id=event.external_message_id,
+                                view=self._assistant_text_card(response.text),
+                            )
+                    else:
+                        await self._channel_client.reply_interaction(
+                            reply_to_message_id=event.external_message_id,
+                            view=self._assistant_text_card(response.text),
+                        )
                 elif isinstance(response, AssistantInteractionResponse):
+                    if stream is not None:
+                        try:
+                            await self._channel_client.update_streaming_reply(
+                                handle=stream,
+                                text="处理完成, 结果见下方业务卡片。",
+                                finish=True,
+                            )
+                        except Exception:
+                            pass
                     await self._channel_client.reply_interaction(
                         reply_to_message_id=event.external_message_id, view=response.view
                     )
@@ -98,11 +123,31 @@ class BaseMessageHandler:
                         for index, item in enumerate(response.options, start=1)
                     )
                     text = response.question if not options else f"{response.question}\n{options}"
-                    await self._channel_client.reply_text(
-                        reply_to_message_id=event.external_message_id, text=text
-                    )
+                    if stream is not None:
+                        try:
+                            await self._channel_client.update_streaming_reply(
+                                handle=stream, text=text, finish=True
+                            )
+                        except Exception:
+                            await self._channel_client.reply_interaction(
+                                reply_to_message_id=event.external_message_id,
+                                view=self._assistant_text_card(text, title="需要确认"),
+                            )
+                    else:
+                        await self._channel_client.reply_interaction(
+                            reply_to_message_id=event.external_message_id,
+                            view=self._assistant_text_card(text, title="需要确认"),
+                        )
             return
         await self._channel_client.reply_text(
             reply_to_message_id=event.external_message_id,
             text="采购中心已收到您的消息。智能助手当前未启用。",
+        )
+
+    @staticmethod
+    def _assistant_text_card(text: str, *, title: str = "采购助手") -> InteractionView:
+        return InteractionView(
+            title=title,
+            subtitle="智能助手回复",
+            elements=(MarkdownBlock(markdown=text),),
         )

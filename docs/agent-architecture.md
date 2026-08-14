@@ -23,4 +23,26 @@ For `REQUIREMENT_PENDING_PURCHASE`, the notification gateway may ask an isolated
 
 Conversation messages and short-lived state use the procurement backend's Agent REST endpoints through `BackendClient`. Backend data remains authoritative. The assistant may explain or recommend but cannot perform formal workflow transitions; those must use cards with backend-issued facts, versions, and action tokens.
 
-Enable it with `PROCUREMENT_LLM_ENABLED=true` plus a model and API key. When disabled, the card workflow is unchanged and ordinary text receives a disabled response.
+Enable it with `PROCUREMENT_LLM_ENABLED=true` plus a model and API key. The production adapter uses the OpenAI-compatible Chat Completions protocol, so Qwen via DashScope can be configured with:
+
+```dotenv
+PROCUREMENT_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+PROCUREMENT_LLM_MODEL=qwen-plus
+PROCUREMENT_LLM_API_KEY=<DashScope API key>
+```
+
+When disabled, the card workflow is unchanged and ordinary text receives a disabled response. Formal procurement actions never depend on this setting.
+
+## Feishu visible progress and streaming cards
+
+The text Agent may use a Feishu CardKit JSON 2.0 streaming card to show an auditable
+processing trace: a short plan, current step, tool purpose, redacted factual observation,
+elapsed time, and final answer. These events are generated status summaries, not hidden model
+Chain-of-Thought. Never emit or store private token-level reasoning, system prompts, secrets,
+signatures, full tool arguments, or sensitive backend payloads.
+
+Create one processing card and update that same card as work progresses. Close streaming mode
+before enabling card interactions. If an update fails, degrade to one final card and do not retry
+any procurement write operation. Streaming requires `cardkit:card:write`, CardKit JSON 2.0, and
+compliance with Feishu's per-card update-rate limit. Formal workflow actions remain on existing
+deterministic cards.

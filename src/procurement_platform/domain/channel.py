@@ -24,3 +24,11 @@ class ChannelDeliveryResult(BaseModel):
 
     external_message_id: str | None = None
     delivered: bool
+
+
+class StreamingCardHandle(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    card_id: str
+    message_id: str
+    sequence: int = 0

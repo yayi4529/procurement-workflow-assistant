@@ -10,6 +10,7 @@ from procurement_platform.domain.channel import (
     ChannelDeliveryResult,
     ChannelRecipient,
     ChannelType,
+    StreamingCardHandle,
 )
 from procurement_platform.domain.interaction import InteractionView
 
@@ -18,6 +19,37 @@ class FeishuChannelClient:
     def __init__(self, transport: FeishuSdkTransport, renderer: FeishuInteractionRenderer) -> None:
         self._transport = transport
         self._renderer = renderer
+
+    async def begin_streaming_reply(
+        self, *, reply_to_message_id: str
+    ) -> StreamingCardHandle | None:
+        try:
+            card_id = await self._transport.create_streaming_card(content="正在理解你的需求…")
+            result = await self._transport.reply(
+                message_id=reply_to_message_id,
+                message_type="interactive",
+                content=json.dumps({"type": "card", "data": {"card_id": card_id}}),
+            )
+            if result.message_id is None:
+                return None
+            return StreamingCardHandle(card_id=card_id, message_id=result.message_id)
+        except Exception:
+            return None
+
+    async def update_streaming_reply(
+        self, *, handle: StreamingCardHandle, text: str, finish: bool = False
+    ) -> StreamingCardHandle:
+        sequence = handle.sequence + 1
+        await self._transport.update_streaming_content(
+            card_id=handle.card_id,
+            element_id="agent_progress",
+            content=text,
+            sequence=sequence,
+        )
+        if finish:
+            sequence += 1
+            await self._transport.finish_streaming_card(card_id=handle.card_id, sequence=sequence)
+        return handle.model_copy(update={"sequence": sequence})
 
     async def reply_text(self, *, reply_to_message_id: str, text: str) -> ChannelDeliveryResult:
         return await self._invoke(

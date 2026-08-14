@@ -93,9 +93,11 @@ class BuildingManagerAgent(BasicRoleAgent):
             await self._append_reply(context, external_message_id, text)
             return AssistantTextResponse(text=text)
         if isinstance(result, UpdateReviewDraftResult) and result.status == "SUCCESS":
-            return await self._review_update_response(
-                result=result, context=context, external_message_id=external_message_id
-            )
+            if result.fields_complete:
+                return await self._review_update_response(
+                    result=result, context=context, external_message_id=external_message_id
+                )
+            return None
         return await super().handle_tool_result(
             result=result, context=context, external_message_id=external_message_id
         )

@@ -17,6 +17,11 @@ from procurement_platform.application.notifications.workflow_assignment_renderer
 )
 from procurement_platform.bootstrap.logging import JsonFormatter, mask_platform_user_id
 from procurement_platform.bootstrap.settings import Settings
+from procurement_platform.domain.assistant import (
+    AssistantClarificationResponse,
+    AssistantOption,
+    AssistantTextResponse,
+)
 from procurement_platform.domain.enums import BackendMode, PlatformType, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
@@ -24,6 +29,27 @@ from procurement_platform.domain.notification import (
     InteractionNotification,
     NotificationGatewayRequest,
 )
+
+
+class StubAssistant:
+    def __init__(self, response: AssistantTextResponse | AssistantClarificationResponse) -> None:
+        self._response = response
+
+    async def handle(self, event: TextMessageEvent):
+        del event
+        return self._response
+
+
+class StubLock:
+    def acquire(self, *, key: str):
+        del key
+        return self
+
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, exc_type, exc, tb):
+        del exc_type, exc, tb
 
 
 def fake_environment(**overrides: str) -> dict[str, str]:
@@ -122,6 +148,55 @@ async def test_identity_probe_is_exact_and_returns_own_open_id() -> None:
     )
     await handler.handle(event)
     assert "ou_abcdefghijk" in channel.reply_text_calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_agent_text_reply_is_sent_as_interaction_card() -> None:
+    channel = FakeFeishuClient()
+    handler = BaseMessageHandler(
+        channel,
+        assistant_service=StubAssistant(AssistantTextResponse(text="请告诉我品牌。")),
+        conversation_lock_manager=StubLock(),
+    )
+    await handler.handle(
+        TextMessageEvent(
+            event_id="evt-card",
+            external_user_id="ou_user",
+            external_message_id="om_card",
+            text="继续",
+        )
+    )
+
+    assert channel.reply_text_calls == []
+    assert channel.reply_interaction_calls[0][1].title == "采购助手"
+    assert "请告诉我品牌" in str(channel.reply_interaction_calls[0][1])
+
+
+@pytest.mark.asyncio
+async def test_agent_clarification_reply_is_sent_as_interaction_card() -> None:
+    channel = FakeFeishuClient()
+    response = AssistantClarificationResponse(
+        question="请选择角色",
+        options=(AssistantOption(label="需求人", value="APPLICANT"),),
+    )
+    handler = BaseMessageHandler(
+        channel,
+        assistant_service=StubAssistant(response),
+        conversation_lock_manager=StubLock(),
+    )
+    await handler.handle(
+        TextMessageEvent(
+            event_id="evt-choice",
+            external_user_id="ou_user",
+            external_message_id="om_choice",
+            text="开始",
+        )
+    )
+
+    assert channel.reply_text_calls == []
+    view = channel.reply_interaction_calls[0][1]
+    assert view.title == "需要确认"
+    assert "1. 需求人" in str(view)
 
 
 def test_development_notification_is_strict_and_marked() -> None:

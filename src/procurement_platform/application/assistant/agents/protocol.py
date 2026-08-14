@@ -13,6 +13,8 @@ from procurement_platform.domain.enums import RoleCode
 class RoleAgent(Protocol):
     role: RoleCode
 
+    async def working_context(self, context: AssistantToolContext) -> str: ...
+
     def allowed_tool_names(self) -> frozenset[str]: ...
 
     def allowed_tool_names_for(self, user_text: str) -> frozenset[str]: ...
@@ -30,6 +32,7 @@ class RoleAgent(Protocol):
         *,
         context: AssistantToolContext,
         history: tuple[AssistantMessage, ...],
+        working_context: str | None = None,
     ) -> tuple[AssistantMessage, ...]: ...
 
     async def before_run(

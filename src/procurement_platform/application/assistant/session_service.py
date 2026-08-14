@@ -7,6 +7,7 @@ from procurement_platform.domain.assistant_session import (
 )
 from procurement_platform.domain.enums import AgentMessageSender
 from procurement_platform.domain.identity import PlatformIdentity
+from procurement_platform.domain.requirement import RequirementDetail
 from procurement_platform.ports.backend_client import BackendClient
 
 
@@ -56,6 +57,13 @@ class AssistantSessionService:
     async def state(self, *, identity: PlatformIdentity, conversation_id: int) -> AgentSessionState:
         return await self._backend_client.get_agent_state(
             identity=identity, conversation_id=conversation_id
+        )
+
+    async def requirement(
+        self, *, identity: PlatformIdentity, requirement_id: int
+    ) -> RequirementDetail:
+        return await self._backend_client.get_requirement(
+            identity=identity, requirement_id=requirement_id
         )
 
     async def save_state(

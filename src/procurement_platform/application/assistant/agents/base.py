@@ -43,6 +43,7 @@ class BasicRoleAgent:
         *,
         context: AssistantToolContext,
         history: tuple[AssistantMessage, ...],
+        working_context: str | None = None,
     ) -> tuple[AssistantMessage, ...]:
         system = AssistantMessage(
             role="system",
@@ -51,7 +52,17 @@ class BasicRoleAgent:
                 f"当前激活角色:{self.role.value}; 时区:{context.timezone_name}。"
             ),
         )
-        return (system, *history)
+        context_message = (
+            (AssistantMessage(role="system", content=working_context),) if working_context else ()
+        )
+        return (system, *context_message, *history)
+
+    async def working_context(self, context: AssistantToolContext) -> str:
+        from procurement_platform.application.assistant.context_composer import AgentContextComposer
+
+        return await AgentContextComposer(self._session_service).compose(
+            context=context, role=self.role
+        )
 
     async def before_run(
         self,

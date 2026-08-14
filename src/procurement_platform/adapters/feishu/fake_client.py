@@ -1,4 +1,8 @@
-from procurement_platform.domain.channel import ChannelDeliveryResult, ChannelRecipient
+from procurement_platform.domain.channel import (
+    ChannelDeliveryResult,
+    ChannelRecipient,
+    StreamingCardHandle,
+)
 from procurement_platform.domain.interaction import InteractionView
 
 
@@ -17,6 +21,18 @@ class FakeFeishuClient:
         self.update_interaction_calls: list[tuple[str, InteractionView]] = []
         self.send_text_calls: list[tuple[ChannelRecipient, str]] = []
         self.send_interaction_calls: list[tuple[ChannelRecipient, InteractionView]] = []
+
+    async def begin_streaming_reply(
+        self, *, reply_to_message_id: str
+    ) -> StreamingCardHandle | None:
+        del reply_to_message_id
+        return None
+
+    async def update_streaming_reply(
+        self, *, handle: StreamingCardHandle, text: str, finish: bool = False
+    ) -> StreamingCardHandle:
+        del text, finish
+        return handle
 
     async def _return(self) -> ChannelDeliveryResult:
         if self.error is not None:

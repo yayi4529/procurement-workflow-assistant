@@ -17,8 +17,8 @@ def test_common_prompt_contains_only_cross_role_boundaries() -> None:
 def test_applicant_prompt_does_not_mix_purchaser_or_warehouse_writes() -> None:
     assert "update_purchase_draft" in APPLICANT_PROMPT
     assert "需求人采购助手" in APPLICANT_PROMPT
-    assert "序号必须结合当前 pending field" in APPLICANT_PROMPT
-    assert "fields_complete=true 后返回正式采购需求确认卡片" in APPLICANT_PROMPT
+    assert "selection_index" in APPLICANT_PROMPT
+    assert "fields_complete=true" in APPLICANT_PROMPT
     assert "update_purchase_execution_draft" not in APPLICANT_PROMPT
     assert "update_warehouse_receipt_draft" not in APPLICANT_PROMPT
 

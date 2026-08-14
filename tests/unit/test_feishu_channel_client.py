@@ -18,6 +18,18 @@ class FakeTransport:
         self.calls: list[tuple[str, str]] = []
         self.error: Exception | None = None
 
+    async def create_streaming_card(self, *, content: str) -> str:
+        self.calls.append(("stream-create", content))
+        return "card_1"
+
+    async def update_streaming_content(
+        self, *, card_id: str, element_id: str, content: str, sequence: int
+    ) -> None:
+        self.calls.append((f"stream-update:{card_id}:{element_id}:{sequence}", content))
+
+    async def finish_streaming_card(self, *, card_id: str, sequence: int) -> None:
+        self.calls.append((f"stream-finish:{card_id}:{sequence}", ""))
+
     async def _result(self) -> FeishuSdkResult:
         if self.error is not None:
             raise self.error
@@ -70,3 +82,18 @@ async def test_channel_maps_timeout() -> None:
     client = FeishuChannelClient(transport, FeishuInteractionRenderer())
     with pytest.raises(FeishuTimeoutError):
         await client.reply_text(reply_to_message_id="om", text="hello")
+
+
+@pytest.mark.asyncio
+async def test_channel_creates_updates_and_finishes_cardkit_stream() -> None:
+    transport = FakeTransport()
+    client = FeishuChannelClient(transport, FeishuInteractionRenderer())
+
+    handle = await client.begin_streaming_reply(reply_to_message_id="om_source")
+    assert handle is not None
+    updated = await client.update_streaming_reply(handle=handle, text="最终答复", finish=True)
+
+    assert updated.sequence == 2
+    assert transport.calls[0] == ("stream-create", "正在理解你的需求…")
+    assert transport.calls[2][0] == "stream-update:card_1:agent_progress:1"
+    assert transport.calls[3][0] == "stream-finish:card_1:2"
