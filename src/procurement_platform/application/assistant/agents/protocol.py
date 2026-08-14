@@ -3,7 +3,6 @@ from typing import Protocol
 from procurement_platform.domain.assistant import (
     AssistantMessage,
     AssistantResponse,
-    AssistantToolCall,
     AssistantToolContext,
     AssistantToolResult,
 )
@@ -12,20 +11,8 @@ from procurement_platform.domain.enums import RoleCode
 
 class RoleAgent(Protocol):
     role: RoleCode
-
-    async def working_context(self, context: AssistantToolContext) -> str: ...
-
-    def allowed_tool_names(self) -> frozenset[str]: ...
-
-    def allowed_tool_names_for(self, user_text: str) -> frozenset[str]: ...
-
-    def retry_tool_name(self) -> str | None: ...
-
-    def requires_tool_call(self, user_text: str) -> bool: ...
-
-    def prepare_tool_call(
-        self, call: AssistantToolCall, *, user_text: str
-    ) -> AssistantToolCall: ...
+    tool_names: frozenset[str]
+    role_prompt: str
 
     def build_messages(
         self,
@@ -34,15 +21,6 @@ class RoleAgent(Protocol):
         history: tuple[AssistantMessage, ...],
         working_context: str | None = None,
     ) -> tuple[AssistantMessage, ...]: ...
-
-    async def before_run(
-        self,
-        *,
-        context: AssistantToolContext,
-        history: tuple[AssistantMessage, ...],
-        user_text: str,
-        external_message_id: str,
-    ) -> AssistantResponse | None: ...
 
     async def handle_content(
         self,

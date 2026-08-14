@@ -15,6 +15,7 @@ class EchoToolResult(AssistantToolResult):
 
 class EchoTool:
     name = "echo_tool"
+    side_effect = "READ"
     description = "Echo text for development and test only."
     args_model = EchoToolArgs
 

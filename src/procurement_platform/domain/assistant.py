@@ -50,6 +50,7 @@ class AssistantToolDefinition(BaseModel):
     name: str
     description: str
     parameters: dict[str, object]
+    side_effect: str
 
 
 class AssistantToolContext(BaseModel):

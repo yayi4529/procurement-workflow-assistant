@@ -19,6 +19,7 @@ ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ResultT = TypeVar("ResultT", bound=AssistantToolResult, covariant=True)
 
 logger = logging.getLogger(__name__)
+ToolSideEffect = str
 
 
 class AssistantTool(Protocol, Generic[ArgsT, ResultT]):
@@ -31,6 +32,9 @@ class AssistantTool(Protocol, Generic[ArgsT, ResultT]):
     @property
     def args_model(self) -> type[ArgsT]: ...
 
+    @property
+    def side_effect(self) -> ToolSideEffect: ...
+
     async def execute(self, *, args: ArgsT, context: AssistantToolContext) -> ResultT: ...
 
 
@@ -41,6 +45,8 @@ class ToolRegistry:
     def register(self, tool: AssistantTool[ArgsT, ResultT]) -> None:
         if tool.name in self._tools:
             raise ValueError(f"assistant tool already registered: {tool.name}")
+        if tool.side_effect not in {"READ", "MUTATE"}:
+            raise ValueError(f"assistant tool has invalid side effect: {tool.name}")
         self._tools[tool.name] = cast(AssistantTool[BaseModel, AssistantToolResult], tool)
 
     def get(self, name: str) -> AssistantTool[BaseModel, AssistantToolResult]:
@@ -59,6 +65,7 @@ class ToolRegistry:
                 name=tool.name,
                 description=tool.description,
                 parameters=tool.args_model.model_json_schema(),
+                side_effect=tool.side_effect,
             )
             for name, tool in self._tools.items()
             if name in allowed_names
@@ -118,10 +125,54 @@ class ToolExecutor:
             except Exception:
                 logger.exception("Assistant tool execution failed", extra={"tool_name": name})
                 result = AssistantToolResult(status="INTERNAL_ERROR", user_message="工具暂时不可用")
-        content = result.model_dump_json()
-        if len(content) > self._max_result_chars:
-            content = content[: self._max_result_chars]
+        payload = result.model_dump(mode="json")
+        content = json.dumps(
+            _compact_observation(payload, self._max_result_chars),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         return (
             AssistantMessage(role="tool", name=name, tool_call_id=tool_call_id, content=content),
             result,
         )
+
+
+def _compact_observation(payload: object, max_chars: int) -> object:
+    """Keep observations valid JSON while reducing oversized nested values."""
+    compact = _compact_value(payload, list_limit=12, string_limit=400)
+    if len(json.dumps(compact, ensure_ascii=False, separators=(",", ":"))) <= max_chars:
+        return compact
+    if isinstance(payload, dict):
+        minimal = {
+            key: payload[key]
+            for key in (
+                "status",
+                "requirement_id",
+                "updated_fields",
+                "missing_fields",
+                "next_missing_field",
+                "fields_complete",
+                "user_message",
+                "total_count",
+            )
+            if key in payload
+        }
+        minimal["truncated"] = True
+        return minimal
+    return {"status": "SUCCESS", "truncated": True}
+
+
+def _compact_value(value: object, *, list_limit: int, string_limit: int) -> object:
+    if isinstance(value, str):
+        return value if len(value) <= string_limit else value[:string_limit] + "…"
+    if isinstance(value, list):
+        return [
+            _compact_value(item, list_limit=list_limit, string_limit=string_limit)
+            for item in value[:list_limit]
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _compact_value(item, list_limit=list_limit, string_limit=string_limit)
+            for key, item in value.items()
+        }
+    return value

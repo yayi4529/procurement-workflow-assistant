@@ -98,9 +98,15 @@ class BasicRoleAgent:
         if result.exact_render_required and result.user_message:
             await self._append_reply(context, external_message_id, result.user_message)
             return AssistantTextResponse(text=result.user_message)
-        if result.status != "SUCCESS" and result.user_message:
-            await self._append_reply(context, external_message_id, result.user_message)
-            return AssistantTextResponse(text=result.user_message)
+        if result.status in {
+            "PERMISSION_DENIED",
+            "BACKEND_UNAVAILABLE",
+            "CONCURRENT_MODIFICATION",
+            "INVALID_STATUS",
+        }:
+            message = result.user_message or "当前操作无法安全继续，请稍后重试。"  # noqa: RUF001
+            await self._append_reply(context, external_message_id, message)
+            return AssistantTextResponse(text=message)
         return None
 
     async def _append_reply(

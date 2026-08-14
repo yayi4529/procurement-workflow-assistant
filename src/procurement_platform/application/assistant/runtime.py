@@ -40,14 +40,6 @@ class AssistantRuntime:
         user_text: str,
         external_message_id: str,
     ) -> AssistantResponse:
-        prepared = await agent.before_run(
-            context=context,
-            history=history,
-            user_text=user_text,
-            external_message_id=external_message_id,
-        )
-        if prepared is not None:
-            return prepared
         context_builder = getattr(agent, "working_context", None)
         working_context = await context_builder(context) if context_builder else None
         if context_builder:
@@ -59,36 +51,30 @@ class AssistantRuntime:
         policy_allowed = self._tool_policy.allowed_tool_names(
             current_user=context.current_user, active_role=agent.role
         )
-        allowed = policy_allowed & agent.allowed_tool_names_for(user_text)
+        allowed = policy_allowed & agent.tool_names
         definitions = self._tool_registry.definitions(allowed_names=allowed)
         content_retries = 0
-        requires_tool_call = getattr(agent, "requires_tool_call", None)
-        initial_tool_required = bool(requires_tool_call and requires_tool_call(user_text))
         for _ in range(self._max_tool_steps):
-            retry_tool_name = agent.retry_tool_name()
-            retry_tools = tuple(
-                tool
-                for tool in definitions
-                if retry_tool_name is not None and tool.name == retry_tool_name
-            )
             turn = await self._llm_client.complete(
                 messages=messages,
-                tools=retry_tools if content_retries else definitions,
-                tool_choice="required" if content_retries or initial_tool_required else None,
+                tools=definitions,
+                tool_choice=None,
             )
             if turn.tool_calls:
-                initial_tool_required = False
                 content_retries = 0
                 assistant_message = AssistantMessage(
                     role="assistant", content=turn.content, tool_calls=turn.tool_calls
                 )
                 tool_messages: list[AssistantMessage] = []
+                mutation_seen = False
                 for raw_call in turn.tool_calls:
-                    call = agent.prepare_tool_call(raw_call, user_text=user_text)
+                    tool = self._tool_registry.get(raw_call.name)
+                    if mutation_seen and tool.side_effect == "MUTATE":
+                        break
                     tool_message, result = await self._tool_executor.execute_result(
-                        name=call.name,
-                        arguments_json=call.arguments_json,
-                        tool_call_id=call.id,
+                        name=raw_call.name,
+                        arguments_json=raw_call.arguments_json,
+                        tool_call_id=raw_call.id,
                         context=context,
                         allowed_names=allowed,
                     )
@@ -100,6 +86,7 @@ class AssistantRuntime:
                     if response is not None:
                         return response
                     tool_messages.append(tool_message)
+                    mutation_seen = mutation_seen or tool.side_effect == "MUTATE"
                 messages = (*messages, assistant_message, *tool_messages)
                 continue
             if turn.content is not None and turn.content.strip():

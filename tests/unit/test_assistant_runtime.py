@@ -1,7 +1,9 @@
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
 from procurement_platform.adapters.llm.echo_tool import EchoTool
 from procurement_platform.adapters.llm.fake_llm_client import FakeLlmClient
@@ -25,10 +27,43 @@ from procurement_platform.domain.enums import RoleCode
 from procurement_platform.domain.user import CurrentUser, UserRole
 
 
+class MutateArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    value: str
+
+
+class MutateResult(AssistantToolResult):
+    pass
+
+
+class MutateTool:
+    args_model = MutateArgs
+    description = "Test mutating tool."
+    side_effect = "MUTATE"
+
+    def __init__(self, name: str, calls: list[str]) -> None:
+        self.name = name
+        self._calls = calls
+
+    async def execute(self, *, args: MutateArgs, context: AssistantToolContext) -> MutateResult:
+        del context
+        self._calls.append(args.value)
+        return MutateResult(status="SUCCESS", user_message=args.value)
+
+
+class StubToolPolicy(ToolPolicy):
+    def allowed_tool_names(
+        self, *, current_user: CurrentUser, active_role: RoleCode
+    ) -> frozenset[str]:
+        del current_user, active_role
+        return frozenset({"mutate_a", "mutate_b"})
+
+
 @dataclass
 class RuntimeAgent:
     response_to_tool: AssistantResponse | None
     role: RoleCode = RoleCode.APPLICANT
+    tool_names: frozenset[str] = frozenset({"echo_tool"})
     results: list[AssistantToolResult] = field(default_factory=list)
 
     def allowed_tool_names(self) -> frozenset[str]:
@@ -195,3 +230,60 @@ async def test_runtime_enforces_tool_step_limit() -> None:
             user_text="hello",
             external_message_id="message",
         )
+
+
+@pytest.mark.asyncio
+async def test_tool_observation_remains_valid_json_when_compacted() -> None:
+    engine, llm = runtime(
+        (AssistantTurn(tool_calls=(echo_call("one"),)), AssistantTurn(content="done")),
+        max_steps=2,
+    )
+    agent = RuntimeAgent(response_to_tool=None)
+    engine._tool_executor = ToolExecutor(engine._tool_registry, max_result_chars=40)
+
+    await engine.run(
+        agent=agent,
+        context=context(),
+        history=(),
+        user_text="hello",
+        external_message_id="message",
+    )
+
+    assert json.loads(llm.calls[1][-1].content or "{}")
+
+
+@pytest.mark.asyncio
+async def test_runtime_executes_only_first_mutating_call_in_a_turn() -> None:
+    calls: list[str] = []
+    registry = ToolRegistry()
+    registry.register(MutateTool("mutate_a", calls))
+    registry.register(MutateTool("mutate_b", calls))
+    llm = FakeLlmClient(
+        turns=(
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(id="a", name="mutate_a", arguments_json='{"value":"a"}'),
+                    AssistantToolCall(id="b", name="mutate_b", arguments_json='{"value":"b"}'),
+                )
+            ),
+            AssistantTurn(content="done"),
+        )
+    )
+    engine = AssistantRuntime(
+        llm_client=llm,
+        tool_registry=registry,
+        tool_executor=ToolExecutor(registry, max_result_chars=1000),
+        tool_policy=StubToolPolicy(),
+        max_tool_steps=3,
+    )
+
+    response = await engine.run(
+        agent=RuntimeAgent(response_to_tool=None, tool_names=frozenset({"mutate_a", "mutate_b"})),
+        context=context(),
+        history=(),
+        user_text="write",
+        external_message_id="message",
+    )
+
+    assert response == AssistantTextResponse(text="done")
+    assert calls == ["a"]

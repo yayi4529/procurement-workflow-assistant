@@ -237,6 +237,7 @@ class QueryPurchaseRequestsResult(AssistantToolResult):
 
 class QueryPurchaseRequestsTool:
     name = "query_purchase_requests"
+    side_effect = "READ"
     description = "Query visible purchase requests, details, current handler, or timeline."
     args_model = QueryPurchaseRequestsArgs
 
@@ -464,6 +465,7 @@ class RecommendProductOptionsResult(AssistantToolResult):
 
 class RecommendProductOptionsTool:
     name = "recommend_product_options"
+    side_effect = "READ"
     description = "Recommend up to three product brand/model options from backend purchase history."
     args_model = RecommendProductOptionsArgs
 
@@ -629,6 +631,7 @@ class UpdatePurchaseDraftResult(DraftUpdateResultBase):
 
 class UpdatePurchaseDraftTool:
     name = "update_purchase_draft"
+    side_effect = "MUTATE"
     description = "Create or update applicant draft fields; never submits the requirement."
     args_model = UpdatePurchaseDraftArgs
 
@@ -912,6 +915,7 @@ class UpdateReviewDraftResult(DraftUpdateResultBase):
 
 class UpdateReviewDraftTool:
     name = "update_review_draft"
+    side_effect = "MUTATE"
     description = (
         "保存楼长审核草稿, 不执行正式审批、驳回或提交采购员。用户选择最近一次供应商"
         "推荐时使用从 1 开始的 selection_index; proposed_supplier_ref 仅用于内部精确引用。"
@@ -1065,6 +1069,7 @@ class QuerySupplierProfileResult(AssistantToolResult):
 
 class QuerySupplierProfileTool:
     name = "query_supplier_profile"
+    side_effect = "READ"
     description = (
         "Precisely query selected supplier master fields; exact values are rendered "
         "deterministically."
@@ -1364,6 +1369,7 @@ class PurchasePrefillNotificationService:
 
 class PreparePurchasePrefillTool:
     name = "prepare_purchase_prefill"
+    side_effect = "READ"
     description = "Prepare purchaser fields using the supplier selected by the building manager."
     args_model = PreparePurchasePrefillArgs
 
@@ -1406,6 +1412,7 @@ class FillSelectedSupplierProfileTool:
     """Resolve supplier facts deterministically before a complete purchase save."""
 
     name = "fill_selected_supplier_profile"
+    side_effect = "MUTATE"
     description = (
         "Use the supplier selected on the current requirement and re-read its master data. "
         "Use this when the user asks to fill/carry/copy that supplier's information into "
@@ -1495,6 +1502,7 @@ class UpdatePurchaseExecutionDraftResult(DraftUpdateResultBase):
 
 class UpdatePurchaseExecutionDraftTool:
     name = "update_purchase_execution_draft"
+    side_effect = "MUTATE"
     description = (
         "Save purchaser execution draft fields without starting or submitting procurement."
     )
@@ -1733,6 +1741,7 @@ class UpdateWarehouseReceiptDraftResult(DraftUpdateResultBase):
 
 class UpdateWarehouseReceiptDraftTool:
     name = "update_warehouse_receipt_draft"
+    side_effect = "MUTATE"
     description = "Save warehouse receipt draft fields without completing the requirement."
     args_model = UpdateWarehouseReceiptDraftArgs
 
