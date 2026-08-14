@@ -22,6 +22,7 @@ from procurement_platform.domain.assistant import (
     AssistantOption,
     AssistantTextResponse,
 )
+from procurement_platform.domain.assistant_errors import LlmTimeoutError
 from procurement_platform.domain.enums import BackendMode, PlatformType, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
@@ -38,6 +39,12 @@ class StubAssistant:
     async def handle(self, event: TextMessageEvent):
         del event
         return self._response
+
+
+class FailingAssistant:
+    async def handle(self, event: TextMessageEvent):
+        del event
+        raise LlmTimeoutError("timeout")
 
 
 class StubLock:
@@ -197,6 +204,30 @@ async def test_agent_clarification_reply_is_sent_as_interaction_card() -> None:
     view = channel.reply_interaction_calls[0][1]
     assert view.title == "需要确认"
     assert "1. 需求人" in str(view)
+
+
+@pytest.mark.asyncio
+async def test_agent_timeout_is_returned_as_failure_card() -> None:
+    channel = FakeFeishuClient()
+    handler = BaseMessageHandler(
+        channel,
+        assistant_service=FailingAssistant(),
+        conversation_lock_manager=StubLock(),
+    )
+
+    await handler.handle(
+        TextMessageEvent(
+            event_id="evt-timeout",
+            external_user_id="ou_user",
+            external_message_id="om_timeout",
+            text="继续",
+        )
+    )
+
+    assert len(channel.reply_interaction_calls) == 1
+    view = channel.reply_interaction_calls[0][1]
+    assert view.title == "处理失败"
+    assert "响应超时" in str(view)
 
 
 def test_development_notification_is_strict_and_marked() -> None:

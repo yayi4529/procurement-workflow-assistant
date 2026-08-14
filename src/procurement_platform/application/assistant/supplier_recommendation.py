@@ -102,7 +102,11 @@ class SupplierRecommendationReferenceStore:
 
 class RecommendSuppliersForRequirementTool:
     name = "recommend_suppliers_for_requirement"
-    description = "Recommend eligible suppliers for a building manager's pending review."
+    description = (
+        "从真实后端和历史采购数据为楼长待审核需求推荐可用供应商, 适用于推荐、比较供应商"
+        "或参考历史合作。返回的采购次数、最近采购时间、历史单价、联系人和黑名单状态均为"
+        "事实; 不得添加结果之外的候选。"
+    )
     args_model = RecommendSuppliersForRequirementArgs
 
     def __init__(self, backend_client: BackendClient) -> None:

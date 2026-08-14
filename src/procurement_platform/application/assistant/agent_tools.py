@@ -845,18 +845,47 @@ class UpdatePurchaseDraftTool:
 
 
 class UpdateReviewDraftArgs(StrictArgs):
-    requirement_id: int = Field(gt=0)
-    proposed_supplier_ref: str | None = Field(default=None, max_length=200)
-    supplier_contact_name: str | None = Field(default=None, max_length=100)
-    supplier_contact_info: str | None = Field(default=None, max_length=255)
-    supplier_link: str | None = Field(default=None, max_length=1000)
-    estimated_unit_price: str | None = None
-    need_contract: bool | None = None
-    contract_type: str | None = Field(default=None, max_length=100)
-    payment_method: str | None = Field(default=None, max_length=100)
-    expected_arrival_date: date | None = None
-    warranty_info: str | None = Field(default=None, max_length=255)
-    review_remark: str | None = None
+    requirement_id: int = Field(gt=0, description="待更新的真实采购单 ID。")
+    selection_index: int | None = Field(
+        default=None, ge=1, description="用户选择最近一次供应商推荐列表中的第几个选项, 从 1 开始。"
+    )
+    proposed_supplier_ref: str | None = Field(
+        default=None,
+        max_length=200,
+        description="内部精确供应商引用; 自然语言选择推荐项时优先使用 selection_index。",
+    )
+    supplier_contact_name: str | None = Field(
+        default=None, max_length=100, description="用户明确提供的供应商联系人姓名。"
+    )
+    supplier_contact_info: str | None = Field(
+        default=None, max_length=255, description="用户明确提供的供应商联系方式。"
+    )
+    supplier_link: str | None = Field(
+        default=None, max_length=1000, description="用户明确提供的供应商链接。"
+    )
+    estimated_unit_price: str | None = Field(
+        default=None, description="预计采购单价, 使用十进制字符串。"
+    )
+    need_contract: bool | None = Field(default=None, description="是否需要合同。")
+    contract_type: str | None = Field(
+        default=None, max_length=100, description="用户明确提供的合同类型。"
+    )
+    payment_method: str | None = Field(
+        default=None, max_length=100, description="用户明确提供的付款方式。"
+    )
+    expected_arrival_date: date | None = Field(
+        default=None, description="明确的预计到货日期, 格式 YYYY-MM-DD; 无法确定时先澄清。"
+    )
+    warranty_info: str | None = Field(
+        default=None, max_length=255, description="用户明确提供的质保信息。"
+    )
+    review_remark: str | None = Field(default=None, description="用户明确提供的审核备注。")
+
+    @model_validator(mode="after")
+    def supplier_source_is_unambiguous(self) -> "UpdateReviewDraftArgs":
+        if self.selection_index is not None and self.proposed_supplier_ref:
+            raise ValueError("selection_index 与 proposed_supplier_ref 不能同时提供")
+        return self
 
 
 class UpdateReviewDraftResult(AssistantToolResult):
@@ -869,7 +898,12 @@ class UpdateReviewDraftResult(AssistantToolResult):
 
 class UpdateReviewDraftTool:
     name = "update_review_draft"
-    description = "Save building-manager review draft fields without approving or submitting."
+    description = (
+        "保存楼长审核草稿, 不执行正式审批、驳回或提交采购员。用户选择最近一次供应商"
+        "推荐时使用从 1 开始的 selection_index; proposed_supplier_ref 仅用于内部精确引用。"
+        "一条消息包含多个明确字段时可以一次保存。工具会重新校验角色、状态、处理人、"
+        "推荐引用和供应商真实性。"
+    )
     args_model = UpdateReviewDraftArgs
 
     def __init__(self, backend: BackendClient) -> None:
@@ -901,12 +935,28 @@ class UpdateReviewDraftTool:
                     status="PERMISSION_DENIED", user_message="当前用户不是该采购单处理人"
                 )
             raw = args.model_dump(
-                exclude={"requirement_id", "proposed_supplier_ref"}, exclude_unset=True
+                exclude={"requirement_id", "selection_index", "proposed_supplier_ref"},
+                exclude_unset=True,
             )
-            if args.proposed_supplier_ref:
+            supplier_reference = args.proposed_supplier_ref
+            if args.selection_index is not None:
                 state = await self._session.state(identity, context.conversation_id)
+                recommendations = tuple(
+                    item
+                    for item in state.last_recommendations
+                    if item.kind == "SUPPLIER_RECOMMENDATION"
+                )
+                if args.selection_index > len(recommendations):
+                    return UpdateReviewDraftResult(
+                        status="INVALID_ARGUMENTS",
+                        user_message="供应商推荐序号不存在, 请重新查询推荐后选择",
+                    )
+                supplier_reference = recommendations[args.selection_index - 1].reference_id
+            if supplier_reference:
+                if args.selection_index is None:
+                    state = await self._session.state(identity, context.conversation_id)
                 supplier_id = self._resolver.resolve(
-                    args.proposed_supplier_ref, kind="SUPPLIER_RECOMMENDATION", state=state
+                    supplier_reference, kind="SUPPLIER_RECOMMENDATION", state=state
                 )
                 supplier = await self._backend.get_supplier(
                     identity=identity, supplier_id=supplier_id
@@ -955,6 +1005,11 @@ class UpdateReviewDraftTool:
                 missing_fields=saved.missing_fields,
                 next_missing_field=saved.next_missing_field,
                 fields_complete=saved.fields_complete,
+            )
+        except SessionNotFoundError:
+            return UpdateReviewDraftResult(
+                status="INVALID_ARGUMENTS",
+                user_message="当前没有可用的供应商推荐, 请先重新查询推荐",
             )
         except ValueError as exc:
             return UpdateReviewDraftResult(status="INVALID_ARGUMENTS", user_message=str(exc))

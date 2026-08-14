@@ -1,20 +1,28 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
-from procurement_platform.application.assistant.agent_tools import UpdateReviewDraftTool
+from procurement_platform.adapters.llm.fake_llm_client import FakeLlmClient
+from procurement_platform.application.assistant.agent_tools import (
+    UpdateReviewDraftArgs,
+    UpdateReviewDraftTool,
+)
 from procurement_platform.application.assistant.agents.building_manager import BuildingManagerAgent
+from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.supplier_recommendation import (
     RecommendSuppliersForRequirementArgs,
     RecommendSuppliersForRequirementTool,
 )
+from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
 from procurement_platform.domain.assistant import (
-    AssistantMessage,
+    AssistantInteractionResponse,
     AssistantTextResponse,
+    AssistantToolCall,
     AssistantToolContext,
+    AssistantTurn,
 )
 from procurement_platform.domain.assistant_session import (
     AgentSessionStateUpdate,
@@ -33,7 +41,6 @@ from procurement_platform.domain.requirement import (
     RequirementBuilding,
     RequirementDetail,
     RequirementHandler,
-    ReviewFields,
     SupplierBlacklistSummary,
     SupplierDetail,
 )
@@ -55,16 +62,17 @@ def identity() -> PlatformIdentity:
     return PlatformIdentity(PlatformType.FEISHU, "ou_manager", "request")
 
 
-def context() -> AssistantToolContext:
+def context(*, conversation_id: int = 1) -> AssistantToolContext:
     return AssistantToolContext(
         platform_type="FEISHU",
         platform_user_id="ou_manager",
-        conversation_id=1,
+        conversation_id=conversation_id,
         external_conversation_id="oc_1",
         external_message_id="om_1",
         current_time=datetime.now(UTC),
         timezone_name="Asia/Shanghai",
         current_user=manager(),
+        active_requirement_id=1,
     )
 
 
@@ -84,358 +92,341 @@ def backend() -> FakeBackendClient:
                 brand="华为",
                 quantity="2",
                 unit="台",
+                application_reason="网络扩容",
             ),
             missing_fields=(),
             allowed_actions=(AllowedRequirementAction.UPDATE_REVIEW_FIELDS,),
         )
     )
-    client.seed_supplier(
-        SupplierDetail(
-            supplier_id=11,
-            supplier_name="可用供应商",
-            blacklist=SupplierBlacklistSummary(active=False),
-            contract_contact_info="13800000000",
+    for supplier_id, supplier_name in ((11, "供应商A"), (12, "供应商B"), (13, "供应商C")):
+        client.seed_supplier(
+            SupplierDetail(
+                supplier_id=supplier_id,
+                supplier_name=supplier_name,
+                blacklist=SupplierBlacklistSummary(active=False),
+                contract_contact_info=f"138000000{supplier_id}",
+            )
         )
-    )
-    client.seed_supplier(
-        SupplierDetail(
-            supplier_id=12,
-            supplier_name="黑名单供应商",
-            blacklist=SupplierBlacklistSummary(active=True),
-        )
-    )
     client.purchase_records.extend(
-        [
-            PurchaseRecord(
-                requirement_id=90,
-                requirement_no="PR-90",
-                device_name="交换机",
-                brand="华为",
-                status=RequirementStatus.COMPLETED,
-                supplier_id=11,
-                supplier_name="可用供应商",
-                quantity="2",
-                actual_total_price="200.00",
-                purchased_at=datetime(2026, 7, 1, tzinfo=UTC),
-                created_at=datetime(2026, 6, 1, tzinfo=UTC),
-            ),
-            PurchaseRecord(
-                requirement_id=91,
-                requirement_no="PR-91",
-                device_name="交换机",
-                brand="华为",
-                status=RequirementStatus.COMPLETED,
-                supplier_id=11,
-                supplier_name="可用供应商",
-                quantity="4",
-                actual_total_price="600.00",
-                purchased_at=datetime(2026, 8, 1, tzinfo=UTC),
-                created_at=datetime(2026, 7, 1, tzinfo=UTC),
-            ),
-            PurchaseRecord(
-                requirement_id=92,
-                requirement_no="PR-92",
-                device_name="路由器",
-                brand="华为",
-                status=RequirementStatus.COMPLETED,
-                supplier_id=12,
-                supplier_name="黑名单供应商",
-                purchased_at=datetime(2026, 8, 2, tzinfo=UTC),
-                created_at=datetime(2026, 7, 2, tzinfo=UTC),
-            ),
-        ]
+        PurchaseRecord(
+            requirement_id=90 + index,
+            requirement_no=f"PR-{90 + index}",
+            device_name="交换机",
+            brand="华为",
+            status=RequirementStatus.COMPLETED,
+            supplier_id=supplier_id,
+            supplier_name=supplier_name,
+            quantity="2",
+            actual_total_price=str(200 + index * 20),
+            purchased_at=datetime(2026, 7, index + 1, tzinfo=UTC),
+            created_at=datetime(2026, 6, index + 1, tzinfo=UTC),
+        )
+        for index, (supplier_id, supplier_name) in enumerate(
+            ((11, "供应商A"), (12, "供应商B"), (13, "供应商C"))
+        )
     )
     return client
+
+
+async def seed_recommendations(
+    client: FakeBackendClient, *, kind: str = "SUPPLIER_RECOMMENDATION"
+) -> int:
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(), current_action="ASSISTANT_CHAT"
+    )
+    await client.update_agent_state(
+        identity=identity(),
+        conversation_id=conversation.conversation_id,
+        state=AgentSessionStateUpdate(
+            purchase_request_id=1,
+            last_recommendations=tuple(
+                RecommendationReference(
+                    reference_id=f"supplier:{supplier_id}", kind=kind, label=supplier_name
+                )
+                for supplier_id, supplier_name in (
+                    (11, "供应商A"),
+                    (12, "供应商B"),
+                    (13, "供应商C"),
+                )
+            ),
+        ),
+    )
+    return conversation.conversation_id
+
+
+def build_runtime(
+    client: FakeBackendClient, turns: tuple[AssistantTurn, ...]
+) -> tuple[AssistantRuntime, FakeLlmClient, BuildingManagerAgent]:
+    registry = ToolRegistry()
+    registry.register(RecommendSuppliersForRequirementTool(client))
+    registry.register(UpdateReviewDraftTool(client))
+    executor = ToolExecutor(registry, max_result_chars=10_000)
+    llm = FakeLlmClient(turns=turns)
+    agent = BuildingManagerAgent(AssistantSessionService(client), executor, client)
+    return (
+        AssistantRuntime(
+            llm_client=llm,
+            tool_registry=registry,
+            tool_executor=executor,
+            tool_policy=ToolPolicy(),
+            max_tool_steps=4,
+        ),
+        llm,
+        agent,
+    )
 
 
 @pytest.mark.asyncio
 async def test_manager_supplier_recommendation_rechecks_backend_and_saves_references() -> None:
     client = backend()
-    conversation = await client.get_or_create_agent_conversation(
-        identity=identity(), current_action="ASSISTANT_CHAT"
-    )
+    conversation_id = await seed_recommendations(client)
+
     result = await RecommendSuppliersForRequirementTool(client).execute(
         args=RecommendSuppliersForRequirementArgs(requirement_id=1),
-        context=context().model_copy(update={"conversation_id": conversation.conversation_id}),
+        context=context(conversation_id=conversation_id),
     )
-    saved = await client.get_agent_state(
-        identity=identity(), conversation_id=conversation.conversation_id
+    saved = await client.get_agent_state(identity=identity(), conversation_id=conversation_id)
+
+    assert result.status == "SUCCESS"
+    assert len(result.candidates) == 3
+    assert result.candidates[0].blacklist_status == "NORMAL"
+    assert result.candidates[0].historical_unit_prices
+    assert saved.last_recommendations[0].kind == "SUPPLIER_RECOMMENDATION"
+    assert client.call_counts["get_current_user"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("selection_index", "supplier_id"), ((1, 11), (3, 13)))
+async def test_review_draft_selection_index_resolves_real_recommendation(
+    selection_index: int, supplier_id: int
+) -> None:
+    client = backend()
+    conversation_id = await seed_recommendations(client)
+
+    result = await UpdateReviewDraftTool(client).execute(
+        args=UpdateReviewDraftArgs(requirement_id=1, selection_index=selection_index),
+        context=context(conversation_id=conversation_id),
     )
 
     assert result.status == "SUCCESS"
-    assert result.requirement_version == 2
-    assert result.candidates[0].candidate_ref == "supplier:11"
-    assert result.candidates[0].supplier_name == "可用供应商"
-    assert result.candidates[0].historical_purchase_count == 2
-    assert len(result.candidates) == 1
-    assert saved.purchase_request_id == 1
-    assert saved.last_recommendations[0].reference_id == "supplier:11"
-    assert client.call_counts["get_current_user"] == 1
-    assert client.call_counts["get_requirement"] == 3
-    assert client.call_counts["list_purchase_records"] == 1
-    assert client.call_counts["recommend_suppliers"] == 0
-    assert result.candidates[0].supplier_contact_info == "13800000000"
-    assert result.candidates[0].historical_unit_prices == (
-        "2026-07-01: 100.00",
-        "2026-08-01: 150.00",
-    )
+    assert client._requirements[1].review_fields is not None
+    assert client._requirements[1].review_fields.proposed_supplier_id == supplier_id
+    assert client.call_counts["submit_purchaser"] == 0
 
 
 @pytest.mark.asyncio
-async def test_supplier_recommendation_refuses_non_pending_requirement() -> None:
+async def test_review_draft_selection_index_out_of_range_does_not_write() -> None:
     client = backend()
-    detail = client._requirements[1]
-    client.seed_requirement(
-        detail.model_copy(update={"status": RequirementStatus.PENDING_PURCHASE})
+    conversation_id = await seed_recommendations(client)
+
+    result = await UpdateReviewDraftTool(client).execute(
+        args=UpdateReviewDraftArgs(requirement_id=1, selection_index=4),
+        context=context(conversation_id=conversation_id),
     )
 
-    result = await RecommendSuppliersForRequirementTool(client).execute(
-        args=RecommendSuppliersForRequirementArgs(requirement_id=1), context=context()
-    )
-
-    assert result.status == "INVALID_STATUS"
-    assert client.call_counts["recommend_suppliers"] == 0
+    assert result.status == "INVALID_ARGUMENTS"
+    assert client._requirements[1].review_fields is None
+    assert client.call_counts["update_review_fields"] == 0
 
 
 @pytest.mark.asyncio
-async def test_manager_sequence_selection_uses_saved_supplier_reference() -> None:
+async def test_review_draft_selection_index_without_recommendations_fails_safely() -> None:
     client = backend()
     conversation = await client.get_or_create_agent_conversation(
         identity=identity(), current_action="ASSISTANT_CHAT"
     )
-    await client.update_agent_state(
-        identity=identity(),
-        conversation_id=conversation.conversation_id,
-        state=AgentSessionStateUpdate(
-            purchase_request_id=1,
-            last_recommendations=(
-                RecommendationReference(
-                    reference_id="supplier:11",
-                    kind="SUPPLIER_RECOMMENDATION",
-                    label="可用供应商",
-                ),
-            ),
-        ),
-    )
-    registry = ToolRegistry()
-    registry.register(UpdateReviewDraftTool(client))
-    agent = BuildingManagerAgent(
-        AssistantSessionService(client), ToolExecutor(registry, max_result_chars=5000), client
+
+    result = await UpdateReviewDraftTool(client).execute(
+        args=UpdateReviewDraftArgs(requirement_id=1, selection_index=1),
+        context=context(conversation_id=conversation.conversation_id),
     )
 
-    response = await agent.before_run(
-        context=context().model_copy(update={"conversation_id": conversation.conversation_id}),
-        history=(AssistantMessage(role="user", content="1"),),
-        user_text="1",
-        external_message_id="om_select_1",
+    assert result.status == "INVALID_ARGUMENTS"
+    assert client.call_counts["update_review_fields"] == 0
+
+
+@pytest.mark.asyncio
+async def test_review_draft_selection_index_rejects_wrong_recommendation_kind() -> None:
+    client = backend()
+    conversation_id = await seed_recommendations(client, kind="PRODUCT_RECOMMENDATION")
+
+    result = await UpdateReviewDraftTool(client).execute(
+        args=UpdateReviewDraftArgs(requirement_id=1, selection_index=1),
+        context=context(conversation_id=conversation_id),
+    )
+
+    assert result.status == "INVALID_ARGUMENTS"
+    assert client.call_counts["update_review_fields"] == 0
+
+
+@pytest.mark.asyncio
+async def test_supplier_recommendation_success_returns_to_llm_observation_loop() -> None:
+    client = backend()
+    conversation_id = await seed_recommendations(client)
+    runtime, llm, agent = build_runtime(
+        client,
+        (
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(
+                        id="recommend",
+                        name="recommend_suppliers_for_requirement",
+                        arguments_json='{"requirement_id":1}',
+                    ),
+                )
+            ),
+            AssistantTurn(content="供应商A、B、C均来自真实历史记录, 请选择希望继续使用的一家。"),
+        ),
+    )
+
+    response = await runtime.run(
+        agent=agent,
+        context=context(conversation_id=conversation_id),
+        history=(),
+        user_text="推荐几个供应商",
+        external_message_id="om_recommend",
     )
 
     assert isinstance(response, AssistantTextResponse)
-    assert "可用供应商" in response.text
-    assert "联系人姓名" in response.text
+    assert len(llm.calls) == 2
+    assert llm.calls[1][-1].role == "tool"
+    assert "candidates" in (llm.calls[1][-1].content or "")
+
+
+@pytest.mark.asyncio
+async def test_natural_language_selection_is_understood_by_llm_and_saved_by_tool() -> None:
+    client = backend()
+    conversation_id = await seed_recommendations(client)
+    runtime, _, agent = build_runtime(
+        client,
+        (
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(
+                        id="select",
+                        name="update_review_draft",
+                        arguments_json='{"requirement_id":1,"selection_index":1}',
+                    ),
+                )
+            ),
+            AssistantTurn(content="供应商已保存, 仍有审核字段需要补充。"),
+        ),
+    )
+
+    response = await runtime.run(
+        agent=agent,
+        context=context(conversation_id=conversation_id),
+        history=(),
+        user_text="就第一个吧。",
+        external_message_id="om_select",
+    )
+
+    assert isinstance(response, AssistantTextResponse)
     assert client._requirements[1].review_fields is not None
     assert client._requirements[1].review_fields.proposed_supplier_id == 11
 
 
 @pytest.mark.asyncio
-async def test_manager_pending_field_answer_is_saved_without_recommending_again() -> None:
+async def test_llm_can_save_multiple_review_fields_in_one_tool_call() -> None:
     client = backend()
-    conversation = await client.get_or_create_agent_conversation(
-        identity=identity(), current_action="ASSISTANT_CHAT"
-    )
-    await client.update_agent_state(
-        identity=identity(),
-        conversation_id=conversation.conversation_id,
-        state=AgentSessionStateUpdate(
-            purchase_request_id=1,
-            pending_field="estimated_unit_price",
-            missing_fields=("estimated_unit_price",),
+    conversation_id = await seed_recommendations(client)
+    tool = UpdateReviewDraftTool(client)
+
+    result = await tool.execute(
+        args=UpdateReviewDraftArgs(
+            requirement_id=1,
+            selection_index=1,
+            supplier_contact_name="张工",
+            supplier_contact_info="13800138000",
+            expected_arrival_date=date(2026, 8, 20),
+            estimated_unit_price="12800",
+            need_contract=True,
+            contract_type="采购合同",
+            payment_method="验收后付款",
         ),
-    )
-    registry = ToolRegistry()
-    registry.register(UpdateReviewDraftTool(client))
-    agent = BuildingManagerAgent(
-        AssistantSessionService(client), ToolExecutor(registry, max_result_chars=5000), client
+        context=context(conversation_id=conversation_id),
     )
 
-    response = await agent.before_run(
-        context=context().model_copy(update={"conversation_id": conversation.conversation_id}),
-        history=(AssistantMessage(role="user", content="16500"),),
-        user_text="16500",
-        external_message_id="om_price_1",
-    )
-
-    assert isinstance(response, AssistantTextResponse)
-    assert client.call_counts["recommend_suppliers"] == 0
-    assert client._requirements[1].review_fields is not None
-    assert client._requirements[1].review_fields.estimated_unit_price == "16500"
+    assert result.status == "SUCCESS"
+    assert result.fields_complete is True
+    assert set(result.updated_fields) >= {
+        "proposed_supplier_id",
+        "supplier_contact_name",
+        "supplier_contact_info",
+        "expected_arrival_date",
+        "estimated_unit_price",
+        "need_contract",
+    }
+    assert result.updated_values["expected_arrival_date"] == "2026-08-20"
+    assert client.call_counts["update_review_fields"] == 1
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "input_date",
-    ("2026年8月28日", "2026-08-28", "2026/8/28", "2026.8.28", "20260828"),
-)
-async def test_manager_arrival_date_formats_are_normalized_and_saved(input_date: str) -> None:
+async def test_ambiguous_supplier_wording_is_not_guessed_by_python() -> None:
     client = backend()
-    conversation = await client.get_or_create_agent_conversation(
-        identity=identity(), current_action="ASSISTANT_CHAT"
-    )
-    await client.update_agent_state(
-        identity=identity(),
-        conversation_id=conversation.conversation_id,
-        state=AgentSessionStateUpdate(
-            purchase_request_id=1,
-            pending_field="expected_arrival_date",
-            missing_fields=("expected_arrival_date",),
-        ),
-    )
-    registry = ToolRegistry()
-    registry.register(UpdateReviewDraftTool(client))
-    agent = BuildingManagerAgent(
-        AssistantSessionService(client), ToolExecutor(registry, max_result_chars=5000), client
-    )
+    conversation_id = await seed_recommendations(client)
+    _, _, agent = build_runtime(client, ())
 
     response = await agent.before_run(
-        context=context().model_copy(update={"conversation_id": conversation.conversation_id}),
-        history=(AssistantMessage(role="user", content=input_date),),
-        user_text=input_date,
-        external_message_id="om_arrival_date_1",
+        context=context(conversation_id=conversation_id),
+        history=(),
+        user_text="还是之前合作最多的那个。",
+        external_message_id="om_ambiguous",
     )
 
-    assert isinstance(response, AssistantTextResponse)
-    assert "2026-08-28" in response.text
-    assert client._requirements[1].review_fields is not None
-    assert client._requirements[1].review_fields.expected_arrival_date.isoformat() == "2026-08-28"
-    assert client.call_counts["list_purchase_records"] == 0
+    assert response is None
+    assert client.call_counts["update_review_fields"] == 0
 
 
 @pytest.mark.asyncio
-async def test_manager_saved_field_acknowledges_before_asking_next_field() -> None:
+async def test_complete_review_draft_returns_formal_card_without_transition() -> None:
     client = backend()
-    conversation = await client.get_or_create_agent_conversation(
-        identity=identity(), current_action="ASSISTANT_CHAT"
-    )
-    await client.update_agent_state(
-        identity=identity(),
-        conversation_id=conversation.conversation_id,
-        state=AgentSessionStateUpdate(
-            purchase_request_id=1,
-            pending_field="payment_method",
-            missing_fields=("payment_method",),
+    conversation_id = await seed_recommendations(client)
+    _, _, agent = build_runtime(client, ())
+    result = await UpdateReviewDraftTool(client).execute(
+        args=UpdateReviewDraftArgs(
+            requirement_id=1,
+            selection_index=1,
+            supplier_contact_name="张工",
+            supplier_contact_info="13800138000",
+            estimated_unit_price="12800",
+            need_contract=False,
+            payment_method="验收后付款",
+            expected_arrival_date=date(2026, 8, 20),
         ),
-    )
-    registry = ToolRegistry()
-    registry.register(UpdateReviewDraftTool(client))
-    agent = BuildingManagerAgent(
-        AssistantSessionService(client), ToolExecutor(registry, max_result_chars=5000), client
+        context=context(conversation_id=conversation_id),
     )
 
-    response = await agent.before_run(
-        context=context().model_copy(update={"conversation_id": conversation.conversation_id}),
-        history=(AssistantMessage(role="user", content="一次性付清"),),
-        user_text="一次性付清",
-        external_message_id="om_payment_method_1",
+    response = await agent.handle_tool_result(
+        result=result,
+        context=context(conversation_id=conversation_id),
+        external_message_id="om_complete",
     )
 
-    assert isinstance(response, AssistantTextResponse)
-    assert "已为您记录付款方式为**一次性付清**" in response.text
-    assert "请提供" in response.text
+    assert result.fields_complete is True
+    assert isinstance(response, AssistantInteractionResponse)
+    assert client._requirements[1].status is RequirementStatus.PENDING_REVIEW
+    assert client.call_counts["reject_requirement"] == 0
+    assert client.call_counts["submit_purchaser"] == 0
+
+
+def test_building_manager_agent_contains_no_natural_language_parser_constants() -> None:
+    assert not hasattr(BuildingManagerAgent, "_SELECTIONS")
+    assert not hasattr(BuildingManagerAgent, "_SELECTION_ALIASES")
+    assert not hasattr(BuildingManagerAgent, "_NEGATIVE_RESPONSES")
 
 
 @pytest.mark.asyncio
-async def test_manager_contact_question_reads_current_recommended_supplier() -> None:
+async def test_building_manager_working_context_contains_backend_review_facts() -> None:
     client = backend()
-    conversation = await client.get_or_create_agent_conversation(
-        identity=identity(), current_action="ASSISTANT_CHAT"
-    )
-    await client.update_agent_state(
-        identity=identity(),
-        conversation_id=conversation.conversation_id,
-        state=AgentSessionStateUpdate(
-            purchase_request_id=1,
-            last_recommendations=(
-                RecommendationReference(
-                    reference_id="supplier:11",
-                    kind="SUPPLIER_RECOMMENDATION",
-                    label="可用供应商",
-                ),
-            ),
-        ),
-    )
-    agent = BuildingManagerAgent(
-        AssistantSessionService(client), ToolExecutor(ToolRegistry(), max_result_chars=5000), client
-    )
+    conversation_id = await seed_recommendations(client)
+    _, _, agent = build_runtime(client, ())
 
-    response = await agent.before_run(
-        context=context().model_copy(update={"conversation_id": conversation.conversation_id}),
-        history=(AssistantMessage(role="user", content="这个供应商的联系人和联系方式是?"),),
-        user_text="这个供应商的联系人和联系方式是?",
-        external_message_id="om_contact_1",
-    )
+    rendered = await agent.working_context(context(conversation_id=conversation_id))
 
-    assert isinstance(response, AssistantTextResponse)
-    assert "13800000000" in response.text
-    assert client.call_counts["get_supplier"] == 1
-
-
-@pytest.mark.asyncio
-async def test_manager_saves_selected_historical_contact_then_asks_next_field() -> None:
-    client = backend()
-    historical = client._requirements[1].model_copy(
-        update={
-            "requirement_id": 90,
-            "requirement_no": "PR-90",
-            "status": RequirementStatus.COMPLETED,
-            "review_fields": ReviewFields(
-                proposed_supplier_id=11,
-                proposed_supplier_name="可用供应商",
-                supplier_contact_name="陈伟",
-                supplier_contact_info="13910000001",
-            ),
-        }
-    )
-    client.seed_requirement(historical)
-    conversation = await client.get_or_create_agent_conversation(
-        identity=identity(), current_action="ASSISTANT_CHAT"
-    )
-    await client.update_agent_state(
-        identity=identity(),
-        conversation_id=conversation.conversation_id,
-        state=AgentSessionStateUpdate(
-            purchase_request_id=1,
-            last_recommendations=(
-                RecommendationReference(
-                    reference_id="supplier:11",
-                    kind="SUPPLIER_RECOMMENDATION",
-                    label="可用供应商",
-                ),
-            ),
-        ),
-    )
-    registry = ToolRegistry()
-    registry.register(UpdateReviewDraftTool(client))
-    agent = BuildingManagerAgent(
-        AssistantSessionService(client), ToolExecutor(registry, max_result_chars=5000), client
-    )
-    ctx = context().model_copy(update={"conversation_id": conversation.conversation_id})
-
-    recommendation = await agent.before_run(
-        context=ctx,
-        history=(AssistantMessage(role="user", content="1"),),
-        user_text="1",
-        external_message_id="om_supplier_1",
-    )
-    selected = await agent.before_run(
-        context=ctx,
-        history=(AssistantMessage(role="user", content="1"),),
-        user_text="1",
-        external_message_id="om_contact_choice_1",
-    )
-
-    assert isinstance(recommendation, AssistantTextResponse)
-    assert "陈伟" in recommendation.text
-    assert isinstance(selected, AssistantTextResponse)
-    assert "已为您记录联系人和联系方式" in selected.text
-    assert client._requirements[1].review_fields is not None
-    assert client._requirements[1].review_fields.supplier_contact_name == "陈伟"
+    assert "requirement_no=PR-1" in rendered
+    assert "application_reason" in rendered
+    assert "网络扩容" in rendered
+    assert "review_draft={}" in rendered
+    assert "供应商A" in rendered
+    assert "supplier:11" not in rendered

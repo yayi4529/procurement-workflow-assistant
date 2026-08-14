@@ -25,6 +25,14 @@ def test_applicant_prompt_does_not_mix_purchaser_or_warehouse_writes() -> None:
 
 def test_each_non_applicant_prompt_exposes_only_its_role_tools() -> None:
     assert "update_review_draft" in BUILDING_MANAGER_PROMPT
+    assert "Backend" in BUILDING_MANAGER_PROMPT
+    assert "selection_index" in BUILDING_MANAGER_PROMPT
+    assert "Observation" in BUILDING_MANAGER_PROMPT
+    assert "正式审批、驳回和提交采购员只能通过正式飞书卡片" in BUILDING_MANAGER_PROMPT
+    assert "不得编造供应商" in BUILDING_MANAGER_PROMPT
+    assert "选1" not in BUILDING_MANAGER_PROMPT
+    assert "第1个" not in BUILDING_MANAGER_PROMPT
+    assert "选择第一个" not in BUILDING_MANAGER_PROMPT
     assert "update_purchase_draft" not in BUILDING_MANAGER_PROMPT
     assert "update_purchase_execution_draft" in PURCHASER_PROMPT
     assert "update_warehouse_receipt_draft" not in PURCHASER_PROMPT

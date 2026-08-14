@@ -12,6 +12,8 @@ from procurement_platform.domain.assistant import (
     AssistantResponse,
     AssistantTextResponse,
 )
+from procurement_platform.domain.assistant_errors import AssistantError
+from procurement_platform.domain.channel import StreamingCardHandle
 from procurement_platform.domain.enums import PlatformType, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
@@ -87,7 +89,14 @@ class BaseMessageHandler:
                 stream = await self._channel_client.begin_streaming_reply(
                     reply_to_message_id=event.external_message_id
                 )
-                response = await self._assistant_service.handle(event)
+                try:
+                    response = await self._assistant_service.handle(event)
+                except AssistantError:
+                    await self._send_assistant_failure(
+                        reply_to_message_id=event.external_message_id,
+                        stream=stream,
+                    )
+                    return
                 if isinstance(response, AssistantTextResponse):
                     if stream is not None:
                         try:
@@ -142,6 +151,23 @@ class BaseMessageHandler:
         await self._channel_client.reply_text(
             reply_to_message_id=event.external_message_id,
             text="采购中心已收到您的消息。智能助手当前未启用。",
+        )
+
+    async def _send_assistant_failure(
+        self, *, reply_to_message_id: str, stream: StreamingCardHandle | None
+    ) -> None:
+        text = "智能助手本次响应超时或暂时不可用, 请稍后重新发送消息。"
+        if stream is not None:
+            try:
+                await self._channel_client.update_streaming_reply(
+                    handle=stream, text=text, finish=True
+                )
+                return
+            except Exception:
+                pass
+        await self._channel_client.reply_interaction(
+            reply_to_message_id=reply_to_message_id,
+            view=self._assistant_text_card(text, title="处理失败"),
         )
 
     @staticmethod
