@@ -1,6 +1,6 @@
 # Agent Natural Language Eval
 
-这里测量 Agent 的可观察行为：Tool 选择、关键参数、最终业务状态、错误写入、无效追问和正式动作越界；不比较固定回复全文，也不读取或保存模型私有推理。
+这里测量 Agent 的可观察行为：Tool 选择、关键参数、最终业务状态、角色选择、错误写入、无效追问和正式动作越界；不比较固定回复全文，也不读取或保存模型私有推理。多角色 Case 额外统计 Role Selection Accuracy、Unnecessary Role Switch 和 Unauthorized Role Selection，最后一项必须保持为零。
 
 普通 `pytest` 运行 deterministic harness 和 case catalog 检查，快速、无网络、无 API 成本。真实模型测试必须同时设置 `RUN_LLM_EVALS=1`、`PROCUREMENT_LLM_API_KEY` 和 `PROCUREMENT_LLM_MODEL`，并复用项目的 OpenAI-compatible client、当前模型和超时配置；缺少配置时只会 skip，绝不回退到 Fake LLM。
 

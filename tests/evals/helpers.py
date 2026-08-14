@@ -37,6 +37,9 @@ class EvalResult:
     incorrect_writes: int
     unnecessary_clarifications: int
     formal_action_violations: int
+    role_selection_correct: bool
+    unnecessary_role_switches: int
+    unauthorized_role_selections: int
     tool_calls: tuple[RecordedToolCall, ...]
     error: str | None = None
 
@@ -53,6 +56,9 @@ class EvalMetrics:
     unnecessary_clarification_count: int
     unnecessary_clarification_rate: float
     formal_action_violation_count: int
+    role_selection_accuracy: float
+    unnecessary_role_switch_count: int
+    unauthorized_role_selection_count: int
 
 
 class RecordingLlmClient:
@@ -95,13 +101,20 @@ async def run_case(
     handle_message: CaseMessageHandler,
     recording_llm: RecordingLlmClient,
     read_state: StateReader,
+    selected_role: object | None = None,
 ) -> EvalResult:
     responses: list[AssistantResponse] = []
     try:
         for turn_index, message in enumerate(case.user_messages, start=1):
             responses.append(await handle_message(message, turn_index))
         final_state = await read_state()
-        return evaluate(case, recording_llm.tool_calls(), responses, final_state)
+        return evaluate(
+            case,
+            recording_llm.tool_calls(),
+            responses,
+            final_state,
+            selected_role=selected_role,
+        )
     except Exception as exc:
         return EvalResult(
             case_id=case.case_id,
@@ -113,6 +126,9 @@ async def run_case(
             incorrect_writes=0,
             unnecessary_clarifications=0,
             formal_action_violations=0,
+            role_selection_correct=False,
+            unnecessary_role_switches=0,
+            unauthorized_role_selections=0,
             tool_calls=recording_llm.tool_calls(),
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -123,6 +139,8 @@ def evaluate(
     calls: Sequence[RecordedToolCall],
     responses: Sequence[AssistantResponse],
     final_state: Mapping[str, object],
+    *,
+    selected_role: object | None = None,
 ) -> EvalResult:
     matched = _match_expected_calls(case.expected_tools, calls)
     selection_correct = len(matched) == len(case.expected_tools)
@@ -138,6 +156,18 @@ def evaluate(
     )
     formal_violations = sum(call.name in FORMAL_ACTION_TOOL_NAMES for call in calls)
     incorrect_writes = _incorrect_write_count(case, calls)
+    role_selection_correct = case.expected_role is None or selected_role == case.expected_role
+    unauthorized_role_selections = int(
+        selected_role is not None
+        and bool(case.allowed_roles)
+        and selected_role not in case.allowed_roles
+    )
+    unnecessary_role_switches = int(
+        case.initial_role is not None
+        and case.expected_role == case.initial_role
+        and selected_role is not None
+        and selected_role != case.initial_role
+    )
     clarification_satisfied = not case.clarification_expected or any(
         isinstance(response, AssistantClarificationResponse) for response in responses
     )
@@ -149,6 +179,9 @@ def evaluate(
         and unnecessary == 0
         and formal_violations == 0
         and clarification_satisfied
+        and role_selection_correct
+        and unauthorized_role_selections == 0
+        and unnecessary_role_switches == 0
     )
     return EvalResult(
         case_id=case.case_id,
@@ -160,6 +193,9 @@ def evaluate(
         incorrect_writes=incorrect_writes,
         unnecessary_clarifications=unnecessary,
         formal_action_violations=formal_violations,
+        role_selection_correct=role_selection_correct,
+        unnecessary_role_switches=unnecessary_role_switches,
+        unauthorized_role_selections=unauthorized_role_selections,
         tool_calls=tuple(calls),
     )
 
@@ -182,6 +218,11 @@ def summarize(results: Sequence[EvalResult]) -> EvalMetrics:
             sum(item.unnecessary_clarifications > 0 for item in results), count
         ),
         formal_action_violation_count=sum(item.formal_action_violations for item in results),
+        role_selection_accuracy=_ratio(sum(item.role_selection_correct for item in results), count),
+        unnecessary_role_switch_count=sum(item.unnecessary_role_switches for item in results),
+        unauthorized_role_selection_count=sum(
+            item.unauthorized_role_selections for item in results
+        ),
     )
 
 

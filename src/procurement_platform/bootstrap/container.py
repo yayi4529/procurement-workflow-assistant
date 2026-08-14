@@ -22,7 +22,21 @@ from procurement_platform.adapters.persistence.memory_notification_delivery_stor
 from procurement_platform.application.applicant.action_router import ApplicantActionRouter
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
 from procurement_platform.application.assistant.agent_router import AgentRouter
-from procurement_platform.application.assistant.agent_tools import (
+from procurement_platform.application.assistant.agents.applicant import ApplicantAgent
+from procurement_platform.application.assistant.agents.building_manager import BuildingManagerAgent
+from procurement_platform.application.assistant.agents.purchaser import PurchaserAgent
+from procurement_platform.application.assistant.agents.warehouse import WarehouseAgent
+from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
+from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
+from procurement_platform.application.assistant.role_intent import LlmRoleIntentResolver
+from procurement_platform.application.assistant.runtime import AssistantRuntime
+from procurement_platform.application.assistant.service import AssistantService
+from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.supplier_recommendation import (
+    RecommendSuppliersForRequirementTool,
+)
+from procurement_platform.application.assistant.tool_policy import ToolPolicy
+from procurement_platform.application.assistant.tooling import (
     FillSelectedSupplierProfileTool,
     PreparePurchasePrefillTool,
     PurchasePrefillNotificationService,
@@ -34,19 +48,6 @@ from procurement_platform.application.assistant.agent_tools import (
     UpdateReviewDraftTool,
     UpdateWarehouseReceiptDraftTool,
 )
-from procurement_platform.application.assistant.agents.applicant import ApplicantAgent
-from procurement_platform.application.assistant.agents.building_manager import BuildingManagerAgent
-from procurement_platform.application.assistant.agents.purchaser import PurchaserAgent
-from procurement_platform.application.assistant.agents.warehouse import WarehouseAgent
-from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
-from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
-from procurement_platform.application.assistant.runtime import AssistantRuntime
-from procurement_platform.application.assistant.service import AssistantService
-from procurement_platform.application.assistant.session_service import AssistantSessionService
-from procurement_platform.application.assistant.supplier_recommendation import (
-    RecommendSuppliersForRequirementTool,
-)
-from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
 from procurement_platform.application.building_manager.action_router import (
     BuildingManagerActionRouter,
@@ -198,6 +199,7 @@ class ApplicationContainer:
                     agent_router=AgentRouter(agents),
                     runtime=runtime,
                     max_history_messages=settings.llm_max_history_messages,
+                    role_intent_resolver=LlmRoleIntentResolver(llm_client),
                 )
                 container.procurement_assistant = ProcurementAssistant(container.assistant_service)
             container.message_handler = BaseMessageHandler(

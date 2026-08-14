@@ -26,6 +26,9 @@ class AgentEvalCase:
     clarification_expected: bool = False
     expected_no_clarification: bool = False
     fixture: str = "default"
+    allowed_roles: tuple[RoleCode, ...] = ()
+    initial_role: RoleCode | None = None
+    expected_role: RoleCode | None = None
 
     def __post_init__(self) -> None:
         if not self.case_id or not self.user_messages:
@@ -566,4 +569,48 @@ WAREHOUSE_CASES = (
     ),
 )
 
-ALL_CASES = APPLICANT_CASES + BUILDING_MANAGER_CASES + PURCHASER_CASES + WAREHOUSE_CASES
+MULTI_ROLE_CASES = (
+    AgentEvalCase(
+        "multi_role_applicant_to_manager_001",
+        RoleCode.BUILDING_MANAGER,
+        ("看一下现在有哪些待审核的采购单。",),
+        (tool("query_purchase_requests"),),
+        fixture="multi_role_review_queue",
+        allowed_roles=(RoleCode.APPLICANT, RoleCode.BUILDING_MANAGER),
+        initial_role=RoleCode.APPLICANT,
+        expected_role=RoleCode.BUILDING_MANAGER,
+    ),
+    AgentEvalCase(
+        "multi_role_manager_to_applicant_001",
+        RoleCode.APPLICANT,
+        ("我还想新采购两台 UPS。",),
+        (tool("update_purchase_draft", quantity=2),),
+        fixture="multi_role_new_request",
+        allowed_roles=(RoleCode.APPLICANT, RoleCode.BUILDING_MANAGER),
+        initial_role=RoleCode.BUILDING_MANAGER,
+        expected_role=RoleCode.APPLICANT,
+    ),
+    AgentEvalCase(
+        "multi_role_keep_current_001",
+        RoleCode.BUILDING_MANAGER,
+        ("这个供应商怎么样？",),
+        (tool("query_supplier_profile"),),
+        fixture="multi_role_selected_supplier",
+        allowed_roles=(RoleCode.APPLICANT, RoleCode.BUILDING_MANAGER),
+        initial_role=RoleCode.BUILDING_MANAGER,
+        expected_role=RoleCode.BUILDING_MANAGER,
+    ),
+    AgentEvalCase(
+        "multi_role_ambiguous_001",
+        RoleCode.APPLICANT,
+        ("看看这单。",),
+        fixture="multi_role_ambiguous",
+        allowed_roles=(RoleCode.APPLICANT, RoleCode.BUILDING_MANAGER),
+        initial_role=RoleCode.APPLICANT,
+        expected_role=RoleCode.APPLICANT,
+    ),
+)
+
+ALL_CASES = (
+    APPLICANT_CASES + BUILDING_MANAGER_CASES + PURCHASER_CASES + WAREHOUSE_CASES + MULTI_ROLE_CASES
+)

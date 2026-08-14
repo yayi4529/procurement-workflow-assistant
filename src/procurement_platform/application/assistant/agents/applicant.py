@@ -3,14 +3,14 @@
 # ruff: noqa: RUF001
 
 from procurement_platform.application.applicant.card_factory import ApplicantCardFactory
-from procurement_platform.application.assistant.agent_tools import (
+from procurement_platform.application.assistant.agents.base import BasicRoleAgent
+from procurement_platform.application.assistant.prompts.applicant import APPLICANT_PROMPT
+from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.tooling import (
     QueryPurchaseRequestsResult,
     RecommendProductOptionsResult,
     UpdatePurchaseDraftResult,
 )
-from procurement_platform.application.assistant.agents.base import BasicRoleAgent
-from procurement_platform.application.assistant.prompts.applicant import APPLICANT_PROMPT
-from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.assistant import (

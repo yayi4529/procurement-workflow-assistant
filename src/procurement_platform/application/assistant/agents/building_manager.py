@@ -1,11 +1,11 @@
 # ruff: noqa: RUF001
 
-from procurement_platform.application.assistant.agent_tools import UpdateReviewDraftResult
 from procurement_platform.application.assistant.agents.base import BasicRoleAgent
 from procurement_platform.application.assistant.prompts.building_manager import (
     BUILDING_MANAGER_PROMPT,
 )
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.tooling import UpdateReviewDraftResult
 from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.application.building_manager.card_factory import (
     BuildingManagerCardFactory,

@@ -6,6 +6,7 @@ from procurement_platform.application.assistant.agent_router import (
     RoleSelectionRequired,
 )
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
+from procurement_platform.application.assistant.role_intent import RoleIntentResolver
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.turn_context import AgentTurnContext
@@ -36,6 +37,7 @@ class AssistantService:
         agent_router: AgentRouter,
         runtime: AssistantRuntime,
         max_history_messages: int,
+        role_intent_resolver: RoleIntentResolver | None = None,
     ) -> None:
         self._backend_client = backend_client
         self._session_service = session_service
@@ -43,6 +45,7 @@ class AssistantService:
         self._agent_router = agent_router
         self._runtime = runtime
         self._max_history_messages = max_history_messages
+        self._role_intent_resolver = role_intent_resolver
 
     async def handle(self, event: TextMessageEvent) -> AssistantResponse:
         if event.external_message_id is None:
@@ -110,6 +113,33 @@ class AssistantService:
                 f"已选择{ROLE_LABELS[selected]}助手，请继续告诉我需要处理的内容。",
             )
         agent = resolution
+        supported_roles = self._agent_router.supported_roles(current_user)
+        if (
+            self._role_intent_resolver is not None
+            and len(supported_roles) > 1
+            and state is not None
+            and state.focused_role is not None
+        ):
+            try:
+                intent = await self._role_intent_resolver.resolve(
+                    user_text=event.text,
+                    allowed_roles=supported_roles,
+                    focused_role=agent.role,
+                )
+            except Exception:
+                intent = None
+            if intent is not None and intent.confidence == "HIGH" and intent.role is not None:
+                candidate = self._agent_router.agent_for_role(
+                    current_user=current_user, role=intent.role
+                )
+                if candidate is not None and candidate.role != agent.role:
+                    await self._save_focused_role(
+                        identity, conversation.conversation_id, state, candidate.role
+                    )
+                    state = await self._session_service.state(
+                        identity=identity, conversation_id=conversation.conversation_id
+                    )
+                    agent = candidate
         if state is None or state.focused_role != agent.role:
             await self._save_focused_role(identity, conversation.conversation_id, state, agent.role)
             state = await self._session_service.state(

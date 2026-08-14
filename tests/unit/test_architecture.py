@@ -87,3 +87,24 @@ def test_assistant_runtime_has_no_role_business_dependencies() -> None:
         "warehouse",
     )
     assert all(name not in source for name in forbidden)
+
+
+def test_agent_tools_is_only_a_compatibility_facade() -> None:
+    path = Path("src/procurement_platform/application/assistant/agent_tools.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    assert not any(isinstance(node, (ast.ClassDef, ast.FunctionDef)) for node in tree.body)
+
+
+def test_tooling_modules_are_split_by_role_without_agent_dependencies() -> None:
+    root = Path("src/procurement_platform/application/assistant/tooling")
+    assert {path.name for path in root.glob("*.py")} >= {
+        "__init__.py",
+        "common.py",
+        "applicant.py",
+        "building_manager.py",
+        "purchaser.py",
+        "warehouse.py",
+    }
+    for path in root.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        assert "application.assistant.agents" not in source, path

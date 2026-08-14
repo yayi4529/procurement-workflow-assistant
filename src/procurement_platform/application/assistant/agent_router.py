@@ -27,15 +27,21 @@ class AgentRouter:
     def resolve(
         self, *, current_user: CurrentUser, state: AgentSessionState | None
     ) -> RoleAgent | RoleSelectionRequired:
-        user_roles = {item.role_code for item in current_user.roles}
-        supported = tuple(
-            role for role in ROLE_LABELS if role in user_roles and role in self._agents
-        )
+        supported = self.supported_roles(current_user)
         if state is not None and state.focused_role in supported:
             return self._agents[state.focused_role]
         if len(supported) == 1:
             return self._agents[supported[0]]
         return RoleSelectionRequired(roles=supported)
+
+    def supported_roles(self, current_user: CurrentUser) -> tuple[RoleCode, ...]:
+        user_roles = {item.role_code for item in current_user.roles}
+        return tuple(role for role in ROLE_LABELS if role in user_roles and role in self._agents)
+
+    def agent_for_role(self, *, current_user: CurrentUser, role: RoleCode) -> RoleAgent | None:
+        if role not in self.supported_roles(current_user):
+            return None
+        return self._agents[role]
 
     def selected_role(self, text: str, roles: tuple[RoleCode, ...]) -> RoleCode | None:
         normalized = text.strip().rstrip("。.!！")

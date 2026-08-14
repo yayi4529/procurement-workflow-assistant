@@ -1,11 +1,11 @@
 # ruff: noqa: RUF001
 
-from procurement_platform.application.assistant.agent_tools import (
-    UpdateWarehouseReceiptDraftResult,
-)
 from procurement_platform.application.assistant.agents.base import BasicRoleAgent
 from procurement_platform.application.assistant.prompts.warehouse import WAREHOUSE_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.tooling import (
+    UpdateWarehouseReceiptDraftResult,
+)
 from procurement_platform.application.warehouse.card_factory import WarehouseCardFactory
 from procurement_platform.domain.assistant import (
     AssistantInteractionResponse,

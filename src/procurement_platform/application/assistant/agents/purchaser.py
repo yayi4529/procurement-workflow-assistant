@@ -1,11 +1,11 @@
-from procurement_platform.application.assistant.agent_tools import (
+from procurement_platform.application.assistant.agents.base import BasicRoleAgent
+from procurement_platform.application.assistant.prompts.purchaser import PURCHASER_PROMPT
+from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.tooling import (
     FillSelectedSupplierProfileResult,
     PreparePurchasePrefillResult,
     UpdatePurchaseExecutionDraftResult,
 )
-from procurement_platform.application.assistant.agents.base import BasicRoleAgent
-from procurement_platform.application.assistant.prompts.purchaser import PURCHASER_PROMPT
-from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.application.purchaser.card_factory import PurchaserCardFactory
 from procurement_platform.domain.assistant import (
