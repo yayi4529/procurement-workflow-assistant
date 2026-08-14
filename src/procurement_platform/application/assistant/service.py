@@ -8,6 +8,7 @@ from procurement_platform.application.assistant.agent_router import (
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantClarificationResponse,
     AssistantMessage,
@@ -127,12 +128,25 @@ class AssistantService:
             conversation_id=conversation.conversation_id,
             external_message_id=event.external_message_id,
         )
+        active_requirement = None
+        if state.purchase_request_id is not None:
+            active_requirement = await self._session_service.requirement(
+                identity=identity, requirement_id=state.purchase_request_id
+            )
+        turn_context = AgentTurnContext(
+            current_user=current_user,
+            active_role=agent.role,
+            session_state=state,
+            active_requirement=active_requirement,
+            recent_history=history,
+            current_recommendations=state.last_recommendations,
+            tool_context=context,
+        )
         return await self._runtime.run(
             agent=agent,
-            context=context,
-            history=history,
-            user_text=event.text,
             external_message_id=event.external_message_id,
+            user_text=event.text,
+            turn_context=turn_context,
         )
 
     async def _history(

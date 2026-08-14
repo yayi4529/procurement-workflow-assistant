@@ -3,6 +3,7 @@
 from procurement_platform.application.assistant.agents.protocol import RoleAgent
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
+from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantMessage,
     AssistantResponse,
@@ -35,13 +36,23 @@ class AssistantRuntime:
         self,
         *,
         agent: RoleAgent,
-        context: AssistantToolContext,
-        history: tuple[AssistantMessage, ...],
-        user_text: str,
+        context: AssistantToolContext | None = None,
+        history: tuple[AssistantMessage, ...] = (),
+        user_text: str = "",
         external_message_id: str,
+        turn_context: AgentTurnContext | None = None,
     ) -> AssistantResponse:
+        if turn_context is not None:
+            context = turn_context.tool_context
+            history = turn_context.recent_history
+        if context is None:
+            raise ValueError("context or turn_context is required")
         context_builder = getattr(agent, "working_context", None)
-        working_context = await context_builder(context) if context_builder else None
+        working_context = (
+            await context_builder(turn_context)
+            if context_builder and turn_context is not None
+            else None
+        )
         if context_builder:
             messages = agent.build_messages(
                 context=context, history=history, working_context=working_context

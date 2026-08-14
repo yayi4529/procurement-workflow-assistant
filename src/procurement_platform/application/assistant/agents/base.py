@@ -1,5 +1,6 @@
 from procurement_platform.application.assistant.prompts.common import COMMON_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantMessage,
     AssistantResponse,
@@ -57,12 +58,41 @@ class BasicRoleAgent:
         )
         return (system, *context_message, *history)
 
-    async def working_context(self, context: AssistantToolContext) -> str:
+    async def working_context(self, context: AssistantToolContext | AgentTurnContext) -> str:
         from procurement_platform.application.assistant.context_composer import AgentContextComposer
 
-        return await AgentContextComposer(self._session_service).compose(
-            context=context, role=self.role
+        if isinstance(context, AgentTurnContext):
+            return AgentContextComposer.compose(turn_context=context)
+        from procurement_platform.domain.enums import PlatformType
+        from procurement_platform.domain.identity import PlatformIdentity
+
+        identity = PlatformIdentity.create(
+            PlatformType(context.platform_type), context.platform_user_id
         )
+        try:
+            state = await self._session_service.state(
+                identity=identity, conversation_id=context.conversation_id
+            )
+        except Exception:
+            state = None
+        detail = None
+        if state is not None and state.purchase_request_id is not None:
+            try:
+                detail = await self._session_service.requirement(
+                    identity=identity, requirement_id=state.purchase_request_id
+                )
+            except Exception:
+                detail = None
+        snapshot = AgentTurnContext(
+            current_user=context.current_user,
+            active_role=self.role,
+            session_state=state,
+            active_requirement=detail,
+            recent_history=(),
+            current_recommendations=state.last_recommendations if state else (),
+            tool_context=context,
+        )
+        return AgentContextComposer.compose(turn_context=snapshot)
 
     async def before_run(
         self,
