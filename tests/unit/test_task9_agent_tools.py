@@ -1,12 +1,16 @@
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
+from pydantic import BaseModel
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
+from procurement_platform.adapters.llm.fake_llm_client import FakeLlmClient
 from procurement_platform.application.assistant.agent_tools import (
     FillSelectedSupplierProfileArgs,
     FillSelectedSupplierProfileTool,
     PreparePurchasePrefillArgs,
+    PreparePurchasePrefillResult,
     PreparePurchasePrefillTool,
     QueryPurchaseRequestsArgs,
     QueryPurchaseRequestsTool,
@@ -17,6 +21,7 @@ from procurement_platform.application.assistant.agent_tools import (
     UpdatePurchaseDraftArgs,
     UpdatePurchaseDraftTool,
     UpdatePurchaseExecutionDraftArgs,
+    UpdatePurchaseExecutionDraftResult,
     UpdatePurchaseExecutionDraftTool,
     UpdateReviewDraftArgs,
     UpdateReviewDraftTool,
@@ -24,6 +29,8 @@ from procurement_platform.application.assistant.agent_tools import (
     UpdateWarehouseReceiptDraftTool,
 )
 from procurement_platform.application.assistant.agents.purchaser import PurchaserAgent
+from procurement_platform.application.assistant.prompts.purchaser import PURCHASER_PROMPT
+from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.supplier_recommendation import (
     RecommendSuppliersForRequirementArgs,
@@ -33,11 +40,18 @@ from procurement_platform.application.assistant.temporal_range_resolver import (
     TemporalRangeResolver,
 )
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
-from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
+from procurement_platform.application.assistant.tools import (
+    AssistantTool,
+    ToolExecutor,
+    ToolRegistry,
+)
 from procurement_platform.domain.assistant import (
     AssistantInteractionResponse,
     AssistantTextResponse,
+    AssistantToolCall,
     AssistantToolContext,
+    AssistantToolResult,
+    AssistantTurn,
 )
 from procurement_platform.domain.assistant_session import (
     AgentSessionStateUpdate,
@@ -1001,6 +1015,7 @@ async def test_supplier_profile_falls_back_to_purchase_record_supplier_id() -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="natural-language supplier intent now belongs to the LLM")
 async def test_purchaser_can_query_any_named_supplier_bank_details() -> None:
     client = FakeBackendClient(user(RoleCode.PURCHASER))
     conversation = await client.get_or_create_agent_conversation(
@@ -1057,6 +1072,7 @@ async def test_purchaser_can_query_any_named_supplier_bank_details() -> None:
         "帮我查上海亿清开户行和银行账号",
     ),
 )
+@pytest.mark.skip(reason="natural-language supplier intent now belongs to the LLM")
 async def test_named_supplier_query_accepts_reply_prefix_and_omitted_de(
     user_text: str,
 ) -> None:
@@ -1173,7 +1189,7 @@ async def test_purchase_execution_calculates_decimal_total_and_never_submits() -
 
 
 @pytest.mark.asyncio
-async def test_fill_selected_supplier_profile_reloads_master_and_asks_for_unit_price() -> None:
+async def test_fill_selected_supplier_profile_reloads_and_saves_exact_master_data() -> None:
     client = FakeBackendClient(user(RoleCode.PURCHASER))
     await client.get_or_create_agent_conversation(
         identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
@@ -1193,12 +1209,13 @@ async def test_fill_selected_supplier_profile_reloads_master_and_asks_for_unit_p
         context=context(RoleCode.PURCHASER),
     )
 
-    assert result.status == "NEED_MORE_INFORMATION"
+    assert result.status == "SUCCESS"
     assert result.supplier_name == "供应商A"
     assert result.next_missing_field == "actual_unit_price"
-    assert "将在采购执行信息完整后一起保存" in (result.user_message or "")
+    assert "supplier_id" in result.updated_fields
+    assert "actual_unit_price" in result.missing_fields
     assert client.call_counts["get_supplier"] == 1
-    assert client.call_counts["update_purchase_fields"] == 0
+    assert client.call_counts["update_purchase_fields"] == 1
 
 
 @pytest.mark.asyncio
@@ -1262,6 +1279,7 @@ async def test_purchase_execution_uses_system_time_when_price_is_provided() -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="pending-field interpretation now belongs to the LLM")
 async def test_purchaser_pending_unit_price_reply_bypasses_llm_and_returns_card() -> None:
     client = FakeBackendClient(user(RoleCode.PURCHASER))
     await client.get_or_create_agent_conversation(
@@ -1319,6 +1337,7 @@ async def test_purchaser_pending_unit_price_reply_bypasses_llm_and_returns_card(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="natural-language requirement lookup now belongs to the LLM")
 async def test_purchaser_open_requirement_number_returns_formal_card_without_llm() -> None:
     client = FakeBackendClient(user(RoleCode.PURCHASER))
     await client.get_or_create_agent_conversation(
@@ -1389,6 +1408,7 @@ async def test_purchaser_open_requirement_number_returns_formal_card_without_llm
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="requirement references now resolve through LLM tool calls")
 async def test_explicit_requirement_number_overrides_stale_supplier_focus() -> None:
     client = FakeBackendClient(user(RoleCode.PURCHASER))
     conversation = await client.get_or_create_agent_conversation(
@@ -1458,6 +1478,7 @@ async def test_explicit_requirement_number_overrides_stale_supplier_focus() -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="ambiguous references now belong to the LLM")
 async def test_ambiguous_this_requirement_does_not_use_stale_supplier_focus() -> None:
     client = FakeBackendClient(user(RoleCode.PURCHASER))
     conversation = await client.get_or_create_agent_conversation(
@@ -1491,6 +1512,7 @@ async def test_ambiguous_this_requirement_does_not_use_stale_supplier_focus() ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="multi-step supplier filling now belongs to the LLM loop")
 async def test_fill_this_purchase_order_uses_latest_explicit_focus() -> None:
     client = FakeBackendClient(user(RoleCode.PURCHASER))
     conversation = await client.get_or_create_agent_conversation(
@@ -1565,6 +1587,7 @@ async def test_fill_this_purchase_order_uses_latest_explicit_focus() -> None:
         "该供应商的信息保存到PR-20260811-5FF01FBA",
     ),
 )
+@pytest.mark.skip(reason="PurchaserAgent no longer has a Python intent parser")
 def test_supplier_profile_fill_intent_accepts_natural_word_order(text: str) -> None:
     assert PurchaserAgent._is_supplier_profile_fill_request(text)
 
@@ -1578,8 +1601,247 @@ def test_supplier_profile_fill_intent_accepts_natural_word_order(text: str) -> N
         "保存这个采购单",
     ),
 )
+@pytest.mark.skip(reason="PurchaserAgent no longer has a Python intent parser")
 def test_supplier_profile_fill_intent_rejects_queries_and_other_fields(text: str) -> None:
     assert not PurchaserAgent._is_supplier_profile_fill_request(text)
+
+
+def purchaser_runtime(
+    *,
+    client: FakeBackendClient,
+    turns: tuple[AssistantTurn, ...],
+    tools: tuple[object, ...],
+) -> tuple[AssistantRuntime, FakeLlmClient]:
+    registry = ToolRegistry()
+    for tool in tools:
+        registry.register(cast(AssistantTool[BaseModel, AssistantToolResult], tool))
+    llm = FakeLlmClient(turns=turns)
+    executor = ToolExecutor(registry, max_result_chars=10_000)
+    return (
+        AssistantRuntime(
+            llm_client=llm,
+            tool_registry=registry,
+            tool_executor=executor,
+            tool_policy=ToolPolicy(),
+            max_tool_steps=5,
+        ),
+        llm,
+    )
+
+
+def tool_call(identifier: str, name: str, arguments_json: str) -> AssistantToolCall:
+    return AssistantToolCall(id=identifier, name=name, arguments_json=arguments_json)
+
+
+@pytest.mark.asyncio
+async def test_purchaser_multi_tool_observation_chain_is_llm_directed() -> None:
+    client = FakeBackendClient(user(RoleCode.PURCHASER))
+    await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
+    )
+    client.seed_requirement(detail(RoleCode.PURCHASER, RequirementStatus.PURCHASING))
+    client.seed_supplier(
+        SupplierDetail(
+            supplier_id=10,
+            supplier_name="供应商A",
+            supplier_tax_number="91310000TEST",
+            bank_name="测试银行",
+            bank_account="TEST-ACCOUNT",
+            registered_address="测试地址",
+            contract_contact_info="陈伟 13910000001",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    engine, llm = purchaser_runtime(
+        client=client,
+        turns=(
+            AssistantTurn(
+                tool_calls=(
+                    tool_call("prefill", "prepare_purchase_prefill", '{"requirement_id":1}'),
+                )
+            ),
+            AssistantTurn(
+                tool_calls=(
+                    tool_call("fill", "fill_selected_supplier_profile", '{"requirement_id":1}'),
+                )
+            ),
+            AssistantTurn(content="精确供应商资料已补齐, 实际单价仍需你确认。"),
+        ),
+        tools=(
+            PreparePurchasePrefillTool(client),
+            FillSelectedSupplierProfileTool(client),
+        ),
+    )
+    registry = ToolRegistry()
+    executor = ToolExecutor(registry, max_result_chars=10_000)
+    agent = PurchaserAgent(AssistantSessionService(client), executor, client)
+
+    response = await engine.run(
+        agent=agent,
+        context=context(RoleCode.PURCHASER, active_requirement_id=1),
+        history=(),
+        user_text="把这单能自动补的都补一下, 再告诉我还缺什么。",
+        external_message_id="om-chain",
+    )
+
+    assert isinstance(response, AssistantTextResponse)
+    assert len(llm.calls) == 3
+    assert llm.calls[1][-1].role == "tool"
+    assert llm.calls[2][-1].role == "tool"
+    saved = client._requirements[1].purchase_fields
+    assert saved is not None
+    assert saved.supplier_tax_number == "91310000TEST"
+    assert saved.actual_unit_price is None
+
+
+@pytest.mark.asyncio
+async def test_purchaser_llm_supplies_unit_price_without_python_parser() -> None:
+    client = FakeBackendClient(user(RoleCode.PURCHASER))
+    await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
+    )
+    client.seed_requirement(detail(RoleCode.PURCHASER, RequirementStatus.PURCHASING))
+    client.seed_supplier(
+        SupplierDetail(
+            supplier_id=10,
+            supplier_name="供应商A",
+            bank_name="测试银行",
+            blacklist=SupplierBlacklistSummary(active=False),
+        )
+    )
+    engine, _ = purchaser_runtime(
+        client=client,
+        turns=(
+            AssistantTurn(
+                tool_calls=(
+                    tool_call(
+                        "price",
+                        "update_purchase_execution_draft",
+                        '{"requirement_id":1,"actual_unit_price":"12680"}',
+                    ),
+                )
+            ),
+            AssistantTurn(content="实际成交价已保存, 仍有资料需要补充。"),
+        ),
+        tools=(UpdatePurchaseExecutionDraftTool(client),),
+    )
+    executor = ToolExecutor(ToolRegistry(), max_result_chars=10_000)
+    agent = PurchaserAgent(AssistantSessionService(client), executor, client)
+
+    await engine.run(
+        agent=agent,
+        context=context(RoleCode.PURCHASER, active_requirement_id=1),
+        history=(),
+        user_text="实际成交价每台 12680。",
+        external_message_id="om-price-agentic",
+    )
+
+    saved = client._requirements[1].purchase_fields
+    assert saved is not None
+    assert saved.actual_unit_price == "12680"
+
+
+@pytest.mark.asyncio
+async def test_purchaser_llm_queries_requirement_number_without_python_regex() -> None:
+    client = FakeBackendClient(user(RoleCode.PURCHASER))
+    await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
+    )
+    target = detail(
+        RoleCode.PURCHASER, RequirementStatus.PURCHASING, requirement_id=91092
+    ).model_copy(update={"requirement_no": "PR202608001"})
+    client.seed_requirement(target)
+    client.purchase_records.append(
+        PurchaseRecord(
+            requirement_id=91092,
+            requirement_no="PR202608001",
+            device_name="UPS功率模块",
+            status=RequirementStatus.PURCHASING,
+            created_at=datetime(2026, 8, 10, tzinfo=UTC),
+        )
+    )
+    engine, llm = purchaser_runtime(
+        client=client,
+        turns=(
+            AssistantTurn(
+                tool_calls=(
+                    tool_call(
+                        "detail",
+                        "query_purchase_requests",
+                        '{"operation":"GET_DETAIL","requirement_no":"PR202608001"}',
+                    ),
+                )
+            ),
+            AssistantTurn(content="已查询到该采购单。"),
+        ),
+        tools=(QueryPurchaseRequestsTool(client),),
+    )
+    executor = ToolExecutor(ToolRegistry(), max_result_chars=10_000)
+    agent = PurchaserAgent(AssistantSessionService(client), executor, client)
+
+    await engine.run(
+        agent=agent,
+        context=context(RoleCode.PURCHASER),
+        history=(),
+        user_text="帮我打开 PR202608001 看一下。",
+        external_message_id="om-query-number",
+    )
+
+    assert client.call_counts["list_purchase_records"] == 1
+    assert client.call_counts["get_requirement"] == 1
+    assert llm.calls[1][-1].role == "tool"
+
+
+@pytest.mark.asyncio
+async def test_purchaser_complete_draft_returns_formal_card_only() -> None:
+    client = FakeBackendClient(user(RoleCode.PURCHASER))
+    await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.PURCHASER), current_action="ASSISTANT_CHAT"
+    )
+    current = detail(RoleCode.PURCHASER, RequirementStatus.PURCHASING)
+    client.seed_requirement(current)
+    executor = ToolExecutor(ToolRegistry(), max_result_chars=10_000)
+    agent = PurchaserAgent(AssistantSessionService(client), executor, client)
+
+    response = await agent.handle_tool_result(
+        result=UpdatePurchaseExecutionDraftResult(
+            status="SUCCESS",
+            requirement_id=1,
+            requirement_version=2,
+            fields_complete=True,
+        ),
+        context=context(RoleCode.PURCHASER),
+        external_message_id="om-complete",
+    )
+
+    assert isinstance(response, AssistantInteractionResponse)
+    assert response.view.title == "采购员采购执行"
+    assert client.call_counts["submit_warehouse"] == 0
+
+
+def test_purchaser_prefill_resolutions_are_not_silently_confirmed() -> None:
+    result = PreparePurchasePrefillResult(
+        status="SUCCESS",
+        requirement_id=1,
+        fields=(
+            {
+                "field_name": "actual_unit_price",
+                "value": "12800",
+                "resolution": "RECOMMENDED",
+                "source": "PURCHASE_HISTORY",
+            },
+        ),
+    )
+
+    assert result.fields[0].resolution == "RECOMMENDED"
+    assert "RECOMMENDED" in PURCHASER_PROMPT
+    assert "不等于用户确认" in PURCHASER_PROMPT
+
+
+def test_purchaser_agent_has_no_python_natural_language_router() -> None:
+    assert "before_run" not in PurchaserAgent.__dict__
+    assert "_is_supplier_profile_fill_request" not in PurchaserAgent.__dict__
+    assert "_requirement_id_from_text" not in PurchaserAgent.__dict__
 
 
 @pytest.mark.asyncio

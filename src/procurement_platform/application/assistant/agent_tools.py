@@ -1380,6 +1380,9 @@ class FillSelectedSupplierProfileArgs(StrictArgs):
 class FillSelectedSupplierProfileResult(AssistantToolResult):
     supplier_name: str | None = None
     next_missing_field: Literal["actual_unit_price"] | None = None
+    updated_fields: tuple[str, ...] = ()
+    missing_fields: tuple[str, ...] = ()
+    fields_complete: bool = False
 
 
 class FillSelectedSupplierProfileTool:
@@ -1422,38 +1425,23 @@ class FillSelectedSupplierProfileTool:
             return FillSelectedSupplierProfileResult(
                 status="NOT_FOUND", user_message="当前采购单没有可确认的供应商记录"
             )
-        existing = detail.purchase_fields or PurchaseFields()
-        next_missing_field: Literal["actual_unit_price"] | None
-        if not existing.actual_unit_price:
-            next_missing_field = "actual_unit_price"
-            message = (
-                f"已从供应商主数据读取{supplier.supplier_name}的可用资料, "
-                "将在采购执行信息完整后一起保存。请问实际采购单价是多少?"
-            )
-        else:
-            saved = await UpdatePurchaseExecutionDraftTool(self._backend).execute(
-                args=UpdatePurchaseExecutionDraftArgs(
-                    requirement_id=args.requirement_id,
-                    actual_unit_price=existing.actual_unit_price,
-                    tax_rate=existing.tax_rate,
-                    purchased_at=existing.purchased_at or context.current_time,
-                    purchase_remark=existing.purchase_remark,
-                ),
-                context=context,
-            )
-            if saved.status != "SUCCESS":
-                return FillSelectedSupplierProfileResult(
-                    status=saved.status,
-                    requirement_id=args.requirement_id,
-                    user_message=saved.user_message,
-                )
-            return FillSelectedSupplierProfileResult(
-                status="SUCCESS",
-                requirement_id=args.requirement_id,
-                requirement_version=saved.requirement_version,
-                supplier_name=supplier.supplier_name,
-                user_message=f"已将{supplier.supplier_name}的最新主数据保存到采购单。",
-            )
+        exact_fields = {
+            "supplier_id": supplier.supplier_id,
+            "supplier_tax_number": supplier.supplier_tax_number,
+            "bank_name": supplier.bank_name,
+            "bank_account": supplier.bank_account,
+            "registered_address": supplier.registered_address,
+            "contract_contact_info": supplier.contract_contact_info,
+        }
+        saved = await self._backend.update_purchase_fields(
+            identity=identity,
+            requirement_id=args.requirement_id,
+            expected_version=detail.version,
+            fields=PurchaseFieldsPatch.model_validate(exact_fields),
+        )
+        next_missing_field: Literal["actual_unit_price"] | None = (
+            "actual_unit_price" if "actual_unit_price" in saved.missing_fields else None
+        )
         await self._session.save(
             identity=identity,
             context=context,
@@ -1463,12 +1451,15 @@ class FillSelectedSupplierProfileTool:
             pending_field=next_missing_field,
         )
         return FillSelectedSupplierProfileResult(
-            status="NEED_MORE_INFORMATION" if next_missing_field else "SUCCESS",
+            status="SUCCESS",
             requirement_id=args.requirement_id,
-            requirement_version=detail.version,
+            requirement_version=saved.version,
             supplier_name=supplier.supplier_name,
             next_missing_field=next_missing_field,
-            user_message=message,
+            updated_fields=tuple(exact_fields),
+            missing_fields=saved.missing_fields,
+            fields_complete=saved.fields_complete,
+            user_message=f"已将{supplier.supplier_name}的最新主数据保存到采购单。",
         )
 
 

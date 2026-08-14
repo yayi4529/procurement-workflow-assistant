@@ -29,6 +29,7 @@ class AgentContextComposer:
         requirement_no = None
         applicant_fields = None
         review_draft = None
+        purchase_draft = None
         if requirement_id is not None:
             try:
                 detail = await self._session_service.requirement(
@@ -40,6 +41,14 @@ class AgentContextComposer:
                 review_draft = (
                     detail.review_fields.model_dump(mode="json")
                     if detail.review_fields is not None
+                    else None
+                )
+                purchase_draft = (
+                    detail.purchase_fields.model_dump(
+                        mode="json",
+                        exclude={"supplier_tax_number", "bank_account"},
+                    )
+                    if detail.purchase_fields is not None
                     else None
                 )
             except BackendApplicationError:
@@ -61,6 +70,7 @@ class AgentContextComposer:
             requirement_status=requirement_status,
             applicant_fields=applicant_fields,
             review_draft=review_draft,
+            purchase_draft=purchase_draft,
             current_action=state.current_action if state is not None else None,
             collected_data=state.collected_data if state is not None else {},
             missing_fields=state.missing_fields if state is not None else (),
@@ -78,6 +88,7 @@ class AgentContextComposer:
         requirement_status: str | None = None,
         applicant_fields: object = None,
         review_draft: object = None,
+        purchase_draft: object = None,
         collected_data: object = None,
         missing_fields: object = (),
         pending_field: str | None = None,
@@ -92,6 +103,7 @@ class AgentContextComposer:
             f"requirement_status={requirement_status}\n"
             f"applicant_fields={applicant_fields or {}}\n"
             f"review_draft={review_draft or {}}\n"
+            f"purchase_draft={purchase_draft or {}}\n"
             f"saved_fields={collected_data or {}}\n"
             f"missing_fields={missing_fields}\n"
             f"pending_field={pending_field}\n"
