@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
 from procurement_platform.adapters.llm.fake_llm_client import FakeLlmClient
@@ -19,16 +19,20 @@ from procurement_platform.application.assistant.agent_tools import (
     RecommendProductOptionsArgs,
     RecommendProductOptionsTool,
     UpdatePurchaseDraftArgs,
+    UpdatePurchaseDraftResult,
     UpdatePurchaseDraftTool,
     UpdatePurchaseExecutionDraftArgs,
     UpdatePurchaseExecutionDraftResult,
     UpdatePurchaseExecutionDraftTool,
     UpdateReviewDraftArgs,
+    UpdateReviewDraftResult,
     UpdateReviewDraftTool,
     UpdateWarehouseReceiptDraftArgs,
+    UpdateWarehouseReceiptDraftResult,
     UpdateWarehouseReceiptDraftTool,
 )
 from procurement_platform.application.assistant.agents.purchaser import PurchaserAgent
+from procurement_platform.application.assistant.agents.warehouse import WarehouseAgent
 from procurement_platform.application.assistant.prompts.purchaser import PURCHASER_PROMPT
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.session_service import AssistantSessionService
@@ -1847,6 +1851,10 @@ def test_purchaser_agent_has_no_python_natural_language_router() -> None:
 @pytest.mark.asyncio
 async def test_warehouse_draft_requires_remark_for_short_receipt_and_never_completes() -> None:
     client = FakeBackendClient(user(RoleCode.WAREHOUSE_MANAGER))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.WAREHOUSE_MANAGER), current_action="ASSISTANT_CHAT"
+    )
+    ctx = context(RoleCode.WAREHOUSE_MANAGER, conversation_id=conversation.conversation_id)
     client.seed_requirement(
         detail(RoleCode.WAREHOUSE_MANAGER, RequirementStatus.PENDING_WAREHOUSE).model_copy(
             update={"warehouse_fields": WarehouseFields()}
@@ -1857,8 +1865,24 @@ async def test_warehouse_draft_requires_remark_for_short_receipt_and_never_compl
         args=UpdateWarehouseReceiptDraftArgs(
             requirement_id=1, received_quantity="1", warehouse_location="A-01"
         ),
-        context=context(RoleCode.WAREHOUSE_MANAGER),
+        context=ctx,
     )
+    assert missing.status == "SUCCESS"
+    assert missing.updated_fields == ("received_quantity", "warehouse_location")
+    assert missing.updated_values == {
+        "received_quantity": "1",
+        "warehouse_location": "A-01",
+    }
+    assert "receipt_remark" in missing.missing_fields
+    assert missing.next_missing_field == "receipt_remark"
+    assert missing.fields_complete is False
+    partial_state = await client.get_agent_state(
+        identity=identity(RoleCode.WAREHOUSE_MANAGER),
+        conversation_id=conversation.conversation_id,
+    )
+    assert partial_state.missing_fields == missing.missing_fields
+    assert partial_state.pending_field == missing.next_missing_field
+    assert partial_state.focused_field == missing.next_missing_field
     saved = await tool.execute(
         args=UpdateWarehouseReceiptDraftArgs(
             requirement_id=1,
@@ -1866,8 +1890,97 @@ async def test_warehouse_draft_requires_remark_for_short_receipt_and_never_compl
             warehouse_location="A-01",
             receipt_remark="少收一台",
         ),
-        context=context(RoleCode.WAREHOUSE_MANAGER),
+        context=ctx,
     )
-    assert missing.status == "NEED_MORE_INFORMATION"
     assert saved.status == "SUCCESS"
+    complete_state = await client.get_agent_state(
+        identity=identity(RoleCode.WAREHOUSE_MANAGER),
+        conversation_id=conversation.conversation_id,
+    )
+    assert complete_state.missing_fields == ()
+    assert complete_state.pending_field is None
+    assert complete_state.focused_field is None
+    assert client.call_counts["complete_requirement"] == 0
+
+
+@pytest.mark.parametrize(
+    "result_type",
+    (
+        UpdatePurchaseDraftResult,
+        UpdateReviewDraftResult,
+        UpdatePurchaseExecutionDraftResult,
+        UpdateWarehouseReceiptDraftResult,
+    ),
+)
+def test_draft_update_results_share_observation_contract(
+    result_type: type[AssistantToolResult],
+) -> None:
+    result = result_type(
+        status="SUCCESS",
+        requirement_id=1,
+        updated_fields=("field",),
+        updated_values={"field": "value"},
+        missing_fields=("next",),
+        next_missing_field="next",
+        fields_complete=False,
+        user_message=None,
+    )
+
+    assert set(
+        (
+            "status",
+            "requirement_id",
+            "updated_fields",
+            "updated_values",
+            "missing_fields",
+            "next_missing_field",
+            "fields_complete",
+            "user_message",
+        )
+    ).issubset(result.model_dump())
+
+    failed = result_type(status="PERMISSION_DENIED", user_message="denied")
+    assert failed.updated_fields == ()
+    assert failed.updated_values == {}
+
+
+@pytest.mark.parametrize(
+    "values",
+    (
+        {"missing_fields": (), "next_missing_field": None, "fields_complete": False},
+        {
+            "missing_fields": ("next",),
+            "next_missing_field": "next",
+            "fields_complete": True,
+        },
+    ),
+)
+def test_successful_draft_observation_rejects_inconsistent_progress(
+    values: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        UpdateWarehouseReceiptDraftResult(status="SUCCESS", **values)
+
+
+@pytest.mark.asyncio
+async def test_warehouse_complete_draft_returns_formal_card_only() -> None:
+    client = FakeBackendClient(user(RoleCode.WAREHOUSE_MANAGER))
+    await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.WAREHOUSE_MANAGER), current_action="ASSISTANT_CHAT"
+    )
+    client.seed_requirement(detail(RoleCode.WAREHOUSE_MANAGER, RequirementStatus.PENDING_WAREHOUSE))
+    agent = WarehouseAgent(AssistantSessionService(client), client)
+
+    response = await agent.handle_tool_result(
+        result=UpdateWarehouseReceiptDraftResult(
+            status="SUCCESS",
+            requirement_id=1,
+            fields_complete=True,
+        ),
+        context=context(RoleCode.WAREHOUSE_MANAGER),
+        external_message_id="om-warehouse-complete",
+    )
+
+    assert isinstance(response, AssistantInteractionResponse)
+    assert response.view.title == "仓库入库处理"
     assert client.call_counts["complete_requirement"] == 0

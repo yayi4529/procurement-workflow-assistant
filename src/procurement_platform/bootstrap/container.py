@@ -182,7 +182,7 @@ class ApplicationContainer:
                     ),
                     BuildingManagerAgent(session_service, tool_executor, container.backend_client),
                     PurchaserAgent(session_service, tool_executor, container.backend_client),
-                    WarehouseAgent(session_service),
+                    WarehouseAgent(session_service, container.backend_client),
                 )
                 runtime = AssistantRuntime(
                     llm_client=llm_client,

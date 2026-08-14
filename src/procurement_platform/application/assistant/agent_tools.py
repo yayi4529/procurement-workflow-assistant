@@ -84,6 +84,29 @@ class StrictArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class DraftUpdateResultBase(AssistantToolResult):
+    """Common action observation returned by every role's draft update tool."""
+
+    updated_fields: tuple[str, ...] = ()
+    updated_values: dict[str, str | None] = Field(default_factory=dict)
+    missing_fields: tuple[str, ...] = ()
+    next_missing_field: str | None = None
+    fields_complete: bool = False
+
+    @model_validator(mode="after")
+    def successful_progress_is_consistent(self) -> "DraftUpdateResultBase":
+        if self.status != "SUCCESS":
+            if self.updated_fields or self.updated_values:
+                raise ValueError("failed draft updates cannot report updated fields")
+            return self
+        if self.fields_complete:
+            if self.missing_fields or self.next_missing_field is not None:
+                raise ValueError("complete draft updates cannot have missing fields")
+        elif not self.missing_fields or self.next_missing_field not in self.missing_fields:
+            raise ValueError("incomplete draft updates require a next missing field")
+        return self
+
+
 def _identity(context: AssistantToolContext) -> PlatformIdentity:
     return PlatformIdentity.create(PlatformType(context.platform_type), context.platform_user_id)
 
@@ -598,14 +621,9 @@ class UpdatePurchaseDraftArgs(StrictArgs):
     applicant_remark: str | None = None
 
 
-class UpdatePurchaseDraftResult(AssistantToolResult):
+class UpdatePurchaseDraftResult(DraftUpdateResultBase):
     requirement_no: str | None = None
     status_value: RequirementStatus | None = None
-    updated_fields: tuple[str, ...] = ()
-    updated_values: dict[str, str | None] = Field(default_factory=dict)
-    missing_fields: tuple[str, ...] = ()
-    next_missing_field: str | None = None
-    fields_complete: bool = False
     device_profession_recommendations: tuple[str, ...] = ()
 
 
@@ -888,12 +906,8 @@ class UpdateReviewDraftArgs(StrictArgs):
         return self
 
 
-class UpdateReviewDraftResult(AssistantToolResult):
-    updated_fields: tuple[str, ...] = ()
-    updated_values: dict[str, str] = Field(default_factory=dict)
-    missing_fields: tuple[str, ...] = ()
-    next_missing_field: str | None = None
-    fields_complete: bool = False
+class UpdateReviewDraftResult(DraftUpdateResultBase):
+    pass
 
 
 class UpdateReviewDraftTool:
@@ -984,14 +998,17 @@ class UpdateReviewDraftTool:
             latest = await self._backend.get_requirement(
                 identity=identity, requirement_id=args.requirement_id
             )
+            next_missing_field = saved.next_missing_field or (
+                saved.missing_fields[0] if saved.missing_fields else None
+            )
             await self._session.save(
                 identity=identity,
                 context=context,
                 requirement_id=args.requirement_id,
                 focused_role=RoleCode.BUILDING_MANAGER,
-                focused_field=saved.next_missing_field,
+                focused_field=next_missing_field,
                 missing_fields=saved.missing_fields,
-                pending_field=saved.next_missing_field,
+                pending_field=next_missing_field,
             )
             return UpdateReviewDraftResult(
                 status="SUCCESS",
@@ -1003,7 +1020,7 @@ class UpdateReviewDraftTool:
                     for name, value in raw.items()
                 },
                 missing_fields=saved.missing_fields,
-                next_missing_field=saved.next_missing_field,
+                next_missing_field=next_missing_field,
                 fields_complete=saved.fields_complete,
             )
         except SessionNotFoundError:
@@ -1472,11 +1489,8 @@ class UpdatePurchaseExecutionDraftArgs(StrictArgs):
     update_supplier_profile: bool = False
 
 
-class UpdatePurchaseExecutionDraftResult(AssistantToolResult):
-    updated_fields: tuple[str, ...] = ()
+class UpdatePurchaseExecutionDraftResult(DraftUpdateResultBase):
     actual_total_price: str | None = None
-    missing_fields: tuple[str, ...] = ()
-    fields_complete: bool = False
 
 
 class UpdatePurchaseExecutionDraftTool:
@@ -1612,22 +1626,43 @@ class UpdatePurchaseExecutionDraftTool:
             latest = await self._backend.get_requirement(
                 identity=identity, requirement_id=args.requirement_id
             )
-            if session_exists:
+            next_missing_field = saved.missing_fields[0] if saved.missing_fields else None
+            safe_fields = tuple(name for name in raw if name != "update_supplier_profile")
+            purchase = latest.purchase_fields
+            safe_values: dict[str, str | None] = {}
+            if purchase is not None:
+                for name in safe_fields:
+                    value = getattr(purchase, name)
+                    safe_values[name] = (
+                        value.isoformat()
+                        if isinstance(value, datetime)
+                        else str(value)
+                        if value is not None
+                        else None
+                    )
+            try:
                 await self._session.save(
                     identity=identity,
                     context=context,
                     requirement_id=args.requirement_id,
                     focused_role=RoleCode.PURCHASER,
-                    focused_field=None,
-                    pending_field=None,
+                    focused_field=next_missing_field,
+                    missing_fields=saved.missing_fields,
+                    pending_field=next_missing_field,
+                    collected_data=collected if session_exists else None,
+                    awaiting_confirmation=saved.fields_complete,
                 )
+            except SessionNotFoundError:
+                pass
             return UpdatePurchaseExecutionDraftResult(
                 status="SUCCESS",
                 requirement_id=args.requirement_id,
                 requirement_version=latest.version,
-                updated_fields=tuple(raw),
+                updated_fields=safe_fields,
+                updated_values=safe_values,
                 actual_total_price=total,
                 missing_fields=saved.missing_fields,
+                next_missing_field=next_missing_field,
                 fields_complete=saved.fields_complete,
             )
         except ConcurrentModificationError:
@@ -1692,10 +1727,8 @@ class UpdateWarehouseReceiptDraftArgs(StrictArgs):
     receipt_remark: str | None = None
 
 
-class UpdateWarehouseReceiptDraftResult(AssistantToolResult):
-    updated_fields: tuple[str, ...] = ()
-    missing_fields: tuple[str, ...] = ()
-    fields_complete: bool = False
+class UpdateWarehouseReceiptDraftResult(DraftUpdateResultBase):
+    pass
 
 
 class UpdateWarehouseReceiptDraftTool:
@@ -1705,6 +1738,7 @@ class UpdateWarehouseReceiptDraftTool:
 
     def __init__(self, backend: BackendClient) -> None:
         self._backend = backend
+        self._session = SessionReferenceStore(backend)
 
     async def execute(
         self, *, args: UpdateWarehouseReceiptDraftArgs, context: AssistantToolContext
@@ -1727,57 +1761,68 @@ class UpdateWarehouseReceiptDraftTool:
                 return UpdateWarehouseReceiptDraftResult(
                     status="PERMISSION_DENIED", user_message="当前用户不是该采购单处理人"
                 )
-            existing = detail.warehouse_fields
-            quantity_text = args.received_quantity or (
-                existing.received_quantity if existing else None
-            )
-            location = args.warehouse_location or (
-                existing.warehouse_location if existing else None
-            )
-            if not quantity_text or not location:
+            raw = args.model_dump(exclude={"requirement_id"}, exclude_unset=True)
+            if not raw:
                 return UpdateWarehouseReceiptDraftResult(
-                    status="NEED_MORE_INFORMATION", user_message="请补充实收数量和入库位置"
+                    status="NEED_MORE_INFORMATION", user_message="请提供需要保存的入库字段"
                 )
+            if args.received_quantity is not None:
+                try:
+                    Decimal(args.received_quantity)
+                except InvalidOperation:
+                    return UpdateWarehouseReceiptDraftResult(
+                        status="INVALID_ARGUMENTS", user_message="实收数量格式无效"
+                    )
             try:
-                received = Decimal(quantity_text)
-                requested = Decimal(detail.applicant_fields.quantity or "0")
-            except InvalidOperation:
+                patch = WarehouseFieldsPatch.model_validate(raw)
+            except ValueError:
                 return UpdateWarehouseReceiptDraftResult(
                     status="INVALID_ARGUMENTS", user_message="实收数量格式无效"
                 )
-            remark = (
-                args.receipt_remark
-                if "receipt_remark" in args.model_fields_set
-                else existing.receipt_remark
-                if existing
-                else None
-            )
-            if received < requested and not remark:
-                return UpdateWarehouseReceiptDraftResult(
-                    status="NEED_MORE_INFORMATION", user_message="少收时必须填写入库备注"
-                )
-            raw = {
-                "received_quantity": quantity_text,
-                "warehouse_location": location,
-                "receipt_remark": remark,
-            }
             saved = await self._backend.update_warehouse_fields(
                 identity=identity,
                 requirement_id=args.requirement_id,
                 expected_version=detail.version,
-                fields=WarehouseFieldsPatch.model_validate(raw),
+                fields=patch,
             )
             latest = await self._backend.get_requirement(
                 identity=identity, requirement_id=args.requirement_id
             )
+            next_missing_field = saved.missing_fields[0] if saved.missing_fields else None
+            warehouse = latest.warehouse_fields
+            updated_values = (
+                {
+                    name: str(getattr(warehouse, name))
+                    if getattr(warehouse, name) is not None
+                    else None
+                    for name in raw
+                }
+                if warehouse is not None
+                else {}
+            )
+            session_values: dict[str, JsonValue] = dict(updated_values)
+            try:
+                await self._session.save(
+                    identity=identity,
+                    context=context,
+                    requirement_id=args.requirement_id,
+                    focused_role=RoleCode.WAREHOUSE_MANAGER,
+                    focused_field=next_missing_field,
+                    missing_fields=saved.missing_fields,
+                    pending_field=next_missing_field,
+                    collected_data=session_values,
+                    awaiting_confirmation=saved.fields_complete,
+                )
+            except SessionNotFoundError:
+                pass
             return UpdateWarehouseReceiptDraftResult(
                 status="SUCCESS",
                 requirement_id=args.requirement_id,
                 requirement_version=latest.version,
-                updated_fields=tuple(
-                    args.model_dump(exclude={"requirement_id"}, exclude_unset=True)
-                ),
+                updated_fields=tuple(raw),
+                updated_values=updated_values,
                 missing_fields=saved.missing_fields,
+                next_missing_field=next_missing_field,
                 fields_complete=saved.fields_complete,
             )
         except ConcurrentModificationError:
