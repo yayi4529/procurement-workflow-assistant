@@ -4,7 +4,7 @@ import pytest
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
 from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
-from procurement_platform.application.assistant.tooling import QueryPurchaseRequestsArgs
+from procurement_platform.application.assistant.capabilities.v2 import SearchPurchaseRequestsArgs
 from procurement_platform.bootstrap.container import _build_capability_registry
 from procurement_platform.domain.assistant import AssistantToolContext
 from procurement_platform.domain.enums import RoleCode
@@ -35,10 +35,10 @@ async def test_role_capability_registry_existing_tool_fake_backend_chain() -> No
         active_requirement_id=None,
     )
 
-    result = await registry.get("query_purchase_requests").execute(
-        args=QueryPurchaseRequestsArgs(operation="SEARCH"),
+    result = await registry.get("search_purchase_requests").execute(
+        args=SearchPurchaseRequestsArgs(),
         context=context,
     )
 
-    assert "query_purchase_requests" in policy.allowed_names_for(user)
+    assert "search_purchase_requests" in policy.allowed_names_for(user)
     assert result.status == "NOT_FOUND"

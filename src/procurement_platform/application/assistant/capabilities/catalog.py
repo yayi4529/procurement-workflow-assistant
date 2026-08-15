@@ -1,5 +1,11 @@
 from typing import Protocol
 
+from procurement_platform.application.assistant.capabilities.intelligence import (
+    CompareProductsCapability,
+    CompareSuppliersCapability,
+    DiagnoseProcurementNeedCapability,
+    FindSimilarPurchasesCapability,
+)
 from procurement_platform.application.assistant.capabilities.metadata import CapabilityMetadata
 from procurement_platform.application.assistant.capabilities.v2 import (
     ApplySupplierProfileCapability,
@@ -48,6 +54,16 @@ def _metadata(
 
 
 DEFAULT_CAPABILITY_METADATA: tuple[CapabilityMetadata, ...] = (
+    _metadata(DiagnoseProcurementNeedCapability, frozenset({RoleCode.APPLICANT})),
+    _metadata(FindSimilarPurchasesCapability, ALL_WORKFLOW_ROLES),
+    _metadata(
+        CompareProductsCapability,
+        frozenset({RoleCode.APPLICANT, RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}),
+    ),
+    _metadata(
+        CompareSuppliersCapability,
+        frozenset({RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}),
+    ),
     _metadata(SearchPurchaseRequestsCapability, ALL_WORKFLOW_ROLES),
     _metadata(GetPurchaseRequestCapability, ALL_WORKFLOW_ROLES),
     _metadata(GetPurchaseTimelineCapability, ALL_WORKFLOW_ROLES),

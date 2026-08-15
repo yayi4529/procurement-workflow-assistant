@@ -107,6 +107,9 @@ def test_adapter_reuses_existing_tool_contract() -> None:
                 "get_purchase_timeline",
                 "recommend_products",
                 "update_applicant_draft",
+                "diagnose_procurement_need",
+                "find_similar_purchases",
+                "compare_products",
             },
         ),
         (
@@ -118,6 +121,9 @@ def test_adapter_reuses_existing_tool_contract() -> None:
                 "get_supplier_profile",
                 "recommend_suppliers",
                 "update_review_draft",
+                "find_similar_purchases",
+                "compare_products",
+                "compare_suppliers",
             },
         ),
         (
@@ -130,11 +136,20 @@ def test_adapter_reuses_existing_tool_contract() -> None:
                 "prepare_purchase_prefill",
                 "apply_supplier_profile_to_draft",
                 "update_purchase_draft",
+                "find_similar_purchases",
+                "compare_products",
+                "compare_suppliers",
             },
         ),
         (
             RoleCode.WAREHOUSE_MANAGER,
-                {"search_purchase_requests", "get_purchase_request", "get_purchase_timeline", "update_warehouse_draft"},
+            {
+                "search_purchase_requests",
+                "get_purchase_request",
+                "get_purchase_timeline",
+                "update_warehouse_draft",
+                "find_similar_purchases",
+            },
         ),
     ],
 )
@@ -155,14 +170,18 @@ def test_policy_unions_capabilities_for_multi_role_user() -> None:
 
     assert actual == frozenset(
         {
-                "search_purchase_requests",
-                "get_purchase_request",
-                "get_purchase_timeline",
-                "recommend_products",
-                "update_applicant_draft",
-                "get_supplier_profile",
-                "recommend_suppliers",
+            "search_purchase_requests",
+            "get_purchase_request",
+            "get_purchase_timeline",
+            "recommend_products",
+            "update_applicant_draft",
+            "get_supplier_profile",
+            "recommend_suppliers",
             "update_review_draft",
+            "diagnose_procurement_need",
+            "find_similar_purchases",
+            "compare_products",
+            "compare_suppliers",
         }
     )
 
@@ -202,9 +221,7 @@ async def test_role_policy_registry_existing_tool_fake_backend_chain() -> None:
         active_requirement_id=None,
     )
 
-    result = await capability.execute(
-        args=SearchPurchaseRequestsArgs(), context=context
-    )
+    result = await capability.execute(args=SearchPurchaseRequestsArgs(), context=context)
 
     assert "search_purchase_requests" in policy.allowed_names_for(user)
     assert result.status == "NOT_FOUND"

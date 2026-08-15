@@ -33,6 +33,11 @@ from procurement_platform.application.assistant.agent_tools import (
 )
 from procurement_platform.application.assistant.agents.purchaser import PurchaserAgent
 from procurement_platform.application.assistant.agents.warehouse import WarehouseAgent
+from procurement_platform.application.assistant.capabilities.v2 import (
+    ApplySupplierProfileCapability,
+    GetPurchaseRequestCapability,
+    UpdatePurchaseDraftCapability,
+)
 from procurement_platform.application.assistant.prompts.purchaser import PURCHASER_PROMPT
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.session_service import AssistantSessionService
@@ -236,7 +241,16 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
     assert policy.allowed_tool_names(
         current_user=user(RoleCode.APPLICANT), active_role=RoleCode.APPLICANT
     ) == frozenset(
-        {"query_purchase_requests", "recommend_product_options", "update_purchase_draft"}
+        {
+            "search_purchase_requests",
+            "get_purchase_request",
+            "get_purchase_timeline",
+            "recommend_products",
+            "update_applicant_draft",
+            "diagnose_procurement_need",
+            "find_similar_purchases",
+            "compare_products",
+        }
     )
     assert (
         len(
@@ -245,7 +259,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 active_role=RoleCode.BUILDING_MANAGER,
             )
         )
-        == 4
+        == 9
     )
     assert (
         len(
@@ -253,7 +267,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 current_user=user(RoleCode.PURCHASER), active_role=RoleCode.PURCHASER
             )
         )
-        == 5
+        == 10
     )
     assert (
         len(
@@ -262,7 +276,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 active_role=RoleCode.WAREHOUSE_MANAGER,
             )
         )
-        == 2
+        == 5
     )
 
 
@@ -284,10 +298,19 @@ def test_tool_policy_does_not_merge_tools_for_multi_role_user() -> None:
     )
 
     assert applicant_tools == frozenset(
-        {"query_purchase_requests", "recommend_product_options", "update_purchase_draft"}
+        {
+            "search_purchase_requests",
+            "get_purchase_request",
+            "get_purchase_timeline",
+            "recommend_products",
+            "update_applicant_draft",
+            "diagnose_procurement_need",
+            "find_similar_purchases",
+            "compare_products",
+        }
     )
     assert "prepare_purchase_prefill" not in applicant_tools
-    assert "update_purchase_draft" not in purchaser_tools
+    assert "update_applicant_draft" not in purchaser_tools
 
 
 def test_registry_contains_only_task9_tools_and_no_formal_actions() -> None:
@@ -1721,14 +1744,14 @@ async def test_purchaser_multi_tool_observation_chain_is_llm_directed() -> None:
             ),
             AssistantTurn(
                 tool_calls=(
-                    tool_call("fill", "fill_selected_supplier_profile", '{"requirement_id":1}'),
+                    tool_call("fill", "apply_supplier_profile_to_draft", '{"requirement_id":1}'),
                 )
             ),
             AssistantTurn(content="精确供应商资料已补齐, 实际单价仍需你确认。"),
         ),
         tools=(
             PreparePurchasePrefillTool(client),
-            FillSelectedSupplierProfileTool(client),
+            ApplySupplierProfileCapability(client),
         ),
     )
     registry = ToolRegistry()
@@ -1774,14 +1797,14 @@ async def test_purchaser_llm_supplies_unit_price_without_python_parser() -> None
                 tool_calls=(
                     tool_call(
                         "price",
-                        "update_purchase_execution_draft",
+                        "update_purchase_draft",
                         '{"requirement_id":1,"actual_unit_price":"12680"}',
                     ),
                 )
             ),
             AssistantTurn(content="实际成交价已保存, 仍有资料需要补充。"),
         ),
-        tools=(UpdatePurchaseExecutionDraftTool(client),),
+        tools=(UpdatePurchaseDraftCapability(client),),
     )
     executor = ToolExecutor(ToolRegistry(), max_result_chars=10_000)
     agent = PurchaserAgent(AssistantSessionService(client), executor, client)
@@ -1824,14 +1847,14 @@ async def test_purchaser_llm_queries_requirement_number_without_python_regex() -
                 tool_calls=(
                     tool_call(
                         "detail",
-                        "query_purchase_requests",
-                        '{"operation":"GET_DETAIL","requirement_no":"PR202608001"}',
+                        "get_purchase_request",
+                        '{"requirement_no":"PR202608001"}',
                     ),
                 )
             ),
             AssistantTurn(content="已查询到该采购单。"),
         ),
-        tools=(QueryPurchaseRequestsTool(client),),
+        tools=(GetPurchaseRequestCapability(client),),
     )
     executor = ToolExecutor(ToolRegistry(), max_result_chars=10_000)
     agent = PurchaserAgent(AssistantSessionService(client), executor, client)

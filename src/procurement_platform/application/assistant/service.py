@@ -3,6 +3,10 @@
 from procurement_platform.application.assistant.agent import ProcurementAgent
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.task_context_service import (
+    AgentTaskStateService,
+    BusinessFactsBuilder,
+)
 from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantMessage,
@@ -124,6 +128,8 @@ class AssistantService:
             recent_history=history,
             current_recommendations=state.last_recommendations if state is not None else (),
             tool_context=context,
+            business_facts=BusinessFactsBuilder.build(current_user, active_requirement),
+            task_state=AgentTaskStateService.from_session(state),
         )
         return await self._procurement_agent.run(
             external_message_id=event.external_message_id,

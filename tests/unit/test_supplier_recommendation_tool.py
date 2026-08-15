@@ -9,6 +9,7 @@ from procurement_platform.application.assistant.agent_tools import (
     UpdateReviewDraftTool,
 )
 from procurement_platform.application.assistant.agents.building_manager import BuildingManagerAgent
+from procurement_platform.application.assistant.capabilities.v2 import RecommendSuppliersCapability
 from procurement_platform.application.assistant.context_composer import AgentContextComposer
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.session_service import AssistantSessionService
@@ -174,7 +175,7 @@ def build_runtime(
     client: FakeBackendClient, turns: tuple[AssistantTurn, ...]
 ) -> tuple[AssistantRuntime, FakeLlmClient, BuildingManagerAgent]:
     registry = ToolRegistry()
-    registry.register(RecommendSuppliersForRequirementTool(client))
+    registry.register(RecommendSuppliersCapability(client))
     registry.register(UpdateReviewDraftTool(client))
     executor = ToolExecutor(registry, max_result_chars=10_000)
     llm = FakeLlmClient(turns=turns)
@@ -286,7 +287,7 @@ async def test_supplier_recommendation_success_returns_to_llm_observation_loop()
                 tool_calls=(
                     AssistantToolCall(
                         id="recommend",
-                        name="recommend_suppliers_for_requirement",
+                        name="recommend_suppliers",
                         arguments_json='{"requirement_id":1}',
                     ),
                 )

@@ -13,16 +13,22 @@ from procurement_platform.adapters.persistence.local_conversation_lock import (
 )
 from procurement_platform.application.assistant.agent import ProcurementAgent
 from procurement_platform.application.assistant.agent_tools import (
-    QueryPurchaseRequestsTool,
     RecommendProductOptionsResult,
-    RecommendProductOptionsTool,
     UpdatePurchaseDraftResult,
-    UpdatePurchaseDraftTool,
 )
 from procurement_platform.application.assistant.agents.applicant import ApplicantAgent
 from procurement_platform.application.assistant.capabilities import (
     DEFAULT_CAPABILITY_METADATA,
     CapabilityPolicy,
+)
+from procurement_platform.application.assistant.capabilities.v2 import (
+    RecommendProductsCapability as RecommendProductOptionsTool,
+)
+from procurement_platform.application.assistant.capabilities.v2 import (
+    SearchPurchaseRequestsCapability as QueryPurchaseRequestsTool,
+)
+from procurement_platform.application.assistant.capabilities.v2 import (
+    UpdateApplicantDraftCapability as UpdatePurchaseDraftTool,
 )
 from procurement_platform.application.assistant.context_builder import (
     AssistantContextBuilder,
@@ -236,7 +242,7 @@ async def test_llm_draft_tool_call_asks_only_next_field() -> None:
                 tool_calls=(
                     AssistantToolCall(
                         id="draft-call",
-                        name="update_purchase_draft",
+                        name="update_applicant_draft",
                         arguments_json=(
                             '{"device_name":"服务器","brand":"戴尔","application_reason":"扩容"}'
                         ),
@@ -278,8 +284,8 @@ async def test_llm_query_tool_call_never_writes_a_draft() -> None:
                 tool_calls=(
                     AssistantToolCall(
                         id="query",
-                        name="query_purchase_requests",
-                        arguments_json='{"operation":"SEARCH","result_limit":10}',
+                        name="search_purchase_requests",
+                        arguments_json='{"result_limit":10}',
                     ),
                 )
             ),
@@ -318,7 +324,7 @@ async def test_tool_backend_rejects_empty_unexpected_draft_write() -> None:
                 tool_calls=(
                     AssistantToolCall(
                         id="unexpected-write",
-                        name="update_purchase_draft",
+                        name="update_applicant_draft",
                         arguments_json="{}",
                     ),
                 )
@@ -373,8 +379,8 @@ async def test_applicant_history_query_returns_a_clickable_card_with_backend_tot
                 tool_calls=(
                     AssistantToolCall(
                         id="history",
-                        name="query_purchase_requests",
-                        arguments_json='{"operation":"SEARCH","result_limit":10}',
+                        name="search_purchase_requests",
+                        arguments_json='{"result_limit":10}',
                     ),
                 )
             ),
@@ -565,7 +571,7 @@ async def test_verified_pending_draft_field_reply_retries_the_draft_tool() -> No
                 tool_calls=(
                     AssistantToolCall(
                         id="brand-call",
-                        name="update_purchase_draft",
+                        name="update_applicant_draft",
                         arguments_json='{"brand":"华为"}',
                     ),
                 )
@@ -626,7 +632,7 @@ def test_applicant_prompt_is_injected_into_llm_system_context() -> None:
 
     assert payload["role"] == "system"
     assert "需求人采购助手" in str(payload["content"])
-    assert "update_purchase_draft" in str(payload["content"])
+    assert "update_applicant_draft" in str(payload["content"])
 
 
 @pytest.mark.asyncio
@@ -678,7 +684,7 @@ def test_explicit_new_draft_discards_old_history_and_requires_start_new() -> Non
     prepared = applicant.prepare_tool_call(
         AssistantToolCall(
             id="new-draft",
-            name="update_purchase_draft",
+            name="update_applicant_draft",
             arguments_json='{"requirement_id":91083,"device_name":"电源整流模块"}',
         ),
         user_text=history[-1].content or "",
@@ -911,7 +917,7 @@ async def test_partial_draft_result_returns_to_llm_for_next_decision() -> None:
                 tool_calls=(
                     AssistantToolCall(
                         id="base-fields",
-                        name="update_purchase_draft",
+                        name="update_applicant_draft",
                         arguments_json=(
                             '{"device_profession":"暖通","device_name":"精密空调",'
                             '"quantity":"2","unit":"台",'

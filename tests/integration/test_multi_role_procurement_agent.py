@@ -83,12 +83,18 @@ async def test_two_multi_role_turns_use_one_agent_without_role_switching() -> No
         )
     assert policy.allowed_names_for(user) == frozenset(
         {
-            "query_purchase_requests",
-            "recommend_product_options",
-            "update_purchase_draft",
-            "query_supplier_profile",
-            "recommend_suppliers_for_requirement",
+            "search_purchase_requests",
+            "get_purchase_request",
+            "get_purchase_timeline",
+            "recommend_products",
+            "update_applicant_draft",
+            "get_supplier_profile",
+            "recommend_suppliers",
             "update_review_draft",
+            "diagnose_procurement_need",
+            "find_similar_purchases",
+            "compare_products",
+            "compare_suppliers",
         }
     )
 

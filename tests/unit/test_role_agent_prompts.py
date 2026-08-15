@@ -15,7 +15,7 @@ def test_common_prompt_contains_only_cross_role_boundaries() -> None:
 
 
 def test_applicant_prompt_does_not_mix_purchaser_or_warehouse_writes() -> None:
-    assert "update_purchase_draft" in APPLICANT_PROMPT
+    assert "update_applicant_draft" in APPLICANT_PROMPT
     assert "需求人采购助手" in APPLICANT_PROMPT
     assert "selection_index" in APPLICANT_PROMPT
     assert "fields_complete=true" in APPLICANT_PROMPT
@@ -34,7 +34,7 @@ def test_each_non_applicant_prompt_exposes_only_its_role_tools() -> None:
     assert "第1个" not in BUILDING_MANAGER_PROMPT
     assert "选择第一个" not in BUILDING_MANAGER_PROMPT
     assert "update_purchase_draft" not in BUILDING_MANAGER_PROMPT
-    assert "update_purchase_execution_draft" in PURCHASER_PROMPT
+    assert "update_purchase_draft" in PURCHASER_PROMPT
     assert "update_warehouse_receipt_draft" not in PURCHASER_PROMPT
     assert "update_warehouse_receipt_draft" in WAREHOUSE_PROMPT
     assert "update_purchase_draft" not in WAREHOUSE_PROMPT

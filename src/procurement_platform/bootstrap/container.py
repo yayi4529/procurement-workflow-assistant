@@ -28,6 +28,12 @@ from procurement_platform.application.assistant.capabilities.adapters import (
 from procurement_platform.application.assistant.capabilities.catalog import (
     DEFAULT_CAPABILITY_METADATA,
 )
+from procurement_platform.application.assistant.capabilities.intelligence import (
+    CompareProductsCapability,
+    CompareSuppliersCapability,
+    DiagnoseProcurementNeedCapability,
+    FindSimilarPurchasesCapability,
+)
 from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
 from procurement_platform.application.assistant.capabilities.registry import CapabilityRegistry
 from procurement_platform.application.assistant.capabilities.v2 import (
@@ -253,6 +259,10 @@ class ApplicationContainer:
 def _build_capability_registry(backend_client: BackendClient) -> CapabilityRegistry:
     metadata_by_name = {item.name: item for item in DEFAULT_CAPABILITY_METADATA}
     tools = (
+        DiagnoseProcurementNeedCapability(backend_client),
+        FindSimilarPurchasesCapability(backend_client),
+        CompareProductsCapability(backend_client),
+        CompareSuppliersCapability(backend_client),
         SearchPurchaseRequestsCapability(backend_client),
         GetPurchaseRequestCapability(backend_client),
         GetPurchaseTimelineCapability(backend_client),

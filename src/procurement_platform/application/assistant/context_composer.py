@@ -41,6 +41,14 @@ class AgentContextComposer:
             "missing_fields": state.missing_fields if state else (),
             "pending_field": pending,
             "last_recommendations": recommendations,
+            "business_facts": (
+                turn_context.business_facts.model_dump(mode="json")
+                if turn_context.business_facts
+                else None
+            ),
+            "task_state": (
+                turn_context.task_state.model_dump(mode="json") if turn_context.task_state else None
+            ),
         }
         if turn_context.active_role.value == "APPLICANT":
             data["applicant_fields"] = applicant_fields
