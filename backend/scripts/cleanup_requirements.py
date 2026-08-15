@@ -43,7 +43,9 @@ async def cleanup(requirement_ids: tuple[int, ...]) -> None:
             ).scalars()
         )
         if set(found) != set(requirement_ids):
-            raise RuntimeError(f"requirement ID mismatch: requested={requirement_ids}, found={found}")
+            raise RuntimeError(
+                f"requirement ID mismatch: requested={requirement_ids}, found={found}"
+            )
 
         conversation_ids = tuple(
             (
