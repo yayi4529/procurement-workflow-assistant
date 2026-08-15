@@ -1,7 +1,7 @@
 from procurement_platform.application.assistant.agents.base import BasicRoleAgent
+from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
 from procurement_platform.application.assistant.prompts.purchaser import PURCHASER_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
-from procurement_platform.application.assistant.tool_policy import ROLE_TOOLS
 from procurement_platform.application.assistant.tooling import (
     FillSelectedSupplierProfileResult,
     PreparePurchasePrefillResult,
@@ -25,15 +25,15 @@ class PurchaserAgent(BasicRoleAgent):
 
     role = RoleCode.PURCHASER
     role_prompt = PURCHASER_PROMPT
-    tool_names = ROLE_TOOLS[role]
 
     def __init__(
         self,
         session_service: AssistantSessionService,
         tool_executor: ToolExecutor,
         backend_client: BackendClient,
+        capability_policy: CapabilityPolicy | None = None,
     ) -> None:
-        super().__init__(session_service)
+        super().__init__(session_service, capability_policy)
         del tool_executor
         self._backend_client = backend_client
 

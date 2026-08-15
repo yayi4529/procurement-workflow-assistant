@@ -1,3 +1,7 @@
+from procurement_platform.application.assistant.capabilities.catalog import (
+    DEFAULT_CAPABILITY_METADATA,
+)
+from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
 from procurement_platform.application.assistant.prompts.common import COMMON_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.domain.assistant import (
@@ -14,10 +18,15 @@ from procurement_platform.domain.identity import PlatformIdentity
 class BasicRoleAgent:
     role: RoleCode
     role_prompt: str
-    tool_names: frozenset[str]
 
-    def __init__(self, session_service: AssistantSessionService) -> None:
+    def __init__(
+        self,
+        session_service: AssistantSessionService,
+        capability_policy: CapabilityPolicy | None = None,
+    ) -> None:
         self._session_service = session_service
+        self._capability_policy = capability_policy or CapabilityPolicy(DEFAULT_CAPABILITY_METADATA)
+        self.tool_names = self._capability_policy.allowed_names_for_roles({self.role})
 
     def build_messages(
         self,

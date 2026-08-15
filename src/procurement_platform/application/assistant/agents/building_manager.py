@@ -1,11 +1,11 @@
 # ruff: noqa: RUF001
 
 from procurement_platform.application.assistant.agents.base import BasicRoleAgent
+from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
 from procurement_platform.application.assistant.prompts.building_manager import (
     BUILDING_MANAGER_PROMPT,
 )
 from procurement_platform.application.assistant.session_service import AssistantSessionService
-from procurement_platform.application.assistant.tool_policy import ROLE_TOOLS
 from procurement_platform.application.assistant.tooling import UpdateReviewDraftResult
 from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.application.building_manager.card_factory import (
@@ -27,15 +27,15 @@ class BuildingManagerAgent(BasicRoleAgent):
 
     role = RoleCode.BUILDING_MANAGER
     role_prompt = BUILDING_MANAGER_PROMPT
-    tool_names = ROLE_TOOLS[role]
 
     def __init__(
         self,
         session_service: AssistantSessionService,
         tool_executor: ToolExecutor,
         backend_client: BackendClient,
+        capability_policy: CapabilityPolicy | None = None,
     ) -> None:
-        super().__init__(session_service)
+        super().__init__(session_service, capability_policy)
         # Keep the shared constructor contract; AssistantRuntime exclusively executes tools.
         del tool_executor
         self._backend_client = backend_client

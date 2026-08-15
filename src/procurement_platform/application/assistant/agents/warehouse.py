@@ -1,9 +1,9 @@
 # ruff: noqa: RUF001
 
 from procurement_platform.application.assistant.agents.base import BasicRoleAgent
+from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
 from procurement_platform.application.assistant.prompts.warehouse import WAREHOUSE_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
-from procurement_platform.application.assistant.tool_policy import ROLE_TOOLS
 from procurement_platform.application.assistant.tooling import (
     UpdateWarehouseReceiptDraftResult,
 )
@@ -22,12 +22,14 @@ from procurement_platform.ports.backend_client import BackendClient
 class WarehouseAgent(BasicRoleAgent):
     role = RoleCode.WAREHOUSE_MANAGER
     role_prompt = WAREHOUSE_PROMPT
-    tool_names = ROLE_TOOLS[role]
 
     def __init__(
-        self, session_service: AssistantSessionService, backend_client: BackendClient
+        self,
+        session_service: AssistantSessionService,
+        backend_client: BackendClient,
+        capability_policy: CapabilityPolicy | None = None,
     ) -> None:
-        super().__init__(session_service)
+        super().__init__(session_service, capability_policy)
         self._backend_client = backend_client
 
     async def handle_tool_result(

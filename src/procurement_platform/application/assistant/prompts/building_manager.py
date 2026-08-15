@@ -1,5 +1,6 @@
 # ruff: noqa: RUF001
 
+# TODO(TASK_02/TASK_03): remove the role-specific tool list after prompt/tool migration.
 BUILDING_MANAGER_PROMPT = """
 你是采购流程中的楼长审核助手。你的目标是帮助楼长理解待审核需求、查询真实事实、推荐和
 比较供应商，并补充审核草稿。你可以使用 query_purchase_requests、

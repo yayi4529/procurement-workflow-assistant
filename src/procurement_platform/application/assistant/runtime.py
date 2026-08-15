@@ -1,8 +1,8 @@
 # ruff: noqa: RUF001
 
-from procurement_platform.application.assistant.agents.protocol import RoleAgent
+from typing import Protocol
+
 from procurement_platform.application.assistant.context_composer import AgentContextComposer
-from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import (
     ToolExecutor,
     ToolRegistry,
@@ -14,6 +14,7 @@ from procurement_platform.domain.assistant import (
     AssistantMessage,
     AssistantResponse,
     AssistantTextResponse,
+    AssistantToolContext,
     AssistantToolResult,
 )
 from procurement_platform.domain.assistant_errors import (
@@ -23,6 +24,34 @@ from procurement_platform.domain.assistant_errors import (
 from procurement_platform.ports.llm_client import LlmClient
 
 
+class RuntimeAgent(Protocol):
+    def build_messages(
+        self,
+        *,
+        context: AssistantToolContext,
+        history: tuple[AssistantMessage, ...],
+        working_context: str | None = None,
+    ) -> tuple[AssistantMessage, ...]: ...
+
+    async def handle_content(
+        self,
+        *,
+        content: str,
+        context: AssistantToolContext,
+        user_text: str,
+        external_message_id: str,
+        retry_count: int,
+    ) -> AssistantResponse | None: ...
+
+    async def handle_tool_result(
+        self,
+        *,
+        result: AssistantToolResult,
+        context: AssistantToolContext,
+        external_message_id: str,
+    ) -> AssistantResponse | None: ...
+
+
 class AssistantRuntime:
     def __init__(
         self,
@@ -30,19 +59,21 @@ class AssistantRuntime:
         llm_client: LlmClient,
         tool_registry: ToolRegistry,
         tool_executor: ToolExecutor,
-        tool_policy: ToolPolicy,
         max_tool_steps: int,
+        tool_policy: object | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_registry = tool_registry
         self._tool_executor = tool_executor
-        self._tool_policy = tool_policy
+        # Deprecated TASK_01 compatibility argument. Authorization is now resolved before run().
+        del tool_policy
         self._max_tool_steps = max_tool_steps
 
     async def run(
         self,
         *,
-        agent: RoleAgent,
+        agent: RuntimeAgent,
+        allowed_names: frozenset[str] | None = None,
         turn_context: AgentTurnContext,
         user_text: str,
         external_message_id: str,
@@ -53,10 +84,13 @@ class AssistantRuntime:
             history=turn_context.recent_history,
             working_context=AgentContextComposer.compose(turn_context=turn_context),
         )
-        policy_allowed = self._tool_policy.allowed_tool_names(
-            current_user=context.current_user, active_role=agent.role
+        # The fallback keeps direct legacy Runtime tests/adapters working. The production text
+        # path always passes the CurrentUser multi-role union from ProcurementAgent.
+        allowed = (
+            allowed_names
+            if allowed_names is not None
+            else frozenset(getattr(agent, "tool_names", frozenset()))
         )
-        allowed = policy_allowed & agent.tool_names
         definitions = self._tool_registry.definitions(allowed_names=allowed)
         content_retries = 0
         for _ in range(self._max_tool_steps):
@@ -129,7 +163,7 @@ class AssistantRuntime:
                     AssistantMessage(role="assistant", content=turn.content),
                     AssistantMessage(
                         role="system",
-                        content="当前角色要求本轮调用所提供的工具，请立即调用工具，不要只回复文本。",
+                        content="当前请求要求调用所提供的能力，请立即调用能力，不要只回复文本。",
                     ),
                 )
                 continue

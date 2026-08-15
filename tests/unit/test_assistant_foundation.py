@@ -11,7 +11,7 @@ from procurement_platform.adapters.llm.openai_compatible_llm_client import OpenA
 from procurement_platform.adapters.persistence.local_conversation_lock import (
     LocalConversationLockManager,
 )
-from procurement_platform.application.assistant.agent_router import AgentRouter
+from procurement_platform.application.assistant.agent import ProcurementAgent
 from procurement_platform.application.assistant.agent_tools import (
     QueryPurchaseRequestsTool,
     RecommendProductOptionsResult,
@@ -20,16 +20,20 @@ from procurement_platform.application.assistant.agent_tools import (
     UpdatePurchaseDraftTool,
 )
 from procurement_platform.application.assistant.agents.applicant import ApplicantAgent
+from procurement_platform.application.assistant.capabilities import (
+    DEFAULT_CAPABILITY_METADATA,
+    CapabilityPolicy,
+)
 from procurement_platform.application.assistant.context_builder import (
     AssistantContextBuilder,
     _beijing_timezone,
 )
 from procurement_platform.application.assistant.context_composer import AgentContextComposer
+from procurement_platform.application.assistant.presentation import LegacyToolResultPresenter
 from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.service import AssistantService
 from procurement_platform.application.assistant.session_service import AssistantSessionService
-from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
 from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
@@ -96,25 +100,27 @@ def _assistant(
     resolved_llm = llm or FakeLlmClient(turns=())
     session_service = AssistantSessionService(backend)
     executor = ToolExecutor(registry, max_result_chars=20000)
-    applicant = ApplicantAgent(
-        backend_client=backend,
-        llm_client=resolved_llm,
-        session_service=session_service,
-        tool_executor=executor,
-    )
+    capability_policy = CapabilityPolicy(DEFAULT_CAPABILITY_METADATA)
     runtime = AssistantRuntime(
         llm_client=resolved_llm,
         tool_registry=registry,
         tool_executor=executor,
-        tool_policy=ToolPolicy(),
         max_tool_steps=4,
+    )
+    agent = ProcurementAgent(
+        runtime=runtime,
+        capability_policy=capability_policy,
+        session_service=session_service,
+        result_presenter=LegacyToolResultPresenter(
+            backend_client=backend,
+            session_service=session_service,
+        ),
     )
     service = AssistantService(
         backend_client=backend,
         session_service=session_service,
         context_builder=AssistantContextBuilder(),
-        agent_router=AgentRouter((applicant,)),
-        runtime=runtime,
+        procurement_agent=agent,
         max_history_messages=20,
     )
     return ProcurementAssistant(service)

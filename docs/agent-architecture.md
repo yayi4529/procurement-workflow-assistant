@@ -5,19 +5,44 @@
 ```text
 BaseMessageHandler
 → AssistantService
-→ AgentRouter
-→ ApplicantAgent / BuildingManagerAgent / PurchaserAgent / WarehouseAgent
+→ ProcurementAgent
+→ CapabilityPolicy（CurrentUser.roles 并集）
 → AssistantRuntime
-→ LlmClient + ToolExecutor
+→ CapabilityRegistry / LlmClient / ToolExecutor
 ```
 
-`AssistantService` owns identity, session, deduplication, history and routing. `AssistantRuntime` owns the shared LLM tool-calling loop and does not import role-specific results or card factories. Each `RoleAgent` owns its prompt, tool set and deterministic handling of role-specific tool results.
+`AssistantService` owns identity, session, deduplication, history and context preparation. The single
+`ProcurementAgent` owns the domain prompt and resolves available capabilities from all roles held by
+the current user. `AssistantRuntime` owns the shared LLM tool-calling loop and does not select an
+Agent by role. Deterministic completed-draft card rendering is isolated in
+`LegacyToolResultPresenter` as a migration compatibility layer.
 
 Text messages are deduplicated by the existing webhook store, then serialized by `LocalConversationLockManager` using `FEISHU:<platform_user_id>`. The lock covers current-user lookup, backend session access, LLM calls, tool execution, state work, and reply dispatch. Different users have distinct locks and run concurrently. This lock is process-local; a multi-worker deployment must replace it with a backend-provided conversation lease or distributed lock.
 
 The assistant depends on the `LlmClient` port. `OpenAICompatibleLlmClient` is the production adapter; `FakeLlmClient` and `EchoTool` are test-only building blocks. `ToolRegistry` generates schemas from strict Pydantic argument models, while `ToolExecutor` returns structured results. Exact supplier fields and purchase prefill results bypass LLM rewriting. Candidate references and active requirement context are stored in the backend Agent session.
 
-Task 9 registers nine tools with an exact role matrix. `ToolPolicy` receives one active role and never merges all roles held by a user. `AgentRouter` reuses `AgentSessionState.focused_role`; a multi-role user without a valid focus must choose a role explicitly. Every execution re-fetches the current user and authoritative requirement detail through `BackendClient`. Draft tools require the correct handler/status and latest `version`; they never submit, reject, start purchase, submit to warehouse, or complete a requirement. The detailed contract is documented in `docs/agent-tools.md`.
+Task 9 registers the current LLM tool set with an exact role matrix represented by capability
+metadata. `CapabilityPolicy` merges all roles held by a user. `AgentSessionState.focused_role`
+remains for old-session and explicit display-default compatibility but does not filter text-Agent
+capabilities. Every execution re-fetches the current user and authoritative requirement detail
+through `BackendClient`. Draft tools require the correct handler/status and latest `version`; they
+never submit, reject, start purchase, submit to warehouse, or complete a requirement. The detailed
+contract is documented in `docs/agent-tools.md`.
+
+## Task 01 Capability compatibility architecture
+
+The optional Assistant now has one role-authorization source in
+`CapabilityMetadata.allowed_roles`. `ExistingToolCapabilityAdapter` enriches every existing
+LLM-callable tool with that metadata while preserving its name, Pydantic argument schema,
+side-effect classification, and execution implementation. `CapabilityRegistry` keeps the
+capabilities in registration order and owns the backing `ToolRegistry` used by the current
+runtime.
+
+`CapabilityPolicy` supports the union of all roles held by a `CurrentUser`. The production text
+path now passes that union from `ProcurementAgent` to `AssistantRuntime`. Legacy `ToolPolicy`,
+`AgentRouter`, `RoleIntentResolver`, and the four RoleAgent classes remain only for compatibility
+tests or migration imports; the ApplicationContainer no longer constructs them. Formal workflow
+actions remain absent from the capability catalog.
 
 For `REQUIREMENT_PENDING_PURCHASE`, the notification gateway may ask an isolated prefill provider to render a purchaser suggestion card. Any unavailable, invalid, unauthorized, or incomplete prefill falls back to the ordinary Outbox notification. The gateway itself has no dependency on business transition operations.
 

@@ -10,8 +10,9 @@ Task 8～Task 9 已完成可选、默认关闭的文本 Assistant 基础设施�
 
 启用文本 Assistant 需要显式设置 `PROCUREMENT_LLM_ENABLED=true`，并提供
 `PROCUREMENT_LLM_API_KEY` 与 `PROCUREMENT_LLM_MODEL`（可选 `PROCUREMENT_LLM_BASE_URL`）。
-启用后，文本消息由 `AssistantService → AgentRouter → RoleAgent → AssistantRuntime`
-处理，`ToolPolicy` 只开放当前激活角色的 Task 9 工具；多角色用户需先选择工作角色。
+启用后，文本消息由 `AssistantService → ProcurementAgent → CapabilityPolicy →
+AssistantRuntime` 处理。Capability 权限根据 `CurrentUser.roles` 取并集；多角色用户无需先选择
+工作角色，`focused_role` 仅保留为旧会话和显式默认展示角色兼容字段。
 草稿工具只保存字段，提交、驳回、开始采购和确认完成仍只能使用正式卡片，并继续走后端签名、版本号与 action token 流程。
 
 文本 Agent 的普通回复统一使用飞书卡片。流式模式可持续更新同一张 CardKit JSON 2.0

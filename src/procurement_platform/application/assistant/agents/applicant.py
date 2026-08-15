@@ -4,9 +4,9 @@
 
 from procurement_platform.application.applicant.card_factory import ApplicantCardFactory
 from procurement_platform.application.assistant.agents.base import BasicRoleAgent
+from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
 from procurement_platform.application.assistant.prompts.applicant import APPLICANT_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
-from procurement_platform.application.assistant.tool_policy import ROLE_TOOLS
 from procurement_platform.application.assistant.tooling import (
     QueryPurchaseRequestsResult,
     RecommendProductOptionsResult,
@@ -32,7 +32,6 @@ class ApplicantAgent(BasicRoleAgent):
 
     role = RoleCode.APPLICANT
     role_prompt = APPLICANT_PROMPT
-    tool_names = ROLE_TOOLS[role]
 
     def __init__(
         self,
@@ -41,9 +40,10 @@ class ApplicantAgent(BasicRoleAgent):
         llm_client: LlmClient,
         session_service: AssistantSessionService,
         tool_executor: ToolExecutor,
+        capability_policy: CapabilityPolicy | None = None,
     ) -> None:
         del llm_client, tool_executor
-        super().__init__(session_service)
+        super().__init__(session_service, capability_policy)
         self._backend_client = backend_client
 
     async def handle_tool_result(

@@ -1,3 +1,5 @@
+"""Deprecated role-agent router retained for migration compatibility tests only."""
+
 # ruff: noqa: RUF001
 
 from dataclasses import dataclass

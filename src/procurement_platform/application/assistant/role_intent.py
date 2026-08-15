@@ -84,3 +84,6 @@ class LlmRoleIntentResolver:
             return RoleIntentResolution(role=allowed_roles[index], confidence=output.confidence)
         except Exception:
             return RoleIntentResolution(role=focused_role, confidence="LOW")
+
+
+"""Deprecated text role resolver; ProcurementAgent production flow does not use it."""

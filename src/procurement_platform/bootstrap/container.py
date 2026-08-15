@@ -21,21 +21,24 @@ from procurement_platform.adapters.persistence.memory_notification_delivery_stor
 )
 from procurement_platform.application.applicant.action_router import ApplicantActionRouter
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
-from procurement_platform.application.assistant.agent_router import AgentRouter
-from procurement_platform.application.assistant.agents.applicant import ApplicantAgent
-from procurement_platform.application.assistant.agents.building_manager import BuildingManagerAgent
-from procurement_platform.application.assistant.agents.purchaser import PurchaserAgent
-from procurement_platform.application.assistant.agents.warehouse import WarehouseAgent
+from procurement_platform.application.assistant.agent import ProcurementAgent
+from procurement_platform.application.assistant.capabilities.adapters import (
+    ExistingToolCapabilityAdapter,
+)
+from procurement_platform.application.assistant.capabilities.catalog import (
+    DEFAULT_CAPABILITY_METADATA,
+)
+from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
+from procurement_platform.application.assistant.capabilities.registry import CapabilityRegistry
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
+from procurement_platform.application.assistant.presentation import LegacyToolResultPresenter
 from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
-from procurement_platform.application.assistant.role_intent import LlmRoleIntentResolver
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.service import AssistantService
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.supplier_recommendation import (
     RecommendSuppliersForRequirementTool,
 )
-from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tooling import (
     FillSelectedSupplierProfileTool,
     PreparePurchasePrefillTool,
@@ -48,7 +51,7 @@ from procurement_platform.application.assistant.tooling import (
     UpdateReviewDraftTool,
     UpdateWarehouseReceiptDraftTool,
 )
-from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
+from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.application.building_manager.action_router import (
     BuildingManagerActionRouter,
 )
@@ -98,7 +101,10 @@ class ApplicationContainer:
     notification_gateway_service: NotificationGatewayService | None = None
     procurement_assistant: ProcurementAssistant | None = None
     assistant_service: AssistantService | None = None
+    procurement_agent: ProcurementAgent | None = None
     conversation_lock_manager: LocalConversationLockManager | None = None
+    capability_registry: CapabilityRegistry | None = None
+    capability_policy: CapabilityPolicy | None = None
 
     @classmethod
     def build(cls, settings: Settings) -> "ApplicationContainer":
@@ -151,19 +157,11 @@ class ApplicationContainer:
                     raise ValueError("enabled LLM requires API key and model")
                 if settings.environment == "production" and settings.llm_base_url is None:
                     raise ValueError("enabled production LLM requires base URL")
-                tool_registry = ToolRegistry()
-                tool_registry.register(QueryPurchaseRequestsTool(container.backend_client))
-                tool_registry.register(RecommendProductOptionsTool(container.backend_client))
-                tool_registry.register(UpdatePurchaseDraftTool(container.backend_client))
-                tool_registry.register(
-                    RecommendSuppliersForRequirementTool(container.backend_client)
-                )
-                tool_registry.register(UpdateReviewDraftTool(container.backend_client))
-                tool_registry.register(QuerySupplierProfileTool(container.backend_client))
-                tool_registry.register(PreparePurchasePrefillTool(container.backend_client))
-                tool_registry.register(FillSelectedSupplierProfileTool(container.backend_client))
-                tool_registry.register(UpdatePurchaseExecutionDraftTool(container.backend_client))
-                tool_registry.register(UpdateWarehouseReceiptDraftTool(container.backend_client))
+                capability_registry = _build_capability_registry(container.backend_client)
+                capability_policy = CapabilityPolicy(capability_registry)
+                container.capability_registry = capability_registry
+                container.capability_policy = capability_policy
+                tool_registry = capability_registry.tool_registry
                 llm_client = OpenAICompatibleLlmClient(
                     api_key=api_key,
                     model=model,
@@ -174,32 +172,28 @@ class ApplicationContainer:
                 tool_executor = ToolExecutor(
                     tool_registry, max_result_chars=settings.llm_max_tool_result_chars
                 )
-                agents = (
-                    ApplicantAgent(
-                        backend_client=container.backend_client,
-                        llm_client=llm_client,
-                        session_service=session_service,
-                        tool_executor=tool_executor,
-                    ),
-                    BuildingManagerAgent(session_service, tool_executor, container.backend_client),
-                    PurchaserAgent(session_service, tool_executor, container.backend_client),
-                    WarehouseAgent(session_service, container.backend_client),
-                )
                 runtime = AssistantRuntime(
                     llm_client=llm_client,
                     tool_registry=tool_registry,
                     tool_executor=tool_executor,
-                    tool_policy=ToolPolicy(),
                     max_tool_steps=settings.llm_max_tool_steps,
                 )
+                procurement_agent = ProcurementAgent(
+                    runtime=runtime,
+                    capability_policy=capability_policy,
+                    session_service=session_service,
+                    result_presenter=LegacyToolResultPresenter(
+                        backend_client=container.backend_client,
+                        session_service=session_service,
+                    ),
+                )
+                container.procurement_agent = procurement_agent
                 container.assistant_service = AssistantService(
                     backend_client=container.backend_client,
                     session_service=session_service,
                     context_builder=AssistantContextBuilder(),
-                    agent_router=AgentRouter(agents),
-                    runtime=runtime,
+                    procurement_agent=procurement_agent,
                     max_history_messages=settings.llm_max_history_messages,
-                    role_intent_resolver=LlmRoleIntentResolver(llm_client),
                 )
                 container.procurement_assistant = ProcurementAssistant(container.assistant_service)
             container.message_handler = BaseMessageHandler(
@@ -252,3 +246,23 @@ class ApplicationContainer:
         if self.channel_client is not None:
             await self.channel_client.aclose()
         await self.backend_client.aclose()
+
+
+def _build_capability_registry(backend_client: BackendClient) -> CapabilityRegistry:
+    metadata_by_name = {item.name: item for item in DEFAULT_CAPABILITY_METADATA}
+    tools = (
+        QueryPurchaseRequestsTool(backend_client),
+        RecommendProductOptionsTool(backend_client),
+        UpdatePurchaseDraftTool(backend_client),
+        RecommendSuppliersForRequirementTool(backend_client),
+        UpdateReviewDraftTool(backend_client),
+        QuerySupplierProfileTool(backend_client),
+        PreparePurchasePrefillTool(backend_client),
+        FillSelectedSupplierProfileTool(backend_client),
+        UpdatePurchaseExecutionDraftTool(backend_client),
+        UpdateWarehouseReceiptDraftTool(backend_client),
+    )
+    registry = CapabilityRegistry()
+    for tool in tools:
+        registry.register(ExistingToolCapabilityAdapter(tool, metadata_by_name[tool.name]))
+    return registry

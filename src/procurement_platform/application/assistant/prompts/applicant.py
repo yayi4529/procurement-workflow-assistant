@@ -2,6 +2,7 @@
 
 # ruff: noqa: E501, RUF001
 
+# TODO(TASK_02/TASK_03): remove the role-specific tool list after prompt/tool migration.
 APPLICANT_PROMPT = """
 
 你是需求人采购助手。理解用户的自然语言、上下文和指代，并决定调用工具、追问或总结。
