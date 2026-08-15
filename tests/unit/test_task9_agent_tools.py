@@ -44,11 +44,13 @@ from procurement_platform.application.assistant.temporal_range_resolver import (
     TemporalRangeResolver,
 )
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
+from procurement_platform.application.assistant.tooling import SessionReferenceStore
 from procurement_platform.application.assistant.tools import (
     AssistantTool,
     ToolExecutor,
     ToolRegistry,
 )
+from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantInteractionResponse,
     AssistantTextResponse,
@@ -119,6 +121,60 @@ def context(
         current_user=user(role),
         active_requirement_id=active_requirement_id,
     )
+
+
+def turn(tool_context: AssistantToolContext, role: RoleCode) -> AgentTurnContext:
+    return AgentTurnContext(
+        current_user=tool_context.current_user,
+        active_role=role,
+        session_state=None,
+        active_requirement=None,
+        recent_history=(),
+        current_recommendations=(),
+        tool_context=tool_context,
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_patch_preserves_omitted_fields_and_clears_explicit_none() -> None:
+    role = RoleCode.BUILDING_MANAGER
+    client = FakeBackendClient(user(role))
+    actor = identity(role)
+    conversation = await client.get_or_create_agent_conversation(
+        identity=actor, current_action="ASSISTANT_CHAT"
+    )
+    await client.update_agent_state(
+        identity=actor,
+        conversation_id=conversation.conversation_id,
+        state=AgentSessionStateUpdate(
+            purchase_request_id=42,
+            focused_role=role,
+            focused_field="supplier",
+            pending_field="supplier",
+        ),
+    )
+    store = SessionReferenceStore(client)
+    tool_context = context(role, conversation_id=conversation.conversation_id)
+    references = (
+        RecommendationReference(
+            reference_id="requirement:42", kind="PURCHASE_REQUEST", label="PR-42"
+        ),
+    )
+
+    await store.save(identity=actor, context=tool_context, references=references)
+    state = await store.state(actor, conversation.conversation_id)
+    assert state.focused_role is role
+    assert state.purchase_request_id == 42
+    assert state.focused_field == "supplier"
+
+    await store.save(identity=actor, context=tool_context, awaiting_confirmation=True)
+    state = await store.state(actor, conversation.conversation_id)
+    assert state.purchase_request_id == 42
+    assert state.focused_role is role
+    assert state.focused_field == "supplier"
+
+    await store.save(identity=actor, context=tool_context, focused_role=None)
+    assert (await store.state(actor, conversation.conversation_id)).focused_role is None
 
 
 def detail(
@@ -743,7 +799,7 @@ async def test_start_new_without_fields_does_not_create_empty_draft() -> None:
 
 
 @pytest.mark.asyncio
-async def test_field_update_starts_new_draft_when_session_focus_is_submitted() -> None:
+async def test_field_update_does_not_implicitly_replace_submitted_requirement() -> None:
     client = FakeBackendClient(user(RoleCode.APPLICANT))
     client.seed_requirement(
         detail(RoleCode.APPLICANT, RequirementStatus.PENDING_REVIEW, requirement_id=1)
@@ -764,10 +820,9 @@ async def test_field_update_starts_new_draft_when_session_focus_is_submitted() -
         ).model_copy(update={"active_requirement_id": 1}),
     )
 
-    assert result.status == "SUCCESS"
-    assert result.requirement_id != 1
-    assert result.next_missing_field == "application_reason"
-    assert client.call_counts["create_requirement"] == 1
+    assert result.status == "INVALID_STATUS"
+    assert result.requirement_id is None
+    assert client.call_counts["create_requirement"] == 0
 
 
 @pytest.mark.asyncio
@@ -1682,8 +1737,7 @@ async def test_purchaser_multi_tool_observation_chain_is_llm_directed() -> None:
 
     response = await engine.run(
         agent=agent,
-        context=context(RoleCode.PURCHASER, active_requirement_id=1),
-        history=(),
+        turn_context=turn(context(RoleCode.PURCHASER, active_requirement_id=1), RoleCode.PURCHASER),
         user_text="把这单能自动补的都补一下, 再告诉我还缺什么。",
         external_message_id="om-chain",
     )
@@ -1734,8 +1788,7 @@ async def test_purchaser_llm_supplies_unit_price_without_python_parser() -> None
 
     await engine.run(
         agent=agent,
-        context=context(RoleCode.PURCHASER, active_requirement_id=1),
-        history=(),
+        turn_context=turn(context(RoleCode.PURCHASER, active_requirement_id=1), RoleCode.PURCHASER),
         user_text="实际成交价每台 12680。",
         external_message_id="om-price-agentic",
     )
@@ -1785,8 +1838,7 @@ async def test_purchaser_llm_queries_requirement_number_without_python_regex() -
 
     await engine.run(
         agent=agent,
-        context=context(RoleCode.PURCHASER),
-        history=(),
+        turn_context=turn(context(RoleCode.PURCHASER), RoleCode.PURCHASER),
         user_text="帮我打开 PR202608001 看一下。",
         external_message_id="om-query-number",
     )

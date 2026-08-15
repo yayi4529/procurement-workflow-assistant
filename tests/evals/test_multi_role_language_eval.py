@@ -1,10 +1,16 @@
+import pytest
+
+from procurement_platform.adapters.llm.fake_llm_client import FakeLlmClient
+from procurement_platform.application.assistant.role_intent import LlmRoleIntentResolver
+from procurement_platform.domain.assistant import AssistantTurn
 from procurement_platform.domain.enums import RoleCode
 
 from .cases import MULTI_ROLE_CASES
 from .helpers import evaluate, summarize
 
 
-def test_multi_role_case_coverage_and_safety_metrics() -> None:
+@pytest.mark.asyncio
+async def test_multi_role_case_coverage_and_safety_metrics() -> None:
     assert len(MULTI_ROLE_CASES) == 4
     assert {case.case_id for case in MULTI_ROLE_CASES} == {
         "multi_role_applicant_to_manager_001",
@@ -12,11 +18,22 @@ def test_multi_role_case_coverage_and_safety_metrics() -> None:
         "multi_role_keep_current_001",
         "multi_role_ambiguous_001",
     }
-    results = tuple(
-        evaluate(case, (), (), {}, selected_role=case.expected_role)
-        for case in MULTI_ROLE_CASES
-        if not case.expected_tools
-    )
+    scripted = {
+        "multi_role_applicant_to_manager_001": '{"selection_index":2,"confidence":"HIGH"}',
+        "multi_role_manager_to_applicant_001": '{"selection_index":1,"confidence":"HIGH"}',
+        "multi_role_keep_current_001": '{"selection_index":2,"confidence":"LOW"}',
+        "multi_role_ambiguous_001": '{"selection_index":1,"confidence":"LOW"}',
+    }
+    results = []
+    for case in MULTI_ROLE_CASES:
+        llm = FakeLlmClient(turns=(AssistantTurn(content=scripted[case.case_id]),))
+        resolution = await LlmRoleIntentResolver(llm).resolve(
+            user_text=case.user_messages[0],
+            allowed_roles=case.allowed_roles,
+            focused_role=case.initial_role,
+        )
+        selected_role = resolution.role if resolution.confidence == "HIGH" else case.initial_role
+        results.append(evaluate(case, (), (), {}, selected_role=selected_role))
     metrics = summarize(results)
     assert metrics.role_selection_accuracy == 1
     assert metrics.unnecessary_role_switch_count == 0

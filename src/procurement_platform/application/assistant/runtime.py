@@ -1,13 +1,20 @@
 # ruff: noqa: RUF001
 
 from procurement_platform.application.assistant.agents.protocol import RoleAgent
+from procurement_platform.application.assistant.context_composer import AgentContextComposer
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
-from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
+from procurement_platform.application.assistant.tools import (
+    ToolExecutor,
+    ToolRegistry,
+    ToolResultDisposition,
+    tool_result_disposition,
+)
 from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantMessage,
     AssistantResponse,
-    AssistantToolContext,
+    AssistantTextResponse,
+    AssistantToolResult,
 )
 from procurement_platform.domain.assistant_errors import (
     AssistantToolStepLimitError,
@@ -36,29 +43,16 @@ class AssistantRuntime:
         self,
         *,
         agent: RoleAgent,
-        context: AssistantToolContext | None = None,
-        history: tuple[AssistantMessage, ...] = (),
-        user_text: str = "",
+        turn_context: AgentTurnContext,
+        user_text: str,
         external_message_id: str,
-        turn_context: AgentTurnContext | None = None,
     ) -> AssistantResponse:
-        if turn_context is not None:
-            context = turn_context.tool_context
-            history = turn_context.recent_history
-        if context is None:
-            raise ValueError("context or turn_context is required")
-        context_builder = getattr(agent, "working_context", None)
-        working_context = (
-            await context_builder(turn_context)
-            if context_builder and turn_context is not None
-            else None
+        context = turn_context.tool_context
+        messages = agent.build_messages(
+            context=context,
+            history=turn_context.recent_history,
+            working_context=AgentContextComposer.compose(turn_context=turn_context),
         )
-        if context_builder:
-            messages = agent.build_messages(
-                context=context, history=history, working_context=working_context
-            )
-        else:
-            messages = agent.build_messages(context=context, history=history)
         policy_allowed = self._tool_policy.allowed_tool_names(
             current_user=context.current_user, active_role=agent.role
         )
@@ -78,26 +72,45 @@ class AssistantRuntime:
                 )
                 tool_messages: list[AssistantMessage] = []
                 mutation_seen = False
+                immediate_response: AssistantResponse | None = None
+                terminal_result: AssistantToolResult | None = None
                 for raw_call in turn.tool_calls:
                     tool = self._tool_registry.get(raw_call.name)
                     if mutation_seen and tool.side_effect == "MUTATE":
-                        break
-                    tool_message, result = await self._tool_executor.execute_result(
-                        name=raw_call.name,
-                        arguments_json=raw_call.arguments_json,
-                        tool_call_id=raw_call.id,
-                        context=context,
-                        allowed_names=allowed,
-                    )
+                        result = AssistantToolResult(
+                            status="POLICY_BLOCKED",
+                            user_message=(
+                                "Only one mutating tool may execute in one assistant turn."
+                            ),
+                        )
+                        tool_message = self._tool_executor.observation(
+                            name=raw_call.name, tool_call_id=raw_call.id, result=result
+                        )
+                    else:
+                        tool_message, result = await self._tool_executor.execute_result(
+                            name=raw_call.name,
+                            arguments_json=raw_call.arguments_json,
+                            tool_call_id=raw_call.id,
+                            context=context,
+                            allowed_names=allowed,
+                        )
+                        mutation_seen = mutation_seen or tool.side_effect == "MUTATE"
                     response = await agent.handle_tool_result(
                         result=result,
                         context=context,
                         external_message_id=external_message_id,
                     )
-                    if response is not None:
-                        return response
+                    if response is not None and immediate_response is None:
+                        immediate_response = response
                     tool_messages.append(tool_message)
-                    mutation_seen = mutation_seen or tool.side_effect == "MUTATE"
+                    if tool_result_disposition(result) is ToolResultDisposition.TERMINATE:
+                        terminal_result = terminal_result or result
+                if immediate_response is not None:
+                    return immediate_response
+                if terminal_result is not None:
+                    return AssistantTextResponse(
+                        text=terminal_result.user_message or "当前操作无法安全继续，请稍后重试。"
+                    )
                 messages = (*messages, assistant_message, *tool_messages)
                 continue
             if turn.content is not None and turn.content.strip():

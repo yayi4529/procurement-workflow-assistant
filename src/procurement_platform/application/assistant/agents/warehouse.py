@@ -3,6 +3,7 @@
 from procurement_platform.application.assistant.agents.base import BasicRoleAgent
 from procurement_platform.application.assistant.prompts.warehouse import WAREHOUSE_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.tool_policy import ROLE_TOOLS
 from procurement_platform.application.assistant.tooling import (
     UpdateWarehouseReceiptDraftResult,
 )
@@ -21,7 +22,7 @@ from procurement_platform.ports.backend_client import BackendClient
 class WarehouseAgent(BasicRoleAgent):
     role = RoleCode.WAREHOUSE_MANAGER
     role_prompt = WAREHOUSE_PROMPT
-    tool_names = frozenset({"query_purchase_requests", "update_warehouse_receipt_draft"})
+    tool_names = ROLE_TOOLS[role]
 
     def __init__(
         self, session_service: AssistantSessionService, backend_client: BackendClient

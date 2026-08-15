@@ -9,6 +9,7 @@ from procurement_platform.application.assistant.agent_tools import (
     UpdateReviewDraftTool,
 )
 from procurement_platform.application.assistant.agents.building_manager import BuildingManagerAgent
+from procurement_platform.application.assistant.context_composer import AgentContextComposer
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.supplier_recommendation import (
@@ -17,6 +18,7 @@ from procurement_platform.application.assistant.supplier_recommendation import (
 )
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
+from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantInteractionResponse,
     AssistantTextResponse,
@@ -73,6 +75,20 @@ def context(*, conversation_id: int = 1) -> AssistantToolContext:
         timezone_name="Asia/Shanghai",
         current_user=manager(),
         active_requirement_id=1,
+    )
+
+
+async def turn_context(client: FakeBackendClient, conversation_id: int) -> AgentTurnContext:
+    tool_context = context(conversation_id=conversation_id)
+    state = await client.get_agent_state(identity=identity(), conversation_id=conversation_id)
+    return AgentTurnContext(
+        current_user=tool_context.current_user,
+        active_role=RoleCode.BUILDING_MANAGER,
+        session_state=state,
+        active_requirement=await client.get_requirement(identity=identity(), requirement_id=1),
+        recent_history=(),
+        current_recommendations=state.last_recommendations,
+        tool_context=tool_context,
     )
 
 
@@ -281,8 +297,7 @@ async def test_supplier_recommendation_success_returns_to_llm_observation_loop()
 
     response = await runtime.run(
         agent=agent,
-        context=context(conversation_id=conversation_id),
-        history=(),
+        turn_context=await turn_context(client, conversation_id),
         user_text="推荐几个供应商",
         external_message_id="om_recommend",
     )
@@ -315,8 +330,7 @@ async def test_natural_language_selection_is_understood_by_llm_and_saved_by_tool
 
     response = await runtime.run(
         agent=agent,
-        context=context(conversation_id=conversation_id),
-        history=(),
+        turn_context=await turn_context(client, conversation_id),
         user_text="就第一个吧。",
         external_message_id="om_select",
     )
@@ -364,17 +378,10 @@ async def test_llm_can_save_multiple_review_fields_in_one_tool_call() -> None:
 @pytest.mark.asyncio
 async def test_ambiguous_supplier_wording_is_not_guessed_by_python() -> None:
     client = backend()
-    conversation_id = await seed_recommendations(client)
-    _, _, agent = build_runtime(client, ())
+    await seed_recommendations(client)
+    _, _, _ = build_runtime(client, ())
 
-    response = await agent.before_run(
-        context=context(conversation_id=conversation_id),
-        history=(),
-        user_text="还是之前合作最多的那个。",
-        external_message_id="om_ambiguous",
-    )
-
-    assert response is None
+    assert not hasattr(BuildingManagerAgent, "before_run")
     assert client.call_counts["update_review_fields"] == 0
 
 
@@ -420,13 +427,13 @@ def test_building_manager_agent_contains_no_natural_language_parser_constants() 
 async def test_building_manager_working_context_contains_backend_review_facts() -> None:
     client = backend()
     conversation_id = await seed_recommendations(client)
-    _, _, agent = build_runtime(client, ())
+    rendered = AgentContextComposer.compose(
+        turn_context=await turn_context(client, conversation_id)
+    )
 
-    rendered = await agent.working_context(context(conversation_id=conversation_id))
-
-    assert "requirement_no=PR-1" in rendered
+    assert '"requirement_no":"PR-1"' in rendered
     assert "application_reason" in rendered
     assert "网络扩容" in rendered
-    assert "review_draft={}" in rendered
+    assert '"review_draft":{}' in rendered
     assert "供应商A" in rendered
     assert "supplier:11" not in rendered

@@ -6,6 +6,7 @@ from procurement_platform.application.applicant.card_factory import ApplicantCar
 from procurement_platform.application.assistant.agents.base import BasicRoleAgent
 from procurement_platform.application.assistant.prompts.applicant import APPLICANT_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.tool_policy import ROLE_TOOLS
 from procurement_platform.application.assistant.tooling import (
     QueryPurchaseRequestsResult,
     RecommendProductOptionsResult,
@@ -31,9 +32,7 @@ class ApplicantAgent(BasicRoleAgent):
 
     role = RoleCode.APPLICANT
     role_prompt = APPLICANT_PROMPT
-    tool_names = frozenset(
-        {"query_purchase_requests", "recommend_product_options", "update_purchase_draft"}
-    )
+    tool_names = ROLE_TOOLS[role]
 
     def __init__(
         self,

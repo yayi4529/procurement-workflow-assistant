@@ -1,6 +1,7 @@
 """Task 9 domain tools shared by the optional conversational assistant."""
 
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -48,6 +49,13 @@ TimeField = Literal[
     "WAREHOUSE_SUBMITTED_AT",
     "COMPLETED_AT",
 ]
+
+
+class _UnsetType(Enum):
+    TOKEN = "UNSET"
+
+
+UNSET = _UnsetType.TOKEN
 
 
 class StrictArgs(BaseModel):
@@ -116,14 +124,14 @@ class SessionReferenceStore:
         *,
         identity: PlatformIdentity,
         context: AssistantToolContext,
-        requirement_id: int | None,
-        references: tuple[RecommendationReference, ...] = (),
-        focused_role: RoleCode | None = None,
-        focused_field: str | None = None,
+        requirement_id: int | _UnsetType | None = UNSET,
+        references: tuple[RecommendationReference, ...] | _UnsetType = UNSET,
+        focused_role: RoleCode | _UnsetType | None = UNSET,
+        focused_field: str | _UnsetType | None = UNSET,
         missing_fields: tuple[str, ...] | None = None,
-        pending_field: str | None = None,
+        pending_field: str | _UnsetType | None = UNSET,
         collected_data: dict[str, JsonValue] | None = None,
-        awaiting_confirmation: bool = False,
+        awaiting_confirmation: bool | _UnsetType = UNSET,
         clear_recommendations: bool = False,
     ) -> str:
         try:
@@ -139,23 +147,30 @@ class SessionReferenceStore:
         merged_data = dict(update.collected_data)
         if collected_data:
             merged_data.update(collected_data)
+        changes: dict[str, object] = {
+            "collected_data": merged_data,
+            "missing_fields": missing_fields
+            if missing_fields is not None
+            else update.missing_fields,
+        }
+        if requirement_id is not UNSET:
+            changes["purchase_request_id"] = requirement_id
+        if pending_field is not UNSET:
+            changes["pending_field"] = pending_field
+        if focused_role is not UNSET:
+            changes["focused_role"] = focused_role
+        if focused_field is not UNSET:
+            changes["focused_field"] = focused_field
+        if awaiting_confirmation is not UNSET:
+            changes["awaiting_confirmation"] = awaiting_confirmation
+        if clear_recommendations:
+            changes["last_recommendations"] = ()
+        elif references is not UNSET:
+            changes["last_recommendations"] = references
         await self._backend.update_agent_state(
             identity=identity,
             conversation_id=context.conversation_id,
-            state=update.model_copy(
-                update={
-                    "purchase_request_id": requirement_id,
-                    "collected_data": merged_data,
-                    "missing_fields": (
-                        missing_fields if missing_fields is not None else update.missing_fields
-                    ),
-                    "pending_field": pending_field,
-                    "last_recommendations": () if clear_recommendations else references,
-                    "focused_role": focused_role,
-                    "focused_field": focused_field,
-                    "awaiting_confirmation": awaiting_confirmation,
-                }
-            ),
+            state=update.model_copy(update=changes),
         )
         return candidate_set_id
 

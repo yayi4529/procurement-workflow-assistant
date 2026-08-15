@@ -1,11 +1,9 @@
 from procurement_platform.application.assistant.prompts.common import COMMON_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
-from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantMessage,
     AssistantResponse,
     AssistantTextResponse,
-    AssistantToolCall,
     AssistantToolContext,
     AssistantToolResult,
 )
@@ -20,24 +18,6 @@ class BasicRoleAgent:
 
     def __init__(self, session_service: AssistantSessionService) -> None:
         self._session_service = session_service
-
-    def allowed_tool_names(self) -> frozenset[str]:
-        return self.tool_names
-
-    def allowed_tool_names_for(self, user_text: str) -> frozenset[str]:
-        del user_text
-        return self.allowed_tool_names()
-
-    def retry_tool_name(self) -> str | None:
-        return None
-
-    def requires_tool_call(self, user_text: str) -> bool:
-        del user_text
-        return False
-
-    def prepare_tool_call(self, call: AssistantToolCall, *, user_text: str) -> AssistantToolCall:
-        del user_text
-        return call
 
     def build_messages(
         self,
@@ -57,53 +37,6 @@ class BasicRoleAgent:
             (AssistantMessage(role="system", content=working_context),) if working_context else ()
         )
         return (system, *context_message, *history)
-
-    async def working_context(self, context: AssistantToolContext | AgentTurnContext) -> str:
-        from procurement_platform.application.assistant.context_composer import AgentContextComposer
-
-        if isinstance(context, AgentTurnContext):
-            return AgentContextComposer.compose(turn_context=context)
-        from procurement_platform.domain.enums import PlatformType
-        from procurement_platform.domain.identity import PlatformIdentity
-
-        identity = PlatformIdentity.create(
-            PlatformType(context.platform_type), context.platform_user_id
-        )
-        try:
-            state = await self._session_service.state(
-                identity=identity, conversation_id=context.conversation_id
-            )
-        except Exception:
-            state = None
-        detail = None
-        if state is not None and state.purchase_request_id is not None:
-            try:
-                detail = await self._session_service.requirement(
-                    identity=identity, requirement_id=state.purchase_request_id
-                )
-            except Exception:
-                detail = None
-        snapshot = AgentTurnContext(
-            current_user=context.current_user,
-            active_role=self.role,
-            session_state=state,
-            active_requirement=detail,
-            recent_history=(),
-            current_recommendations=state.last_recommendations if state else (),
-            tool_context=context,
-        )
-        return AgentContextComposer.compose(turn_context=snapshot)
-
-    async def before_run(
-        self,
-        *,
-        context: AssistantToolContext,
-        history: tuple[AssistantMessage, ...],
-        user_text: str,
-        external_message_id: str,
-    ) -> AssistantResponse | None:
-        del context, history, user_text, external_message_id
-        return None
 
     async def handle_content(
         self,
@@ -128,15 +61,6 @@ class BasicRoleAgent:
         if result.exact_render_required and result.user_message:
             await self._append_reply(context, external_message_id, result.user_message)
             return AssistantTextResponse(text=result.user_message)
-        if result.status in {
-            "PERMISSION_DENIED",
-            "BACKEND_UNAVAILABLE",
-            "CONCURRENT_MODIFICATION",
-            "INVALID_STATUS",
-        }:
-            message = result.user_message or "当前操作无法安全继续，请稍后重试。"  # noqa: RUF001
-            await self._append_reply(context, external_message_id, message)
-            return AssistantTextResponse(text=message)
         return None
 
     async def _append_reply(

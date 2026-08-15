@@ -10,6 +10,7 @@ from procurement_platform.adapters.llm.fake_llm_client import FakeLlmClient
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
+from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantMessage,
     AssistantResponse,
@@ -85,8 +86,9 @@ class RuntimeAgent:
         *,
         context: AssistantToolContext,
         history: tuple[AssistantMessage, ...],
+        working_context: str | None = None,
     ) -> tuple[AssistantMessage, ...]:
-        del context
+        del context, working_context
         return history
 
     async def before_run(
@@ -164,6 +166,19 @@ def context() -> AssistantToolContext:
     )
 
 
+def turn_context() -> AgentTurnContext:
+    tool_context = context()
+    return AgentTurnContext(
+        current_user=tool_context.current_user,
+        active_role=RoleCode.APPLICANT,
+        session_state=None,
+        active_requirement=None,
+        recent_history=(),
+        current_recommendations=(),
+        tool_context=tool_context,
+    )
+
+
 def echo_call(identifier: str) -> AssistantToolCall:
     return AssistantToolCall(id=identifier, name="echo_tool", arguments_json='{"text":"hello"}')
 
@@ -175,8 +190,7 @@ async def test_runtime_delegates_tool_result_and_returns_agent_response() -> Non
 
     response = await engine.run(
         agent=agent,
-        context=context(),
-        history=(),
+        turn_context=turn_context(),
         user_text="hello",
         external_message_id="message",
     )
@@ -194,8 +208,7 @@ async def test_runtime_puts_tool_message_back_and_continues() -> None:
 
     response = await engine.run(
         agent=agent,
-        context=context(),
-        history=(),
+        turn_context=turn_context(),
         user_text="hello",
         external_message_id="message",
     )
@@ -211,8 +224,7 @@ async def test_runtime_rejects_empty_llm_turn() -> None:
     with pytest.raises(LlmInvalidResponseError):
         await engine.run(
             agent=RuntimeAgent(response_to_tool=None),
-            context=context(),
-            history=(),
+            turn_context=turn_context(),
             user_text="hello",
             external_message_id="message",
         )
@@ -225,8 +237,7 @@ async def test_runtime_enforces_tool_step_limit() -> None:
     with pytest.raises(AssistantToolStepLimitError):
         await engine.run(
             agent=RuntimeAgent(response_to_tool=None),
-            context=context(),
-            history=(),
+            turn_context=turn_context(),
             user_text="hello",
             external_message_id="message",
         )
@@ -243,8 +254,7 @@ async def test_tool_observation_remains_valid_json_when_compacted() -> None:
 
     await engine.run(
         agent=agent,
-        context=context(),
-        history=(),
+        turn_context=turn_context(),
         user_text="hello",
         external_message_id="message",
     )
@@ -279,11 +289,15 @@ async def test_runtime_executes_only_first_mutating_call_in_a_turn() -> None:
 
     response = await engine.run(
         agent=RuntimeAgent(response_to_tool=None, tool_names=frozenset({"mutate_a", "mutate_b"})),
-        context=context(),
-        history=(),
+        turn_context=turn_context(),
         user_text="write",
         external_message_id="message",
     )
 
     assert response == AssistantTextResponse(text="done")
     assert calls == ["a"]
+    assert [message.tool_call_id for message in llm.calls[1] if message.role == "tool"] == [
+        "a",
+        "b",
+    ]
+    assert json.loads(llm.calls[1][-1].content or "{}")["status"] == "POLICY_BLOCKED"

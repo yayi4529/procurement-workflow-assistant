@@ -1,6 +1,7 @@
 from procurement_platform.application.assistant.agents.base import BasicRoleAgent
 from procurement_platform.application.assistant.prompts.purchaser import PURCHASER_PROMPT
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.tool_policy import ROLE_TOOLS
 from procurement_platform.application.assistant.tooling import (
     FillSelectedSupplierProfileResult,
     PreparePurchasePrefillResult,
@@ -24,15 +25,7 @@ class PurchaserAgent(BasicRoleAgent):
 
     role = RoleCode.PURCHASER
     role_prompt = PURCHASER_PROMPT
-    tool_names = frozenset(
-        {
-            "query_purchase_requests",
-            "query_supplier_profile",
-            "prepare_purchase_prefill",
-            "fill_selected_supplier_profile",
-            "update_purchase_execution_draft",
-        }
-    )
+    tool_names = ROLE_TOOLS[role]
 
     def __init__(
         self,

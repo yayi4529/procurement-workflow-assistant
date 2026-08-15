@@ -279,14 +279,10 @@ class UpdatePurchaseDraftTool:
                 detail = await self._backend.get_requirement(
                     identity=identity, requirement_id=requirement_id
                 )
-                if (
-                    detail.status not in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}
-                    and args.requirement_id is None
-                    and args.selection_index is None
-                    and args.product_ref is None
-                ):
-                    requirement_id = None
-                    detail = None
+                if detail.status not in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}:
+                    return UpdatePurchaseDraftResult(
+                        status="INVALID_STATUS", user_message="当前状态不可修改需求草稿"
+                    )
             if requirement_id is None:
                 primary = [item for item in user.buildings if item.is_primary]
                 building = (

@@ -1,5 +1,6 @@
 import json
 import logging
+from enum import StrEnum
 from typing import Generic, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
@@ -20,6 +21,30 @@ ResultT = TypeVar("ResultT", bound=AssistantToolResult, covariant=True)
 
 logger = logging.getLogger(__name__)
 ToolSideEffect = str
+
+
+class ToolResultDisposition(StrEnum):
+    CONTINUE = "CONTINUE"
+    TERMINATE = "TERMINATE"
+
+
+TERMINAL_TOOL_STATUSES = frozenset(
+    {
+        "PERMISSION_DENIED",
+        "BACKEND_UNAVAILABLE",
+        "INTERNAL_ERROR",
+        "CONCURRENT_MODIFICATION",
+        "INVALID_STATUS",
+    }
+)
+
+
+def tool_result_disposition(result: AssistantToolResult) -> ToolResultDisposition:
+    return (
+        ToolResultDisposition.TERMINATE
+        if result.status in TERMINAL_TOOL_STATUSES
+        else ToolResultDisposition.CONTINUE
+    )
 
 
 class AssistantTool(Protocol, Generic[ArgsT, ResultT]):
@@ -134,6 +159,17 @@ class ToolExecutor:
         return (
             AssistantMessage(role="tool", name=name, tool_call_id=tool_call_id, content=content),
             result,
+        )
+
+    def observation(
+        self, *, name: str, tool_call_id: str, result: AssistantToolResult
+    ) -> AssistantMessage:
+        payload = _compact_observation(result.model_dump(mode="json"), self._max_result_chars)
+        return AssistantMessage(
+            role="tool",
+            name=name,
+            tool_call_id=tool_call_id,
+            content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         )
 
 

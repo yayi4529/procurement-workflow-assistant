@@ -24,12 +24,14 @@ from procurement_platform.application.assistant.context_builder import (
     AssistantContextBuilder,
     _beijing_timezone,
 )
+from procurement_platform.application.assistant.context_composer import AgentContextComposer
 from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.service import AssistantService
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
+from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
     AssistantInteractionResponse,
     AssistantMessage,
@@ -731,20 +733,25 @@ async def test_dynamic_context_contains_state_and_stable_recommendation_indexes(
             pending_field="brand",
         ),
     )
-    applicant = ApplicantAgent(
-        backend_client=backend,
-        llm_client=FakeLlmClient(turns=()),
-        session_service=AssistantSessionService(backend),
-        tool_executor=ToolExecutor(ToolRegistry(), max_result_chars=20000),
+    tool_context = context().model_copy(update={"conversation_id": conversation.conversation_id})
+    state = await backend.get_agent_state(
+        identity=identity, conversation_id=conversation.conversation_id
+    )
+    rendered = AgentContextComposer.compose(
+        turn_context=AgentTurnContext(
+            current_user=tool_context.current_user,
+            active_role=RoleCode.APPLICANT,
+            session_state=state,
+            active_requirement=None,
+            recent_history=(),
+            current_recommendations=(),
+            tool_context=tool_context,
+        )
     )
 
-    rendered = await applicant.working_context(
-        context().model_copy(update={"conversation_id": conversation.conversation_id})
-    )
-
-    assert "requirement_id=91" in rendered
+    assert '"requirement_id":91' in rendered
     assert "device_name" in rendered
-    assert "pending_field=brand" in rendered
+    assert '"pending_field":"brand"' in rendered
 
 
 @pytest.mark.parametrize(

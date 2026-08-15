@@ -5,6 +5,7 @@ from procurement_platform.application.assistant.prompts.building_manager import 
     BUILDING_MANAGER_PROMPT,
 )
 from procurement_platform.application.assistant.session_service import AssistantSessionService
+from procurement_platform.application.assistant.tool_policy import ROLE_TOOLS
 from procurement_platform.application.assistant.tooling import UpdateReviewDraftResult
 from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.application.building_manager.card_factory import (
@@ -26,14 +27,7 @@ class BuildingManagerAgent(BasicRoleAgent):
 
     role = RoleCode.BUILDING_MANAGER
     role_prompt = BUILDING_MANAGER_PROMPT
-    tool_names = frozenset(
-        {
-            "query_purchase_requests",
-            "query_supplier_profile",
-            "recommend_suppliers_for_requirement",
-            "update_review_draft",
-        }
-    )
+    tool_names = ROLE_TOOLS[role]
 
     def __init__(
         self,
