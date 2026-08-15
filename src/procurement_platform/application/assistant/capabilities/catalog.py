@@ -1,19 +1,21 @@
 from typing import Protocol
 
 from procurement_platform.application.assistant.capabilities.metadata import CapabilityMetadata
-from procurement_platform.application.assistant.supplier_recommendation import (
-    RecommendSuppliersForRequirementTool,
+from procurement_platform.application.assistant.capabilities.v2 import (
+    ApplySupplierProfileCapability,
+    GetPurchaseRequestCapability,
+    GetPurchaseTimelineCapability,
+    GetSupplierProfileCapability,
+    RecommendProductsCapability,
+    RecommendSuppliersCapability,
+    SearchPurchaseRequestsCapability,
+    UpdateApplicantDraftCapability,
+    UpdatePurchaseDraftCapability,
+    UpdateWarehouseDraftCapability,
 )
 from procurement_platform.application.assistant.tooling import (
-    FillSelectedSupplierProfileTool,
     PreparePurchasePrefillTool,
-    QueryPurchaseRequestsTool,
-    QuerySupplierProfileTool,
-    RecommendProductOptionsTool,
-    UpdatePurchaseDraftTool,
-    UpdatePurchaseExecutionDraftTool,
     UpdateReviewDraftTool,
-    UpdateWarehouseReceiptDraftTool,
 )
 from procurement_platform.application.assistant.tools import ToolSideEffect
 from procurement_platform.domain.enums import RoleCode
@@ -46,20 +48,19 @@ def _metadata(
 
 
 DEFAULT_CAPABILITY_METADATA: tuple[CapabilityMetadata, ...] = (
-    _metadata(QueryPurchaseRequestsTool, ALL_WORKFLOW_ROLES),
-    _metadata(RecommendProductOptionsTool, frozenset({RoleCode.APPLICANT})),
-    _metadata(UpdatePurchaseDraftTool, frozenset({RoleCode.APPLICANT})),
-    _metadata(
-        RecommendSuppliersForRequirementTool,
-        frozenset({RoleCode.BUILDING_MANAGER}),
-    ),
+    _metadata(SearchPurchaseRequestsCapability, ALL_WORKFLOW_ROLES),
+    _metadata(GetPurchaseRequestCapability, ALL_WORKFLOW_ROLES),
+    _metadata(GetPurchaseTimelineCapability, ALL_WORKFLOW_ROLES),
+    _metadata(RecommendProductsCapability, frozenset({RoleCode.APPLICANT})),
+    _metadata(UpdateApplicantDraftCapability, frozenset({RoleCode.APPLICANT})),
+    _metadata(RecommendSuppliersCapability, frozenset({RoleCode.BUILDING_MANAGER})),
     _metadata(UpdateReviewDraftTool, frozenset({RoleCode.BUILDING_MANAGER})),
     _metadata(
-        QuerySupplierProfileTool,
+        GetSupplierProfileCapability,
         frozenset({RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}),
     ),
     _metadata(PreparePurchasePrefillTool, frozenset({RoleCode.PURCHASER})),
-    _metadata(FillSelectedSupplierProfileTool, frozenset({RoleCode.PURCHASER})),
-    _metadata(UpdatePurchaseExecutionDraftTool, frozenset({RoleCode.PURCHASER})),
-    _metadata(UpdateWarehouseReceiptDraftTool, frozenset({RoleCode.WAREHOUSE_MANAGER})),
+    _metadata(ApplySupplierProfileCapability, frozenset({RoleCode.PURCHASER})),
+    _metadata(UpdatePurchaseDraftCapability, frozenset({RoleCode.PURCHASER})),
+    _metadata(UpdateWarehouseDraftCapability, frozenset({RoleCode.WAREHOUSE_MANAGER})),
 )

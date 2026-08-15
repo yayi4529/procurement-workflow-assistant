@@ -30,26 +30,28 @@ from procurement_platform.application.assistant.capabilities.catalog import (
 )
 from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
 from procurement_platform.application.assistant.capabilities.registry import CapabilityRegistry
+from procurement_platform.application.assistant.capabilities.v2 import (
+    ApplySupplierProfileCapability,
+    GetPurchaseRequestCapability,
+    GetPurchaseTimelineCapability,
+    GetSupplierProfileCapability,
+    RecommendProductsCapability,
+    RecommendSuppliersCapability,
+    SearchPurchaseRequestsCapability,
+    UpdateApplicantDraftCapability,
+    UpdatePurchaseDraftCapability,
+    UpdateWarehouseDraftCapability,
+)
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
 from procurement_platform.application.assistant.presentation import LegacyToolResultPresenter
 from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
 from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.service import AssistantService
 from procurement_platform.application.assistant.session_service import AssistantSessionService
-from procurement_platform.application.assistant.supplier_recommendation import (
-    RecommendSuppliersForRequirementTool,
-)
 from procurement_platform.application.assistant.tooling import (
-    FillSelectedSupplierProfileTool,
     PreparePurchasePrefillTool,
     PurchasePrefillNotificationService,
-    QueryPurchaseRequestsTool,
-    QuerySupplierProfileTool,
-    RecommendProductOptionsTool,
-    UpdatePurchaseDraftTool,
-    UpdatePurchaseExecutionDraftTool,
     UpdateReviewDraftTool,
-    UpdateWarehouseReceiptDraftTool,
 )
 from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.application.building_manager.action_router import (
@@ -251,16 +253,18 @@ class ApplicationContainer:
 def _build_capability_registry(backend_client: BackendClient) -> CapabilityRegistry:
     metadata_by_name = {item.name: item for item in DEFAULT_CAPABILITY_METADATA}
     tools = (
-        QueryPurchaseRequestsTool(backend_client),
-        RecommendProductOptionsTool(backend_client),
-        UpdatePurchaseDraftTool(backend_client),
-        RecommendSuppliersForRequirementTool(backend_client),
+        SearchPurchaseRequestsCapability(backend_client),
+        GetPurchaseRequestCapability(backend_client),
+        GetPurchaseTimelineCapability(backend_client),
+        RecommendProductsCapability(backend_client),
+        UpdateApplicantDraftCapability(backend_client),
+        RecommendSuppliersCapability(backend_client),
         UpdateReviewDraftTool(backend_client),
-        QuerySupplierProfileTool(backend_client),
+        GetSupplierProfileCapability(backend_client),
         PreparePurchasePrefillTool(backend_client),
-        FillSelectedSupplierProfileTool(backend_client),
-        UpdatePurchaseExecutionDraftTool(backend_client),
-        UpdateWarehouseReceiptDraftTool(backend_client),
+        ApplySupplierProfileCapability(backend_client),
+        UpdatePurchaseDraftCapability(backend_client),
+        UpdateWarehouseDraftCapability(backend_client),
     )
     registry = CapabilityRegistry()
     for tool in tools:

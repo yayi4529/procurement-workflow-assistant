@@ -15,8 +15,8 @@ from procurement_platform.application.assistant.capabilities.registry import (
     DuplicateCapabilityError,
     UnknownCapabilityError,
 )
+from procurement_platform.application.assistant.capabilities.v2 import SearchPurchaseRequestsArgs
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
-from procurement_platform.application.assistant.tooling import QueryPurchaseRequestsArgs
 from procurement_platform.bootstrap.container import _build_capability_registry
 from procurement_platform.domain.assistant import AssistantToolContext, AssistantToolResult
 from procurement_platform.domain.enums import RoleCode
@@ -102,33 +102,39 @@ def test_adapter_reuses_existing_tool_contract() -> None:
         (
             RoleCode.APPLICANT,
             {
-                "query_purchase_requests",
-                "recommend_product_options",
-                "update_purchase_draft",
+                "search_purchase_requests",
+                "get_purchase_request",
+                "get_purchase_timeline",
+                "recommend_products",
+                "update_applicant_draft",
             },
         ),
         (
             RoleCode.BUILDING_MANAGER,
             {
-                "query_purchase_requests",
-                "query_supplier_profile",
-                "recommend_suppliers_for_requirement",
+                "search_purchase_requests",
+                "get_purchase_request",
+                "get_purchase_timeline",
+                "get_supplier_profile",
+                "recommend_suppliers",
                 "update_review_draft",
             },
         ),
         (
             RoleCode.PURCHASER,
             {
-                "query_purchase_requests",
-                "query_supplier_profile",
+                "search_purchase_requests",
+                "get_purchase_request",
+                "get_purchase_timeline",
+                "get_supplier_profile",
                 "prepare_purchase_prefill",
-                "fill_selected_supplier_profile",
-                "update_purchase_execution_draft",
+                "apply_supplier_profile_to_draft",
+                "update_purchase_draft",
             },
         ),
         (
             RoleCode.WAREHOUSE_MANAGER,
-            {"query_purchase_requests", "update_warehouse_receipt_draft"},
+                {"search_purchase_requests", "get_purchase_request", "get_purchase_timeline", "update_warehouse_draft"},
         ),
     ],
 )
@@ -149,11 +155,13 @@ def test_policy_unions_capabilities_for_multi_role_user() -> None:
 
     assert actual == frozenset(
         {
-            "query_purchase_requests",
-            "recommend_product_options",
-            "update_purchase_draft",
-            "query_supplier_profile",
-            "recommend_suppliers_for_requirement",
+                "search_purchase_requests",
+                "get_purchase_request",
+                "get_purchase_timeline",
+                "recommend_products",
+                "update_applicant_draft",
+                "get_supplier_profile",
+                "recommend_suppliers",
             "update_review_draft",
         }
     )
@@ -181,7 +189,7 @@ async def test_role_policy_registry_existing_tool_fake_backend_chain() -> None:
     user = _user(RoleCode.APPLICANT)
     registry = _build_capability_registry(FakeBackendClient(user))
     policy = CapabilityPolicy(registry)
-    capability = registry.get("query_purchase_requests")
+    capability = registry.get("search_purchase_requests")
     context = AssistantToolContext(
         platform_type="FEISHU",
         platform_user_id="ou_capability_test",
@@ -195,9 +203,9 @@ async def test_role_policy_registry_existing_tool_fake_backend_chain() -> None:
     )
 
     result = await capability.execute(
-        args=QueryPurchaseRequestsArgs(operation="SEARCH"), context=context
+        args=SearchPurchaseRequestsArgs(), context=context
     )
 
-    assert "query_purchase_requests" in policy.allowed_names_for(user)
+    assert "search_purchase_requests" in policy.allowed_names_for(user)
     assert result.status == "NOT_FOUND"
     assert registry.names() == tuple(item.name for item in DEFAULT_CAPABILITY_METADATA)
