@@ -30,6 +30,7 @@ class PendingChoice(ContextModel):
 
 
 class AgentTaskState(ContextModel):
+    schema_version: int = 2
     active_goal: str | None = None
     known: dict[str, JsonValue] = Field(default_factory=dict)
     unresolved: tuple[str, ...] = ()
@@ -42,6 +43,7 @@ ReferencePayload: TypeAlias = dict[str, JsonValue]
 
 
 class StoredReference(ContextModel):
+    schema_version: int = 2
     reference_id: str
     entity_type: str
     source_capability: str

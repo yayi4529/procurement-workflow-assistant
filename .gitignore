@@ -11,3 +11,6 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+*.stdout.log
+*.stderr.log
+outputs/

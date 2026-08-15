@@ -2,6 +2,40 @@
 
 基于飞书卡片、平台无关通知网关和可选智能助手的采购流程自动化前端服务。
 
+## Agent V2 production profile
+
+文本 Assistant 的唯一生产主链为：
+
+```text
+AssistantService → ContextBuilder → CapabilityPolicy → ProcurementAgent
+→ AssistantRuntime → CapabilityRegistry → Domain Capability → BackendClient HTTP Port
+```
+
+`BusinessFacts` 每轮从后端事实重建，`AgentTaskState` 与 `ReferenceStore` 通过后端 Agent
+Session 跨 worker 持久化，兼容载荷带 schema version 2。角色只决定 Capability 权限并集。
+正式 submit/reject/start/complete 始终走 `Card → Action Router → Application Service → Backend`，
+不对 LLM 暴露。
+
+Production 必须使用 Redis-backed event dedup、conversation lock 和 notification delivery：
+
+```text
+PROCUREMENT_EVENT_DEDUP_STORE_BACKEND=redis
+PROCUREMENT_CONVERSATION_LOCK_BACKEND=redis
+PROCUREMENT_NOTIFICATION_DELIVERY_STORE_BACKEND=redis
+PROCUREMENT_REDIS_URL=redis://user:password@host:6379/0
+PROCUREMENT_REDIS_TIMEOUT_SECONDS=2
+PROCUREMENT_FEISHU_EVENT_DEDUP_TTL_SECONDS=86400
+PROCUREMENT_CONVERSATION_LOCK_TTL_SECONDS=60
+PROCUREMENT_CONVERSATION_LOCK_ACQUIRE_TIMEOUT_SECONDS=5
+PROCUREMENT_NOTIFICATION_DELIVERY_TTL_SECONDS=604800
+```
+
+危险的 production memory/local 组合会在启动时失败，不会静默降级。部署、故障策略和
+检查命令见 [Production Runbook](docs/runbook.md)。CI 对每次变更执行格式、lint、源码类型、
+unit、integration、contract 和 deterministic eval；live-model eval 仅手动、nightly 或 release
+gate 执行。Prompt 当前版本为 `procurement-agent-v2.1`，Prompt/模型/Capability/Context 变更
+必须比较 Eval baseline 后发布。
+
 当前项目已完成 Task 1～Task 7 的无 LLM 正式采购流程，现进入：
 
 > **真实飞书 + 真实采购后端联调阶段**

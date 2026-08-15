@@ -81,7 +81,7 @@ def create_app(
             "llm_configured": resolved_container.procurement_assistant is not None,
             "llm_model_configured": resolved_settings.llm_model is not None,
             "agent_session_backend_configured": resolved_settings.backend_mode.value == "http",
-            "conversation_lock_backend": "local",
+            "conversation_lock_backend": resolved_settings.conversation_lock_backend,
             "notification_gateway_enabled": resolved_settings.notification_gateway.enabled,
             "notification_gateway_configured": (
                 resolved_container.notification_gateway_service is not None

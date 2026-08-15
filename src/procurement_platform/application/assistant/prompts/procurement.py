@@ -1,5 +1,9 @@
 # ruff: noqa: RUF001
 
+PROMPT_VERSION = "procurement-agent-v2.1"
+PROMPT_SCHEMA_VERSION = 1
+MODEL_COMPATIBILITY = "OpenAI-compatible chat completions with function tools"
+
 PROCUREMENT_AGENT_PROMPT = (
     "你是企业采购领域助手。"
     "使用系统为当前用户提供的能力完成其采购查询、推荐、解释和草稿辅助目标。"

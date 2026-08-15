@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import cast
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
 from procurement_platform.adapters.backend.fake_seed import FakeBackendSeedLoader
@@ -18,6 +19,12 @@ from procurement_platform.adapters.persistence.memory_event_dedup_store import (
 )
 from procurement_platform.adapters.persistence.memory_notification_delivery_store import (
     MemoryNotificationDeliveryStore,
+)
+from procurement_platform.adapters.persistence.redis_stores import (
+    RedisClient,
+    RedisConversationLockManager,
+    RedisEventDedupStore,
+    RedisNotificationDeliveryStore,
 )
 from procurement_platform.application.applicant.action_router import ApplicantActionRouter
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
@@ -93,6 +100,9 @@ from procurement_platform.bootstrap.settings import Settings
 from procurement_platform.domain.enums import BackendMode
 from procurement_platform.ports.backend_client import BackendClient
 from procurement_platform.ports.channel import ChannelClient
+from procurement_platform.ports.conversation_lock import ConversationLockManager
+from procurement_platform.ports.event_dedup_store import EventDedupStore
+from procurement_platform.ports.notification_delivery_store import NotificationDeliveryStore
 
 
 @dataclass(slots=True)
@@ -101,16 +111,17 @@ class ApplicationContainer:
     backend_client: BackendClient
     channel_client: ChannelClient | None = None
     webhook_parser: FeishuWebhookParser | None = None
-    event_dedup_store: MemoryEventDedupStore | None = None
+    event_dedup_store: EventDedupStore | None = None
     message_handler: BaseMessageHandler | None = None
     card_interaction_handler: BaseCardInteractionHandler | None = None
-    notification_delivery_store: MemoryNotificationDeliveryStore | None = None
+    notification_delivery_store: NotificationDeliveryStore | None = None
     notification_renderer_registry: NotificationRendererRegistry | None = None
     notification_gateway_service: NotificationGatewayService | None = None
     procurement_assistant: ProcurementAssistant | None = None
     assistant_service: AssistantService | None = None
     procurement_agent: ProcurementAgent | None = None
-    conversation_lock_manager: LocalConversationLockManager | None = None
+    conversation_lock_manager: ConversationLockManager | None = None
+    redis_client: RedisClient | None = None
     capability_registry: CapabilityRegistry | None = None
     capability_policy: CapabilityPolicy | None = None
 
@@ -155,8 +166,22 @@ class ApplicationContainer:
                     else None
                 ),
             )
-            container.event_dedup_store = MemoryEventDedupStore()
-            lock_manager = LocalConversationLockManager()
+            redis_client = _build_redis_client(settings)
+            container.redis_client = redis_client
+            container.event_dedup_store = (
+                RedisEventDedupStore(redis_client, ttl_seconds=settings.event_dedup_ttl_seconds)
+                if settings.event_dedup_store_backend == "redis"
+                else MemoryEventDedupStore()
+            )
+            lock_manager: ConversationLockManager = (
+                RedisConversationLockManager(
+                    redis_client,
+                    lease_seconds=settings.conversation_lock_ttl_seconds,
+                    acquire_timeout_seconds=(settings.conversation_lock_acquire_timeout_seconds),
+                )
+                if settings.conversation_lock_backend == "redis"
+                else LocalConversationLockManager()
+            )
             container.conversation_lock_manager = lock_manager
             if settings.llm_enabled:
                 api_key = settings.llm_api_key
@@ -221,7 +246,14 @@ class ApplicationContainer:
                 WarehouseActionRouter(WarehouseWorkflowService(container.backend_client)),
             )
             if settings.notification_gateway.enabled:
-                delivery_store = MemoryNotificationDeliveryStore()
+                delivery_store: NotificationDeliveryStore = (
+                    RedisNotificationDeliveryStore(
+                        redis_client,
+                        ttl_seconds=settings.notification_delivery_ttl_seconds,
+                    )
+                    if settings.notification_gateway.delivery_store_backend == "redis"
+                    else MemoryNotificationDeliveryStore()
+                )
                 registry = NotificationRendererRegistry()
                 for event_type in (
                     "REQUIREMENT_PENDING_REVIEW",
@@ -254,6 +286,37 @@ class ApplicationContainer:
         if self.channel_client is not None:
             await self.channel_client.aclose()
         await self.backend_client.aclose()
+        if self.redis_client is not None:
+            close = getattr(self.redis_client, "aclose", None)
+            if close is not None:
+                await close()
+
+
+def _build_redis_client(settings: Settings) -> RedisClient:
+    if not (
+        settings.event_dedup_store_backend == "redis"
+        or settings.conversation_lock_backend == "redis"
+        or settings.notification_gateway.delivery_store_backend == "redis"
+    ):
+        return _UnusedRedisClient()
+    from redis.asyncio import Redis
+
+    assert settings.redis_url is not None
+    return cast(
+        RedisClient,
+        Redis.from_url(
+            settings.redis_url.get_secret_value(),
+            socket_connect_timeout=settings.redis_timeout_seconds,
+            socket_timeout=settings.redis_timeout_seconds,
+            decode_responses=True,
+        ),
+    )
+
+
+class _UnusedRedisClient:
+    async def eval(self, script: str, numkeys: int, *keys_and_args: object) -> object:
+        del script, numkeys, keys_and_args
+        raise RuntimeError("Redis is not configured")
 
 
 def _build_capability_registry(backend_client: BackendClient) -> CapabilityRegistry:

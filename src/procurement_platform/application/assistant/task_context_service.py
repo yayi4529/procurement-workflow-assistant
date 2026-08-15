@@ -24,6 +24,7 @@ from procurement_platform.ports.backend_client import BackendClient
 
 _TASK_PREFIX = "task_v2:"
 _REFERENCE_PREFIX = "reference_v2:"
+_STATE_SCHEMA_VERSION = 2
 
 
 class BusinessFactsBuilder:
@@ -122,6 +123,7 @@ class AgentTaskStateService:
             for key, value in base.collected_data.items()
             if not key.startswith(_TASK_PREFIX)
         }
+        data[f"{_TASK_PREFIX}schema_version"] = _STATE_SCHEMA_VERSION
         if task.active_goal:
             data[f"{_TASK_PREFIX}goal"] = task.active_goal
         for key, value in task.known.items():
@@ -168,6 +170,7 @@ class ReferenceStore:
             else AgentSessionStateUpdate()
         )
         data = dict(base.collected_data)
+        data[f"{_REFERENCE_PREFIX}schema_version"] = _STATE_SCHEMA_VERSION
         for item in references:
             data[f"{_REFERENCE_PREFIX}{item.reference_id}:source"] = item.source_capability
             data[f"{_REFERENCE_PREFIX}{item.reference_id}:type"] = item.entity_type

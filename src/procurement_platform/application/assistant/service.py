@@ -15,6 +15,7 @@ from procurement_platform.domain.assistant import (
 )
 from procurement_platform.domain.assistant_session import AgentSessionState, AgentSessionStateUpdate
 from procurement_platform.domain.enums import AgentMessageSender, PlatformType, RoleCode
+from procurement_platform.domain.errors import SessionNotFoundError
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
 from procurement_platform.domain.user import CurrentUser
@@ -69,7 +70,7 @@ class AssistantService:
             state = await self._session_service.state(
                 identity=identity, conversation_id=conversation.conversation_id
             )
-        except Exception:
+        except SessionNotFoundError:
             state = None
 
         supported_roles = self._supported_roles(current_user)

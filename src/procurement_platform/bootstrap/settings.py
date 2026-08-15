@@ -61,7 +61,7 @@ class NotificationGatewaySettings:
 
     def __post_init__(self) -> None:
         _validate_route_path(self.path)
-        if self.delivery_store_backend != "memory":
+        if self.delivery_store_backend not in {"memory", "redis"}:
             raise ValueError("unsupported notification delivery store backend")
 
 
@@ -84,6 +84,13 @@ class Settings:
     llm_max_tool_result_chars: int = 20000
     allow_test_platform: bool = False
     event_dedup_store_backend: str = "memory"
+    conversation_lock_backend: str = "local"
+    redis_url: SecretStr | None = field(default=None, repr=False)
+    redis_timeout_seconds: float = 2.0
+    event_dedup_ttl_seconds: int = 86400
+    conversation_lock_ttl_seconds: int = 60
+    conversation_lock_acquire_timeout_seconds: float = 5.0
+    notification_delivery_ttl_seconds: int = 604800
     debug_identity_probe_enabled: bool = False
     development_notification_renderer_enabled: bool = False
     log_level: str = "INFO"
@@ -105,8 +112,23 @@ class Settings:
             raise ValueError("invalid LLM history or tool result limit")
         if not self.identity_gateway_secret.get_secret_value():
             raise ValueError("identity gateway secret is required")
-        if self.event_dedup_store_backend != "memory":
+        if self.event_dedup_store_backend not in {"memory", "redis"}:
             raise ValueError("unsupported event dedup store backend")
+        if self.conversation_lock_backend not in {"local", "redis"}:
+            raise ValueError("unsupported conversation lock backend")
+        if self.redis_timeout_seconds <= 0:
+            raise ValueError("redis timeout must be greater than zero")
+        if (
+            min(
+                self.event_dedup_ttl_seconds,
+                self.conversation_lock_ttl_seconds,
+                self.notification_delivery_ttl_seconds,
+            )
+            < 1
+        ):
+            raise ValueError("redis TTL values must be positive")
+        if self.conversation_lock_acquire_timeout_seconds <= 0:
+            raise ValueError("conversation lock acquire timeout must be greater than zero")
         if self.log_format not in {"text", "json"}:
             raise ValueError("log format must be text or json")
         if self.backend_mode is BackendMode.FAKE and environment == "production":
@@ -125,6 +147,15 @@ class Settings:
                 raise ValueError("memory notification delivery store is forbidden in production")
         if environment == "production" and self.event_dedup_store_backend == "memory":
             raise ValueError("memory event dedup store is forbidden in production")
+        if environment == "production" and self.conversation_lock_backend == "local":
+            raise ValueError("local conversation lock is forbidden in production")
+        redis_required = (
+            self.event_dedup_store_backend == "redis"
+            or self.conversation_lock_backend == "redis"
+            or self.notification_gateway.delivery_store_backend == "redis"
+        )
+        if redis_required and (self.redis_url is None or not self.redis_url.get_secret_value()):
+            raise ValueError("Redis-backed stores require PROCUREMENT_REDIS_URL")
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "Settings":
@@ -182,6 +213,27 @@ class Settings:
             event_dedup_store_backend=values.get(
                 "PROCUREMENT_EVENT_DEDUP_STORE_BACKEND", "memory"
             ).strip(),
+            conversation_lock_backend=values.get(
+                "PROCUREMENT_CONVERSATION_LOCK_BACKEND", "local"
+            ).strip(),
+            redis_url=(
+                SecretStr(values["PROCUREMENT_REDIS_URL"].strip())
+                if values.get("PROCUREMENT_REDIS_URL", "").strip()
+                else None
+            ),
+            redis_timeout_seconds=float(values.get("PROCUREMENT_REDIS_TIMEOUT_SECONDS", "2")),
+            event_dedup_ttl_seconds=int(
+                values.get("PROCUREMENT_FEISHU_EVENT_DEDUP_TTL_SECONDS", "86400")
+            ),
+            conversation_lock_ttl_seconds=int(
+                values.get("PROCUREMENT_CONVERSATION_LOCK_TTL_SECONDS", "60")
+            ),
+            conversation_lock_acquire_timeout_seconds=float(
+                values.get("PROCUREMENT_CONVERSATION_LOCK_ACQUIRE_TIMEOUT_SECONDS", "5")
+            ),
+            notification_delivery_ttl_seconds=int(
+                values.get("PROCUREMENT_NOTIFICATION_DELIVERY_TTL_SECONDS", "604800")
+            ),
             debug_identity_probe_enabled=_parse_bool(
                 values.get("PROCUREMENT_DEBUG_IDENTITY_PROBE_ENABLED", "false")
             ),

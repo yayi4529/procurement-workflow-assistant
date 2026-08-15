@@ -1,6 +1,9 @@
 # ruff: noqa: RUF001
 
+import logging
+from time import perf_counter
 from typing import Protocol
+from uuid import uuid4
 
 from procurement_platform.application.assistant.context_composer import AgentContextComposer
 from procurement_platform.application.assistant.tools import (
@@ -78,6 +81,9 @@ class AssistantRuntime:
         user_text: str,
         external_message_id: str,
     ) -> AssistantResponse:
+        logger = logging.getLogger(__name__)
+        agent_turn_id = str(uuid4())
+        turn_started = perf_counter()
         context = turn_context.tool_context
         messages = agent.build_messages(
             context=context,
@@ -110,6 +116,8 @@ class AssistantRuntime:
                 terminal_result: AssistantToolResult | None = None
                 for raw_call in turn.tool_calls:
                     tool = self._tool_registry.get(raw_call.name)
+                    call_started = perf_counter()
+                    capability_call_id = str(uuid4())
                     if mutation_seen and tool.side_effect == "MUTATE":
                         result = AssistantToolResult(
                             status="POLICY_BLOCKED",
@@ -134,6 +142,19 @@ class AssistantRuntime:
                         context=context,
                         external_message_id=external_message_id,
                     )
+                    logger.info(
+                        "assistant_capability_completed",
+                        extra={
+                            "agent_turn_id": agent_turn_id,
+                            "capability_call_id": capability_call_id,
+                            "conversation_id": context.conversation_id,
+                            "capability_name": raw_call.name,
+                            "side_effect": tool.side_effect,
+                            "status": result.status,
+                            "result_type": type(result).__name__,
+                            "latency_ms": round((perf_counter() - call_started) * 1000, 2),
+                        },
+                    )
                     if response is not None and immediate_response is None:
                         immediate_response = response
                     tool_messages.append(tool_message)
@@ -156,6 +177,15 @@ class AssistantRuntime:
                     retry_count=content_retries,
                 )
                 if response is not None:
+                    logger.info(
+                        "assistant_turn_completed",
+                        extra={
+                            "agent_turn_id": agent_turn_id,
+                            "conversation_id": context.conversation_id,
+                            "status": "success",
+                            "latency_ms": round((perf_counter() - turn_started) * 1000, 2),
+                        },
+                    )
                     return response
                 content_retries += 1
                 messages = (

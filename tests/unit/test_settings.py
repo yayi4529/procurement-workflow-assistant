@@ -74,6 +74,30 @@ def test_production_notification_gateway_requires_token_and_durable_store() -> N
             identity_gateway_secret=SecretStr("identity"),
             notification_gateway=NotificationGatewaySettings(enabled=True),
         )
+
+
+def test_production_distributed_state_requires_redis_and_accepts_safe_profile() -> None:
+    with pytest.raises(ValueError, match="local conversation lock"):
+        Settings.from_env(
+            environment(
+                PROCUREMENT_ENVIRONMENT="production",
+                PROCUREMENT_ALLOW_TEST_PLATFORM="false",
+                PROCUREMENT_EVENT_DEDUP_STORE_BACKEND="redis",
+                PROCUREMENT_REDIS_URL="redis://:secret@redis:6379/0",
+            )
+        )
+
+    settings = Settings.from_env(
+        environment(
+            PROCUREMENT_ENVIRONMENT="production",
+            PROCUREMENT_ALLOW_TEST_PLATFORM="false",
+            PROCUREMENT_EVENT_DEDUP_STORE_BACKEND="redis",
+            PROCUREMENT_CONVERSATION_LOCK_BACKEND="redis",
+            PROCUREMENT_REDIS_URL="redis://:secret@redis:6379/0",
+        )
+    )
+    assert settings.conversation_lock_backend == "redis"
+    assert "secret" not in repr(settings)
     with pytest.raises(ValueError, match="memory"):
         Settings(
             environment="production",
