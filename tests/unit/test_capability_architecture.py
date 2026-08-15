@@ -15,7 +15,12 @@ from procurement_platform.application.assistant.capabilities.registry import (
     DuplicateCapabilityError,
     UnknownCapabilityError,
 )
-from procurement_platform.application.assistant.capabilities.v2 import SearchPurchaseRequestsArgs
+from procurement_platform.application.assistant.capabilities.requirements import (
+    GetPurchaseRequestResult,
+    GetPurchaseTimelineResult,
+    SearchPurchaseRequestsArgs,
+    SearchPurchaseRequestsResult,
+)
 from procurement_platform.application.assistant.tool_policy import ToolPolicy
 from procurement_platform.bootstrap.container import _build_capability_registry
 from procurement_platform.domain.assistant import AssistantToolContext, AssistantToolResult
@@ -226,3 +231,52 @@ async def test_role_policy_registry_existing_tool_fake_backend_chain() -> None:
     assert "search_purchase_requests" in policy.allowed_names_for(user)
     assert result.status == "NOT_FOUND"
     assert registry.names() == tuple(item.name for item in DEFAULT_CAPABILITY_METADATA)
+
+
+def test_requirement_v2_schemas_have_no_operation_router() -> None:
+    registry = _build_capability_registry(FakeBackendClient(_user(RoleCode.APPLICANT)))
+
+    for name in (
+        "search_purchase_requests",
+        "get_purchase_request",
+        "get_purchase_timeline",
+    ):
+        capability = registry.get(name)
+        assert "operation" not in capability.args_model.model_json_schema()["properties"]
+        assert "Do not" in capability.description or "do not" in capability.description
+
+    assert "query_purchase_requests" not in registry.names()
+
+
+@pytest.mark.asyncio
+async def test_requirement_v2_returns_action_specific_typed_results() -> None:
+    user = _user(RoleCode.APPLICANT)
+    backend = FakeBackendClient(user)
+    registry = _build_capability_registry(backend)
+    context = AssistantToolContext(
+        platform_type="FEISHU",
+        platform_user_id="ou_capability_results",
+        conversation_id=1,
+        external_conversation_id="oc_capability_results",
+        external_message_id="om_capability_results",
+        current_time=datetime(2026, 8, 15, tzinfo=UTC),
+        timezone_name="Asia/Shanghai",
+        current_user=user,
+        active_requirement_id=None,
+    )
+
+    search = await registry.get("search_purchase_requests").execute(
+        args=SearchPurchaseRequestsArgs(), context=context
+    )
+    detail = await registry.get("get_purchase_request").execute(
+        args=registry.get("get_purchase_request").args_model(requirement_id=999),
+        context=context,
+    )
+    timeline = await registry.get("get_purchase_timeline").execute(
+        args=registry.get("get_purchase_timeline").args_model(requirement_id=999),
+        context=context,
+    )
+
+    assert isinstance(search, SearchPurchaseRequestsResult)
+    assert isinstance(detail, GetPurchaseRequestResult)
+    assert isinstance(timeline, GetPurchaseTimelineResult)

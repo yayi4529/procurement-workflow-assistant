@@ -44,6 +44,15 @@ path now passes that union from `ProcurementAgent` to `AssistantRuntime`. Legacy
 tests or migration imports; the ApplicationContainer no longer constructs them. Formal workflow
 actions remain absent from the capability catalog.
 
+## Task 03 domain capability boundary
+
+LLM-visible capabilities are organized by domain (`requirements`, `products`, `suppliers`,
+`purchases`, and `drafts`) rather than role. Requirement search, detail, and timeline are separate
+typed capabilities and expose no `operation` argument. `PurchaseRequestQueryService` contains the
+shared deterministic query implementation; the old operation-based tool is internal compatibility
+only. Capability descriptions define their use, do-not-use, authoritative-data, and side-effect
+boundaries. Formal workflow transitions remain on the deterministic card path.
+
 For `REQUIREMENT_PENDING_PURCHASE`, the notification gateway may ask an isolated prefill provider to render a purchaser suggestion card. Any unavailable, invalid, unauthorized, or incomplete prefill falls back to the ordinary Outbox notification. The gateway itself has no dependency on business transition operations.
 
 Conversation messages and short-lived state use the procurement backend's Agent REST endpoints through `BackendClient`. Backend data remains authoritative. The assistant may explain or recommend but cannot perform formal workflow transitions; those must use cards with backend-issued facts, versions, and action tokens.

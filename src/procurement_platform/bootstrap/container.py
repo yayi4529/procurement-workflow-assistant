@@ -35,6 +35,9 @@ from procurement_platform.application.assistant.capabilities.adapters import (
 from procurement_platform.application.assistant.capabilities.catalog import (
     DEFAULT_CAPABILITY_METADATA,
 )
+from procurement_platform.application.assistant.capabilities.drafts import (
+    UpdateReviewDraftCapability,
+)
 from procurement_platform.application.assistant.capabilities.intelligence import (
     CompareProductsCapability,
     CompareSuppliersCapability,
@@ -42,6 +45,9 @@ from procurement_platform.application.assistant.capabilities.intelligence import
     FindSimilarPurchasesCapability,
 )
 from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
+from procurement_platform.application.assistant.capabilities.purchases import (
+    PreparePurchasePrefillCapability,
+)
 from procurement_platform.application.assistant.capabilities.registry import CapabilityRegistry
 from procurement_platform.application.assistant.capabilities.v2 import (
     ApplySupplierProfileCapability,
@@ -62,9 +68,7 @@ from procurement_platform.application.assistant.runtime import AssistantRuntime
 from procurement_platform.application.assistant.service import AssistantService
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tooling import (
-    PreparePurchasePrefillTool,
     PurchasePrefillNotificationService,
-    UpdateReviewDraftTool,
 )
 from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.application.building_manager.action_router import (
@@ -333,9 +337,9 @@ def _build_capability_registry(backend_client: BackendClient) -> CapabilityRegis
         RecommendProductsCapability(backend_client),
         UpdateApplicantDraftCapability(backend_client),
         RecommendSuppliersCapability(backend_client),
-        UpdateReviewDraftTool(backend_client),
+        UpdateReviewDraftCapability(backend_client),
         GetSupplierProfileCapability(backend_client),
-        PreparePurchasePrefillTool(backend_client),
+        PreparePurchasePrefillCapability(backend_client),
         ApplySupplierProfileCapability(backend_client),
         UpdatePurchaseDraftCapability(backend_client),
         UpdateWarehouseDraftCapability(backend_client),

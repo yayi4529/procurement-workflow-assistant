@@ -220,47 +220,20 @@ class QueryPurchaseRequestsResult(AssistantToolResult):
     missing_fields: tuple[str, ...] = ()
 
 
-class QueryPurchaseRequestsTool:
-    name = "query_purchase_requests"
-    side_effect = "READ"
-    description = "Query visible purchase requests, details, current handler, or timeline."
-    args_model = QueryPurchaseRequestsArgs
+class PurchaseRequestQueryService:
+    """Deterministic requirement reads shared by V2 capabilities and the legacy wrapper."""
 
     def __init__(self, backend: BackendClient) -> None:
         self._backend = backend
         self._temporal = TemporalRangeResolver()
         self._session = SessionReferenceStore(backend)
 
-    async def execute(
+    async def search(
         self, *, args: QueryPurchaseRequestsArgs, context: AssistantToolContext
     ) -> QueryPurchaseRequestsResult:
         identity = _identity(context)
         try:
             await self._backend.get_current_user(identity=identity)
-            if args.operation == "GET_DETAIL":
-                requirement_id = await self._resolve_requirement_id(identity, args)
-                return self._detail(
-                    await self._backend.get_requirement(
-                        identity=identity, requirement_id=requirement_id
-                    )
-                )
-            if args.operation == "GET_TIMELINE":
-                requirement_id = await self._resolve_requirement_id(identity, args)
-                timeline = await self._backend.get_requirement_timeline(
-                    identity=identity, requirement_id=requirement_id
-                )
-                return QueryPurchaseRequestsResult(
-                    status="SUCCESS",
-                    requirement_id=requirement_id,
-                    requirement_no=args.requirement_no,
-                    timeline=tuple(
-                        (
-                            f"{item.operated_at.isoformat()} {item.action_type}: "
-                            f"{item.operation_summary or item.to_status or ''}"
-                        )
-                        for item in timeline.items
-                    ),
-                )
             window = (
                 self._temporal.resolve(args.time_expression, now=context.current_time)
                 if args.time_expression
@@ -324,6 +297,66 @@ class QueryPurchaseRequestsTool:
             )
         except ValueError as exc:
             return QueryPurchaseRequestsResult(status="INVALID_ARGUMENTS", user_message=str(exc))
+        except (PermissionDeniedError, InvalidHandlerError):
+            return QueryPurchaseRequestsResult(
+                status="PERMISSION_DENIED", user_message="无权查看该采购单"
+            )
+        except RequirementNotFoundError:
+            return QueryPurchaseRequestsResult(
+                status="NOT_FOUND", user_message="未找到该采购单, 请核对完整采购单编号"
+            )
+        except (BackendUnavailableError, BackendTimeoutError, BackendProtocolError):
+            return QueryPurchaseRequestsResult(
+                status="BACKEND_UNAVAILABLE", user_message="采购后端暂时不可用"
+            )
+
+    async def get_detail(
+        self, *, args: QueryPurchaseRequestsArgs, context: AssistantToolContext
+    ) -> QueryPurchaseRequestsResult:
+        identity = _identity(context)
+        try:
+            await self._backend.get_current_user(identity=identity)
+            requirement_id = await self._resolve_requirement_id(identity, args)
+            return self._detail(
+                await self._backend.get_requirement(
+                    identity=identity, requirement_id=requirement_id
+                )
+            )
+        except (PermissionDeniedError, InvalidHandlerError):
+            return QueryPurchaseRequestsResult(
+                status="PERMISSION_DENIED", user_message="无权查看该采购单"
+            )
+        except RequirementNotFoundError:
+            return QueryPurchaseRequestsResult(
+                status="NOT_FOUND", user_message="未找到该采购单, 请核对完整采购单编号"
+            )
+        except (BackendUnavailableError, BackendTimeoutError, BackendProtocolError):
+            return QueryPurchaseRequestsResult(
+                status="BACKEND_UNAVAILABLE", user_message="采购后端暂时不可用"
+            )
+
+    async def get_timeline(
+        self, *, args: QueryPurchaseRequestsArgs, context: AssistantToolContext
+    ) -> QueryPurchaseRequestsResult:
+        identity = _identity(context)
+        try:
+            await self._backend.get_current_user(identity=identity)
+            requirement_id = await self._resolve_requirement_id(identity, args)
+            timeline = await self._backend.get_requirement_timeline(
+                identity=identity, requirement_id=requirement_id
+            )
+            return QueryPurchaseRequestsResult(
+                status="SUCCESS",
+                requirement_id=requirement_id,
+                requirement_no=args.requirement_no,
+                timeline=tuple(
+                    (
+                        f"{item.operated_at.isoformat()} {item.action_type}: "
+                        f"{item.operation_summary or item.to_status or ''}"
+                    )
+                    for item in timeline.items
+                ),
+            )
         except (PermissionDeniedError, InvalidHandlerError):
             return QueryPurchaseRequestsResult(
                 status="PERMISSION_DENIED", user_message="无权查看该采购单"
@@ -417,3 +450,24 @@ class QueryPurchaseRequestsTool:
             current_handler_name=detail.current_handler.name if detail.current_handler else None,
             missing_fields=detail.missing_fields,
         )
+
+
+class QueryPurchaseRequestsTool:
+    """Legacy operation-based wrapper; never registered for LLM use."""
+
+    name = "query_purchase_requests"
+    side_effect = "READ"
+    description = "Query visible purchase requests, details, current handler, or timeline."
+    args_model = QueryPurchaseRequestsArgs
+
+    def __init__(self, backend: BackendClient) -> None:
+        self._service = PurchaseRequestQueryService(backend)
+
+    async def execute(
+        self, *, args: QueryPurchaseRequestsArgs, context: AssistantToolContext
+    ) -> QueryPurchaseRequestsResult:
+        if args.operation == "GET_DETAIL":
+            return await self._service.get_detail(args=args, context=context)
+        if args.operation == "GET_TIMELINE":
+            return await self._service.get_timeline(args=args, context=context)
+        return await self._service.search(args=args, context=context)

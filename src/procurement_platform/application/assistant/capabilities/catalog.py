@@ -1,5 +1,8 @@
 from typing import Protocol
 
+from procurement_platform.application.assistant.capabilities.drafts import (
+    UpdateReviewDraftCapability,
+)
 from procurement_platform.application.assistant.capabilities.intelligence import (
     CompareProductsCapability,
     CompareSuppliersCapability,
@@ -7,6 +10,9 @@ from procurement_platform.application.assistant.capabilities.intelligence import
     FindSimilarPurchasesCapability,
 )
 from procurement_platform.application.assistant.capabilities.metadata import CapabilityMetadata
+from procurement_platform.application.assistant.capabilities.purchases import (
+    PreparePurchasePrefillCapability,
+)
 from procurement_platform.application.assistant.capabilities.v2 import (
     ApplySupplierProfileCapability,
     GetPurchaseRequestCapability,
@@ -18,10 +24,6 @@ from procurement_platform.application.assistant.capabilities.v2 import (
     UpdateApplicantDraftCapability,
     UpdatePurchaseDraftCapability,
     UpdateWarehouseDraftCapability,
-)
-from procurement_platform.application.assistant.tooling import (
-    PreparePurchasePrefillTool,
-    UpdateReviewDraftTool,
 )
 from procurement_platform.application.assistant.tools import ToolSideEffect
 from procurement_platform.domain.enums import RoleCode
@@ -70,12 +72,12 @@ DEFAULT_CAPABILITY_METADATA: tuple[CapabilityMetadata, ...] = (
     _metadata(RecommendProductsCapability, frozenset({RoleCode.APPLICANT})),
     _metadata(UpdateApplicantDraftCapability, frozenset({RoleCode.APPLICANT})),
     _metadata(RecommendSuppliersCapability, frozenset({RoleCode.BUILDING_MANAGER})),
-    _metadata(UpdateReviewDraftTool, frozenset({RoleCode.BUILDING_MANAGER})),
+    _metadata(UpdateReviewDraftCapability, frozenset({RoleCode.BUILDING_MANAGER})),
     _metadata(
         GetSupplierProfileCapability,
         frozenset({RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}),
     ),
-    _metadata(PreparePurchasePrefillTool, frozenset({RoleCode.PURCHASER})),
+    _metadata(PreparePurchasePrefillCapability, frozenset({RoleCode.PURCHASER})),
     _metadata(ApplySupplierProfileCapability, frozenset({RoleCode.PURCHASER})),
     _metadata(UpdatePurchaseDraftCapability, frozenset({RoleCode.PURCHASER})),
     _metadata(UpdateWarehouseDraftCapability, frozenset({RoleCode.WAREHOUSE_MANAGER})),

@@ -36,5 +36,5 @@ def test_each_non_applicant_prompt_exposes_only_its_role_tools() -> None:
     assert "update_purchase_draft" not in BUILDING_MANAGER_PROMPT
     assert "update_purchase_draft" in PURCHASER_PROMPT
     assert "update_warehouse_receipt_draft" not in PURCHASER_PROMPT
-    assert "update_warehouse_receipt_draft" in WAREHOUSE_PROMPT
+    assert "update_warehouse_draft" in WAREHOUSE_PROMPT
     assert "update_purchase_draft" not in WAREHOUSE_PROMPT
