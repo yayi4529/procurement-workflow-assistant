@@ -78,12 +78,12 @@ def _event(identifier: str, text: str) -> TextMessageEvent:
 async def test_multi_role_text_does_not_require_role_selection() -> None:
     assistant = _service(
         _backend(RoleCode.APPLICANT, RoleCode.BUILDING_MANAGER),
-        turns=(AssistantTurn(content="已查询待审核采购单"),),
+        turns=(AssistantTurn(content="统一 Agent 可服务您的全部采购角色"),),
     )
 
-    response = await assistant.handle(_event("m1", "看看有哪些单子等我审核"))
+    response = await assistant.handle(_event("m1", "解释多角色用户如何使用采购助手"))
 
-    assert response == AssistantTextResponse(text="已查询待审核采购单")
+    assert response == AssistantTextResponse(text="统一 Agent 可服务您的全部采购角色")
     assert not hasattr(assistant, "_agent_router")
     assert not hasattr(assistant, "_role_intent_resolver")
 

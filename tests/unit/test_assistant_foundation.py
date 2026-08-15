@@ -330,6 +330,15 @@ async def test_tool_backend_rejects_empty_unexpected_draft_write() -> None:
                 )
             ),
             AssistantTurn(content="查询工具调用失败, 请稍后重试。"),
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(
+                        id="grounded-query",
+                        name="search_purchase_requests",
+                        arguments_json='{"result_limit":10}',
+                    ),
+                )
+            ),
         )
     )
     assistant = _assistant(backend, registry, llm)
@@ -346,7 +355,7 @@ async def test_tool_backend_rejects_empty_unexpected_draft_write() -> None:
 
     assert backend.call_counts["create_requirement"] == 0
     assert backend.call_counts["update_applicant_fields"] == 0
-    assert backend.call_counts["list_purchase_records"] == 0
+    assert backend.call_counts["list_purchase_records"] == 1
 
 
 @pytest.mark.asyncio

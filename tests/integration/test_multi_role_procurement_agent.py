@@ -11,7 +11,11 @@ from procurement_platform.application.assistant.service import AssistantService
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.bootstrap.container import _build_capability_registry
-from procurement_platform.domain.assistant import AssistantTextResponse, AssistantTurn
+from procurement_platform.domain.assistant import (
+    AssistantTextResponse,
+    AssistantToolCall,
+    AssistantTurn,
+)
 from procurement_platform.domain.enums import PlatformType, RoleCode
 from procurement_platform.domain.errors import SessionNotFoundError
 from procurement_platform.domain.identity import PlatformIdentity
@@ -38,7 +42,25 @@ async def test_two_multi_role_turns_use_one_agent_without_role_switching() -> No
     policy = CapabilityPolicy(registry)
     llm = FakeLlmClient(
         turns=(
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(
+                        id="pending-query",
+                        name="search_purchase_requests",
+                        arguments_json='{"result_limit":10}',
+                    ),
+                )
+            ),
             AssistantTurn(content="已查询待审核采购单"),
+            AssistantTurn(
+                tool_calls=(
+                    AssistantToolCall(
+                        id="created-query",
+                        name="search_purchase_requests",
+                        arguments_json='{"result_limit":10}',
+                    ),
+                )
+            ),
             AssistantTurn(content="已查询您最近申请的采购单"),
         )
     )
@@ -70,7 +92,7 @@ async def test_two_multi_role_turns_use_one_agent_without_role_switching() -> No
 
     assert first == AssistantTextResponse(text="已查询待审核采购单")
     assert second == AssistantTextResponse(text="已查询您最近申请的采购单")
-    assert len(llm.calls) == 2
+    assert len(llm.calls) == 4
     assert not hasattr(service, "_agent_router")
     assert not hasattr(service, "_role_intent_resolver")
     identity = PlatformIdentity.create(PlatformType.FEISHU, "ou_multi")

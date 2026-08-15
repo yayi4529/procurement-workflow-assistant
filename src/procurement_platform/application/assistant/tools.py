@@ -35,6 +35,7 @@ TERMINAL_TOOL_STATUSES = frozenset(
         "INTERNAL_ERROR",
         "CONCURRENT_MODIFICATION",
         "INVALID_STATUS",
+        "TOOL_CALL_LIMIT_EXCEEDED",
     }
 )
 
@@ -99,6 +100,8 @@ class ToolRegistry:
 
 class ToolExecutor:
     def __init__(self, registry: ToolRegistry, *, max_result_chars: int) -> None:
+        if max_result_chars < 2:
+            raise ValueError("max_result_chars must be at least 2")
         self._registry = registry
         self._max_result_chars = max_result_chars
 
@@ -150,12 +153,7 @@ class ToolExecutor:
             except Exception:
                 logger.exception("Assistant tool execution failed", extra={"tool_name": name})
                 result = AssistantToolResult(status="INTERNAL_ERROR", user_message="工具暂时不可用")
-        payload = result.model_dump(mode="json")
-        content = json.dumps(
-            _compact_observation(payload, self._max_result_chars),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+        content = _serialize_observation(result.model_dump(mode="json"), self._max_result_chars)
         return (
             AssistantMessage(role="tool", name=name, tool_call_id=tool_call_id, content=content),
             result,
@@ -164,23 +162,23 @@ class ToolExecutor:
     def observation(
         self, *, name: str, tool_call_id: str, result: AssistantToolResult
     ) -> AssistantMessage:
-        payload = _compact_observation(result.model_dump(mode="json"), self._max_result_chars)
         return AssistantMessage(
             role="tool",
             name=name,
             tool_call_id=tool_call_id,
-            content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            content=_serialize_observation(result.model_dump(mode="json"), self._max_result_chars),
         )
 
 
-def _compact_observation(payload: object, max_chars: int) -> object:
-    """Keep observations valid JSON while reducing oversized nested values."""
+def _serialize_observation(payload: object, max_chars: int) -> str:
+    """Serialize an observation as valid JSON within the configured hard limit."""
     compact = _compact_value(payload, list_limit=12, string_limit=400)
-    if len(json.dumps(compact, ensure_ascii=False, separators=(",", ":"))) <= max_chars:
-        return compact
+    serialized = _json_dumps(compact)
+    if len(serialized) <= max_chars:
+        return serialized
     if isinstance(payload, dict):
         minimal = {
-            key: payload[key]
+            key: _compact_value(payload[key], list_limit=3, string_limit=80)
             for key in (
                 "status",
                 "requirement_id",
@@ -194,8 +192,22 @@ def _compact_observation(payload: object, max_chars: int) -> object:
             if key in payload
         }
         minimal["truncated"] = True
-        return minimal
-    return {"status": "SUCCESS", "truncated": True}
+        serialized = _json_dumps(minimal)
+        if len(serialized) <= max_chars:
+            return serialized
+
+        status = payload.get("status")
+        if isinstance(status, str):
+            status_only = _json_dumps({"status": status, "truncated": True})
+            if len(status_only) <= max_chars:
+                return status_only
+
+    truncated_only = _json_dumps({"truncated": True})
+    return truncated_only if len(truncated_only) <= max_chars else "{}"
+
+
+def _json_dumps(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _compact_value(value: object, *, list_limit: int, string_limit: int) -> object:

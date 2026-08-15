@@ -1,4 +1,5 @@
 from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
+from procurement_platform.application.assistant.grounding import GroundingPolicy
 from procurement_platform.application.assistant.presentation import LegacyToolResultPresenter
 from procurement_platform.application.assistant.prompts.common import COMMON_PROMPT
 from procurement_platform.application.assistant.prompts.procurement import PROCUREMENT_AGENT_PROMPT
@@ -26,11 +27,13 @@ class ProcurementAgent:
         capability_policy: CapabilityPolicy,
         session_service: AssistantSessionService,
         result_presenter: LegacyToolResultPresenter,
+        grounding_policy: GroundingPolicy | None = None,
     ) -> None:
         self._runtime = runtime
         self._capability_policy = capability_policy
         self._session_service = session_service
         self._result_presenter = result_presenter
+        self._grounding_policy = grounding_policy or GroundingPolicy()
 
     async def run(
         self,
@@ -40,12 +43,14 @@ class ProcurementAgent:
         external_message_id: str,
     ) -> AssistantResponse:
         allowed_names = self._capability_policy.allowed_names_for(turn_context.current_user)
+        grounding = self._grounding_policy.decide(user_text, available_tools=allowed_names)
         return await self._runtime.run(
             agent=self,
             allowed_names=allowed_names,
             turn_context=turn_context,
             user_text=user_text,
             external_message_id=external_message_id,
+            grounding=grounding,
         )
 
     def build_messages(

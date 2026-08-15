@@ -124,7 +124,7 @@ async def test_single_procurement_agent_serves_each_role(role: RoleCode) -> None
 
     response = await agent.run(
         turn_context=_turn_context(user, focused_role=role),
-        user_text="查询采购单",
+        user_text="解释采购流程中的角色分工",
         external_message_id="m1",
     )
 
@@ -140,7 +140,7 @@ async def test_multi_role_union_is_not_cut_by_focused_role() -> None:
 
     await agent.run(
         turn_context=_turn_context(user, focused_role=RoleCode.APPLICANT),
-        user_text="看看有哪些单子等我审核",
+        user_text="解释多角色用户可以使用哪些助手能力",
         external_message_id="m1",
     )
 

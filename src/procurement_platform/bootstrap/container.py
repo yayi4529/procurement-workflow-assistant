@@ -210,6 +210,7 @@ class ApplicationContainer:
                     tool_registry=tool_registry,
                     tool_executor=tool_executor,
                     max_tool_steps=settings.llm_max_tool_steps,
+                    max_total_tool_calls=settings.llm_max_total_tool_calls,
                 )
                 procurement_agent = ProcurementAgent(
                     runtime=runtime,

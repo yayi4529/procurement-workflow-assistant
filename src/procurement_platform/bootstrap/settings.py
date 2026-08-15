@@ -80,6 +80,7 @@ class Settings:
     llm_model: str | None = None
     llm_timeout_seconds: float = 30.0
     llm_max_tool_steps: int = 6
+    llm_max_total_tool_calls: int = 24
     llm_max_history_messages: int = 20
     llm_max_tool_result_chars: int = 20000
     allow_test_platform: bool = False
@@ -106,9 +107,13 @@ class Settings:
             raise ValueError("environment must be development, test, or production")
         if self.backend_request_timeout_seconds <= 0:
             raise ValueError("backend request timeout must be greater than zero")
-        if self.llm_timeout_seconds <= 0 or self.llm_max_tool_steps < 1:
+        if (
+            self.llm_timeout_seconds <= 0
+            or self.llm_max_tool_steps < 1
+            or self.llm_max_total_tool_calls < 1
+        ):
             raise ValueError("invalid LLM timeout or tool step limit")
-        if self.llm_max_history_messages < 1 or self.llm_max_tool_result_chars < 1:
+        if self.llm_max_history_messages < 1 or self.llm_max_tool_result_chars < 2:
             raise ValueError("invalid LLM history or tool result limit")
         if not self.identity_gateway_secret.get_secret_value():
             raise ValueError("identity gateway secret is required")
@@ -205,6 +210,7 @@ class Settings:
             llm_model=llm_model or None,
             llm_timeout_seconds=float(values.get("PROCUREMENT_LLM_TIMEOUT_SECONDS", "30")),
             llm_max_tool_steps=int(values.get("PROCUREMENT_LLM_MAX_TOOL_STEPS", "6")),
+            llm_max_total_tool_calls=int(values.get("PROCUREMENT_LLM_MAX_TOTAL_TOOL_CALLS", "24")),
             llm_max_history_messages=int(values.get("PROCUREMENT_LLM_MAX_HISTORY_MESSAGES", "20")),
             llm_max_tool_result_chars=int(
                 values.get("PROCUREMENT_LLM_MAX_TOOL_RESULT_CHARS", "20000")
