@@ -72,6 +72,8 @@ async def test_purchase_records_filter_and_role_scope() -> None:
         assert applicant.json()["data"]["total"] == 1
         item = applicant.json()["data"]["items"][0]
         assert item["requirement_id"] == 91007
+        assert item["building_id"] == 1
+        assert item["device_profession"] == "算力服务器"
         assert item["supplier_id"] == 92002
         assert item["supplier_name"] == "TEST-供应商B（本次采购快照旧名称）"
         assert item["submitted_at"] == "2026-07-01T09:00:00"

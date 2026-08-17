@@ -205,6 +205,27 @@ async def test_agent_backend_session_message_state_snapshot_and_completion() -> 
             assert messages.json()["data"]["total"] == 1
             assert messages.json()["data"]["items"][0]["content"] == "我要采购五台交换机"
 
+            lookup_path = f"{messages_path}/by-external-id"
+            looked_up = await call(
+                client,
+                "GET",
+                lookup_path,
+                "test-user-01",
+                params={"external_message_id": external_message_id},
+            )
+            assert looked_up.status_code == 200, looked_up.text
+            assert looked_up.json()["data"]["message_id"] == message_id
+
+            missing = await call(
+                client,
+                "GET",
+                lookup_path,
+                "test-user-01",
+                params={"external_message_id": "TEST-MISSING"},
+            )
+            assert missing.status_code == 404
+            assert missing.json()["code"] == "SESSION_NOT_FOUND"
+
             state_path = f"/api/v1/agent/conversations/{conversation_id}/state"
             state_payload = {
                 "purchase_request_id": 91001,

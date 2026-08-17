@@ -7,6 +7,8 @@ from pydantic import BaseModel
 class PurchaseRecordItem(BaseModel):
     requirement_id: int
     requirement_no: str
+    building_id: int
+    device_profession: str | None
     device_name: str | None
     brand: str | None
     model: str | None
