@@ -24,7 +24,7 @@ jobs:
       - run: ruff check .
       - run: mypy src
       - name: Unit tests
-        run: pytest -q tests/unit
+        run: pytest -q tests/unit --cov=procurement_platform --cov-fail-under=80 --cov-report=term
 
   integration-contract:
     name: Assistant integration, contract, and deterministic evals

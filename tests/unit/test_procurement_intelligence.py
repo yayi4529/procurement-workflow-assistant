@@ -8,6 +8,8 @@ from procurement_platform.application.assistant.capabilities.intelligence import
     CompareProductsCapability,
     CompareSuppliersArgs,
     CompareSuppliersCapability,
+    FindSimilarPurchasesArgs,
+    FindSimilarPurchasesCapability,
     HistoricalPurchaseRanker,
 )
 from procurement_platform.application.assistant.task_context_service import (
@@ -33,6 +35,7 @@ from procurement_platform.domain.requirement import (
     PurchaseRecord,
     RequirementBuilding,
     RequirementDetail,
+    RequirementHandler,
     SupplierBlacklistSummary,
     SupplierDetail,
 )
@@ -45,7 +48,11 @@ def _user() -> CurrentUser:
         name="Test",
         mobile=None,
         status="ACTIVE",
-        roles=(UserRole(role_code=RoleCode.APPLICANT), UserRole(role_code=RoleCode.PURCHASER)),
+        roles=(
+            UserRole(role_code=RoleCode.APPLICANT),
+            UserRole(role_code=RoleCode.BUILDING_MANAGER),
+            UserRole(role_code=RoleCode.PURCHASER),
+        ),
         buildings=(UserBuilding(building_id=3, building_name="三号楼", is_primary=True),),
     )
 
@@ -235,10 +242,30 @@ async def test_supplier_comparison_hard_blocks_blacklisted_supplier() -> None:
             blacklist=SupplierBlacklistSummary(active=True, reason="risk"),
         )
     )
+    client.seed_requirement(
+        _detail().model_copy(
+            update={
+                "status": RequirementStatus.PENDING_REVIEW,
+                "current_handler": RequirementHandler(employee_id=1, name="Test"),
+            }
+        )
+    )
+    client.purchase_records = [
+        PurchaseRecord(
+            requirement_id=1000 + index,
+            requirement_no=f"PR-H-{index}",
+            device_name="UPS",
+            status=RequirementStatus.COMPLETED,
+            supplier_id=1,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        for index in range(185)
+    ]
     await client.update_agent_state(
         identity=identity,
         conversation_id=conversation.conversation_id,
         state=AgentSessionStateUpdate(
+            purchase_request_id=10,
             last_recommendations=(
                 RecommendationReference(
                     reference_id="supplier:1",
@@ -250,7 +277,7 @@ async def test_supplier_comparison_hard_blocks_blacklisted_supplier() -> None:
                     kind="SUPPLIER_RECOMMENDATION",
                     label="Blocked",
                 ),
-            )
+            ),
         ),
     )
     result = await CompareSuppliersCapability(client).execute(
@@ -259,3 +286,54 @@ async def test_supplier_comparison_hard_blocks_blacklisted_supplier() -> None:
     )
     assert result.recommended_ref == "supplier:1"
     assert result.blocked_refs == ("supplier:2",)
+    assert "可见历史采购次数: 185" in result.items[0].evidence
+    assert client.call_counts["recommend_suppliers"] == 1
+    assert client.call_counts["get_supplier"] == 0
+    assert client.call_counts["list_purchase_records"] == 0
+
+
+@pytest.mark.asyncio
+async def test_find_similar_purchases_uses_constant_backend_reads_for_100_records() -> None:
+    client = FakeBackendClient(_user())
+    client.purchase_records = [
+        PurchaseRecord(
+            requirement_id=index,
+            requirement_no=f"PR-{index}",
+            building_id=3 if index % 2 else 4,
+            device_profession="强电" if index != 99 else "暖通",
+            device_name="UPS 功率模块",
+            brand="A",
+            model="M1",
+            status=(RequirementStatus.PURCHASING if index == 98 else RequirementStatus.COMPLETED),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            completed_at=datetime(2026, 8, min(index % 14 + 1, 14), tzinfo=UTC),
+        )
+        for index in range(1, 101)
+    ]
+    conversation = await client.get_or_create_agent_conversation(
+        identity=_identity(), current_action="ASSISTANT_CHAT"
+    )
+
+    result = await FindSimilarPurchasesCapability(client).execute(
+        args=FindSimilarPurchasesArgs(
+            building_id=3,
+            device_profession="强电",
+            device_name="UPS 功率模块",
+            brand="A",
+            model="M1",
+            limit=20,
+        ),
+        context=_context(conversation.conversation_id),
+    )
+
+    assert len(result.candidates) == 20
+    assert all(item.device_profession == "强电" for item in result.candidates)
+    assert all(item.requirement_id != 98 for item in result.candidates)
+    assert client.call_counts["list_purchase_records"] == 1
+    assert client.call_counts["get_requirement"] == 0
+    assert client.call_counts["get_current_user"] == 1
+
+
+def test_comparison_schemas_do_not_expose_ignored_arguments() -> None:
+    assert set(CompareProductsArgs.model_fields) == {"candidate_refs"}
+    assert set(CompareSuppliersArgs.model_fields) == {"supplier_refs"}

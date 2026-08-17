@@ -786,8 +786,8 @@ class FakeBackendClient:
         self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 3
     ) -> SupplierRecommendations:
         self._record("recommend_suppliers")
-        if not 1 <= limit <= 3:
-            raise ValueError("limit must be between 1 and 3")
+        if not 1 <= limit <= 30:
+            raise ValueError("limit must be between 1 and 30")
         detail = self._require_requirement(requirement_id)
         self._require_manager_access(detail, self._user(identity))
         if detail.status is not RequirementStatus.PENDING_REVIEW:
@@ -797,8 +797,20 @@ class FakeBackendClient:
                 SupplierRecommendation(
                     supplier_id=supplier.supplier_id,
                     supplier_name=supplier.supplier_name,
-                    historical_purchase_count=0,
-                    last_purchase_at=datetime(1970, 1, 1, tzinfo=UTC),
+                    historical_purchase_count=sum(
+                        1
+                        for record in self.purchase_records
+                        if record.supplier_id == supplier.supplier_id
+                    ),
+                    last_purchase_at=max(
+                        (
+                            record.purchased_at
+                            for record in self.purchase_records
+                            if record.supplier_id == supplier.supplier_id
+                            and record.purchased_at is not None
+                        ),
+                        default=datetime(1970, 1, 1, tzinfo=UTC),
+                    ),
                     blacklist_status="BLACKLISTED"
                     if supplier.blacklist and supplier.blacklist.active
                     else "NORMAL",
@@ -1143,6 +1155,25 @@ class FakeBackendClient:
             page=page,
             page_size=page_size,
             total=len(messages),
+        )
+
+    async def get_agent_message_by_external_id(
+        self,
+        *,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        external_message_id: str,
+    ) -> AgentMessage | None:
+        self._record("get_agent_message_by_external_id", conversation_id)
+        self._user(identity)
+        self._require_conversation(conversation_id)
+        return next(
+            (
+                message
+                for message in self._messages[conversation_id]
+                if message.external_message_id == external_message_id
+            ),
+            None,
         )
 
     async def get_agent_state(

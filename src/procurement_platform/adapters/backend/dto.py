@@ -219,6 +219,8 @@ class BackendTimelineContactDTO(BackendDTO):
 class BackendPurchaseRecordDTO(BackendDTO):
     requirement_id: int
     requirement_no: str
+    building_id: int | None = None
+    device_profession: str | None = None
     device_name: str | None
     brand: str | None
     model: str | None
@@ -244,6 +246,7 @@ class BackendPurchaseRecordPageDTO(BackendDTO):
 
 
 class BackendProductRecommendationDTO(BackendDTO):
+    product_id: int | None = None
     brand: str | None
     model: str | None
     historical_count: int

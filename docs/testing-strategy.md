@@ -96,3 +96,21 @@ current_handler 清空和从 PENDING_WAREHOUSE 到 COMPLETED 的无 LLM 集成�
 - 架构测试禁止正式卡片应用模块导入 LLM、OpenAI 或 Agent Session；
 - 通知网关不得依赖 `BackendClient` 或任何业务流转方法；
 - Task 2～6 回归继续覆盖事件/通知去重、版本冲突、旧卡片刷新、权限和字段完整性。
+# Task 04 regression invariants
+
+Correctness/performance tests use deterministic counts rather than wall-clock thresholds:
+
+- 100 historical purchase records produce one list call and zero per-record requirement-detail
+  calls; non-completed and mismatched-profession records are excluded.
+- supplier comparison performs one aggregate recommendation read and never recommends a blocked
+  candidate;
+- unsupported LLM-visible arguments are absent from strict schemas;
+- stable entity references do not collide for null display fields or distinct backend IDs;
+- immediate, old (more than 50 later messages), and concurrent duplicate deliveries execute at
+  most one logical Agent turn;
+- the OpenAI-compatible adapter has deterministic tests for client reuse, close, bounded retries,
+  permanent failures, tool-choice fallback, and invalid responses;
+- production container/service imports remain independent from legacy RoleAgent routing.
+
+The unit CI job measures `procurement_platform` coverage and enforces the measured-baseline guard
+of 80%. Formal workflow transitions remain outside the text Agent in every test environment.

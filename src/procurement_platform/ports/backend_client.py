@@ -5,6 +5,7 @@ from uuid import UUID
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
     AgentConversationCompletion,
+    AgentMessage,
     AgentMessagePage,
     AgentMessageWriteResult,
     AgentSessionSnapshot,
@@ -271,6 +272,14 @@ class BackendClient(Protocol):
         page: int = 1,
         page_size: int = 50,
     ) -> AgentMessagePage: ...
+
+    async def get_agent_message_by_external_id(
+        self,
+        *,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        external_message_id: str,
+    ) -> AgentMessage | None: ...
 
     async def get_agent_state(
         self, *, identity: PlatformIdentity, conversation_id: int

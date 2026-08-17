@@ -27,3 +27,6 @@ class FakeLlmClient:
         if not self._turns:
             raise LlmUnavailableError("fake LLM responses exhausted")
         return self._turns.popleft()
+
+    async def aclose(self) -> None:
+        return None

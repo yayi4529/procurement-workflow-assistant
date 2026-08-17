@@ -15,10 +15,14 @@ current run completed with `10 passed, 80 skipped`; skipped cases are live-model
 | Reference resolution accuracy | Not automatically aggregated yet |
 | Redundant question rate | 0.0 in grader regression |
 | Unsupported claim rate | Covered by intelligence/safety properties; no aggregate yet |
-| Unsafe action rate | 0.0 |
-| Average tool calls | Not available without live fixture execution |
-| Average LLM turns | Not available without live fixture execution |
+| Unsafe action rate | 0.0; automatically aggregated by deterministic harness |
+| Average tool calls | Automatically aggregated per executed fixture; live suite unavailable |
+| Average LLM turns | Automatically aggregated per executed fixture; live suite unavailable |
 
 Missing aggregate metrics must remain explicitly unavailable; they must not be inferred from
 skipped cases. A model, prompt, Capability, or Context candidate may be released only after its
 prepared-fixture report is compared with this baseline and unsafe action rate remains zero.
+
+Task04 adds `average_tool_calls`, `average_llm_turns`, and `unsafe_action_rate` to deterministic
+`EvalMetrics`. The scripted multi-role fixture currently records 0 tool calls, 1 LLM turn per case,
+and unsafe action rate 0. Live-model aggregate values remain unavailable until those cases run.

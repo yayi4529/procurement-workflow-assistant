@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from procurement_platform.adapters.backend.dto import (
     BackendAgentConversationDTO,
+    BackendAgentMessageDTO,
     BackendAgentMessagePageDTO,
     BackendAgentSessionStateDTO,
     BackendAgentStateSaveDTO,
@@ -117,6 +118,17 @@ def map_agent_message_page(
         page=dto.page,
         page_size=dto.page_size,
         total=dto.total,
+    )
+
+
+def map_agent_message(dto: BackendAgentMessageDTO, *, conversation_id: int) -> AgentMessage:
+    return AgentMessage(
+        message_id=dto.message_id,
+        conversation_id=conversation_id,
+        external_message_id=dto.external_message_id,
+        sender_type=AgentMessageSender(dto.sender_type),
+        content=dto.content,
+        created_at=dto.created_at,
     )
 
 
@@ -281,6 +293,8 @@ def map_purchase_record_page(dto: BackendPurchaseRecordPageDTO) -> PurchaseRecor
             PurchaseRecord(
                 requirement_id=item.requirement_id,
                 requirement_no=item.requirement_no,
+                building_id=item.building_id,
+                device_profession=item.device_profession,
                 device_name=item.device_name,
                 brand=item.brand,
                 model=item.model,
@@ -311,6 +325,7 @@ def map_product_recommendations(
     return ProductRecommendations(
         items=tuple(
             ProductRecommendation(
+                product_id=item.product_id,
                 brand=item.brand,
                 model=item.model,
                 historical_count=item.historical_count,

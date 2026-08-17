@@ -15,6 +15,8 @@ async def test_task9_read_endpoint_contracts_and_explicit_mapping() -> None:
                 {
                     "requirement_id": 1,
                     "requirement_no": "PR-1",
+                    "building_id": 3,
+                    "device_profession": "信息化设备",
                     "device_name": "服务器",
                     "brand": "戴尔",
                     "model": "R750",
@@ -101,6 +103,8 @@ async def test_task9_read_endpoint_contracts_and_explicit_mapping() -> None:
     )
 
     assert records.items[0].quantity == "2"
+    assert records.items[0].building_id == 3
+    assert records.items[0].device_profession == "信息化设备"
     assert timeline.items[0].to_status.value == "PENDING_PURCHASE"
     assert products.items[0].historical_count == 2
     assert history.items[0].actual_total_price == "100"

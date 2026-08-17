@@ -7,6 +7,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from procurement_platform.adapters.backend.dto import (
     BackendAgentConversationDTO,
+    BackendAgentMessageDTO,
     BackendAgentMessagePageDTO,
     BackendAgentSessionStateDTO,
     BackendAgentStateSaveDTO,
@@ -31,6 +32,7 @@ from procurement_platform.adapters.backend.dto import (
 from procurement_platform.adapters.backend.error_mapping import map_backend_error
 from procurement_platform.adapters.backend.mapper import (
     map_agent_conversation,
+    map_agent_message,
     map_agent_message_page,
     map_agent_session_state,
     map_agent_state_save,
@@ -56,6 +58,7 @@ from procurement_platform.adapters.backend.transport import SignedBackendTranspo
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
     AgentConversationCompletion,
+    AgentMessage,
     AgentMessagePage,
     AgentMessageWriteResult,
     AgentSessionSnapshot,
@@ -69,7 +72,7 @@ from procurement_platform.domain.enums import (
     RequirementView,
     RoleCode,
 )
-from procurement_platform.domain.errors import BackendProtocolError
+from procurement_platform.domain.errors import BackendProtocolError, SessionNotFoundError
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.requirement import (
     ApplicantFieldsPatch,
@@ -708,6 +711,25 @@ class HttpBackendClient:
             identity=identity,
         )
         return map_agent_session_state(dto)
+
+    async def get_agent_message_by_external_id(
+        self,
+        *,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        external_message_id: str,
+    ) -> AgentMessage | None:
+        try:
+            dto = await self._request_model(
+                BackendAgentMessageDTO,
+                method="GET",
+                path=f"/api/v1/agent/conversations/{conversation_id}/messages/by-external-id",
+                identity=identity,
+                query={"external_message_id": external_message_id},
+            )
+        except SessionNotFoundError:
+            return None
+        return map_agent_message(dto, conversation_id=conversation_id)
 
     async def update_agent_state(
         self,

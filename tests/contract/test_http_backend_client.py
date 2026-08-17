@@ -227,6 +227,38 @@ async def test_invalid_pagination_is_rejected_before_http() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_message_direct_external_id_lookup_contract() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=envelope(
+                {
+                    "message_id": 7,
+                    "external_message_id": "assistant:om-old",
+                    "sender_type": "AGENT",
+                    "content": "persisted reply",
+                    "created_at": NOW,
+                }
+            ),
+        )
+
+    client, raw_client = make_client(handler)
+    message = await client.get_agent_message_by_external_id(
+        identity=identity(),
+        conversation_id=10,
+        external_message_id="assistant:om-old",
+    )
+    assert message is not None
+    assert message.content == "persisted reply"
+    assert requests[0].url.path == ("/api/v1/agent/conversations/10/messages/by-external-id")
+    assert requests[0].url.params["external_message_id"] == "assistant:om-old"
+    await raw_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_success_without_data_and_invalid_envelope_are_protocol_errors() -> None:
     def response_handler(value: object) -> Callable[[httpx.Request], httpx.Response]:
         def handler(request: httpx.Request) -> httpx.Response:

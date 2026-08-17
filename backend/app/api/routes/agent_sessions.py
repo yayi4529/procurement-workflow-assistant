@@ -11,6 +11,7 @@ from app.schemas.agent_sessions import (
     ConversationStatePayload,
     CreateMessageRequest,
     MessageCreatedData,
+    MessageData,
     MessageListData,
     SaveSnapshotRequest,
     SnapshotSavedData,
@@ -71,6 +72,25 @@ async def list_conversation_messages(
         conversation_id,
         page,
         page_size,
+    )
+    return ApiResponse(data=data)
+
+
+@router.get(
+    "/{conversation_id}/messages/by-external-id",
+    response_model=ApiResponse[MessageData],
+)
+async def get_conversation_message_by_external_id(
+    conversation_id: int,
+    current_user: CurrentUserDependency,
+    session: DbSession,
+    external_message_id: str = Query(min_length=1, max_length=128),
+) -> ApiResponse[MessageData]:
+    data = await AgentSessionService().get_message_by_external_id(
+        session,
+        current_user,
+        conversation_id,
+        external_message_id,
     )
     return ApiResponse(data=data)
 

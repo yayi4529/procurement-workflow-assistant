@@ -1,5 +1,7 @@
 # ruff: noqa: RUF001
 
+import asyncio
+
 import pytest
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
@@ -16,7 +18,7 @@ from procurement_platform.application.assistant.service import AssistantService
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
 from procurement_platform.domain.assistant import AssistantTextResponse, AssistantTurn
-from procurement_platform.domain.enums import PlatformType, RoleCode
+from procurement_platform.domain.enums import AgentMessageSender, PlatformType, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
 from procurement_platform.domain.user import CurrentUser, UserRole
@@ -35,12 +37,17 @@ def _backend(*roles: RoleCode) -> FakeBackendClient:
     )
 
 
-def _service(backend: FakeBackendClient, *, turns: tuple[AssistantTurn, ...]) -> AssistantService:
+def _service(
+    backend: FakeBackendClient,
+    *,
+    turns: tuple[AssistantTurn, ...] = (),
+    llm: FakeLlmClient | None = None,
+) -> AssistantService:
     sessions = AssistantSessionService(backend)
     registry = ToolRegistry()
     executor = ToolExecutor(registry, max_result_chars=1000)
     runtime = AssistantRuntime(
-        llm_client=FakeLlmClient(turns=turns),
+        llm_client=llm or FakeLlmClient(turns=turns),
         tool_registry=registry,
         tool_executor=executor,
         max_tool_steps=2,
@@ -129,3 +136,58 @@ async def test_user_without_workflow_role_is_rejected_before_llm() -> None:
     assert await assistant.handle(_event("admin", "查询采购单")) == AssistantTextResponse(
         text="当前身份没有可用的采购助手角色。"
     )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_immediately_reuses_persisted_reply_without_llm() -> None:
+    backend = _backend(RoleCode.APPLICANT)
+    llm = FakeLlmClient(turns=(AssistantTurn(content="只执行一次"),))
+    assistant = _service(backend, llm=llm)
+
+    first = await assistant.handle(_event("same", "你好"))
+    second = await assistant.handle(_event("same", "你好"))
+
+    assert first == second == AssistantTextResponse(text="只执行一次")
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_after_more_than_50_messages_uses_direct_lookup() -> None:
+    backend = _backend(RoleCode.APPLICANT)
+    llm = FakeLlmClient(turns=(AssistantTurn(content="旧回复"),))
+    assistant = _service(backend, llm=llm)
+    await assistant.handle(_event("old", "你好"))
+    identity = PlatformIdentity.create(PlatformType.FEISHU, "ou_multi")
+    conversation = await backend.get_or_create_agent_conversation(
+        identity=identity, current_action="ASSISTANT_CHAT"
+    )
+    for index in range(60):
+        await backend.append_agent_message(
+            identity=identity,
+            conversation_id=conversation.conversation_id,
+            external_message_id=f"noise-{index}",
+            sender_type=AgentMessageSender.USER,
+            content="noise",
+        )
+
+    replay = await assistant.handle(_event("old", "你好"))
+
+    assert replay == AssistantTextResponse(text="旧回复")
+    assert len(llm.calls) == 1
+    assert backend.call_counts["get_agent_message_by_external_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_executes_llm_at_most_once() -> None:
+    backend = _backend(RoleCode.APPLICANT)
+    llm = FakeLlmClient(turns=(AssistantTurn(content="完成"),))
+    assistant = _service(backend, llm=llm)
+
+    responses = await asyncio.gather(
+        assistant.handle(_event("race", "你好")),
+        assistant.handle(_event("race", "你好")),
+    )
+
+    assert len(llm.calls) == 1
+    assert AssistantTextResponse(text="完成") in responses
+    assert all(item.text in {"完成", "该消息正在处理中，请稍候。"} for item in responses)

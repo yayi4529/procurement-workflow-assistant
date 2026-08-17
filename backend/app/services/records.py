@@ -70,6 +70,8 @@ class PurchaseRecordService:
                 PurchaseRecordItem(
                     requirement_id=request.request_id,
                     requirement_no=request.request_no,
+                    building_id=request.building_id,
+                    device_profession=request.device_profession,
                     device_name=request.device_name,
                     brand=request.brand,
                     model=request.model,

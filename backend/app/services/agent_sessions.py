@@ -173,6 +173,29 @@ class AgentSessionService:
             total=total,
         )
 
+    async def get_message_by_external_id(
+        self,
+        session: AsyncSession,
+        current_user: CurrentUser,
+        conversation_id: int,
+        external_message_id: str,
+    ) -> MessageData:
+        await self._owned_conversation(session, current_user, conversation_id)
+        message = await self.repository.get_message_by_external_id(
+            session,
+            conversation_id,
+            external_message_id,
+        )
+        if message is None:
+            raise AppError("SESSION_NOT_FOUND", "消息不存在", 404)
+        return MessageData(
+            message_id=message.message_id,
+            external_message_id=message.external_message_id,
+            sender_type=message.sender_type,
+            content=message.content,
+            created_at=message.created_at,
+        )
+
     async def get_state(
         self,
         session: AsyncSession,

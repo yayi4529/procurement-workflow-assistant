@@ -1,5 +1,6 @@
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
+    AgentMessage,
     AgentMessagePage,
     AgentMessageWriteResult,
     AgentSessionState,
@@ -52,6 +53,19 @@ class AssistantSessionService:
             conversation_id=conversation_id,
             page=last_page,
             page_size=page_size,
+        )
+
+    async def message_by_external_id(
+        self,
+        *,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        external_message_id: str,
+    ) -> AgentMessage | None:
+        return await self._backend_client.get_agent_message_by_external_id(
+            identity=identity,
+            conversation_id=conversation_id,
+            external_message_id=external_message_id,
         )
 
     async def state(self, *, identity: PlatformIdentity, conversation_id: int) -> AgentSessionState:

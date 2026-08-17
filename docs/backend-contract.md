@@ -263,3 +263,14 @@ Task 7 不新增后端契约，只组合 Task 1～6 已实现接口：`users/me`
 
 自动验收使用 Fake/Mock，不访问真实数据库；真实后端 OpenAPI smoke 需可用地址和明确
 测试账号后单独执行。
+# Task 04 query and idempotency additions
+
+`GET /api/v1/purchase-records` items include nullable `building_id` and
+`device_profession`. These fields form the authoritative read model used for historical similarity
+ranking; the Agent must not enrich each row with `GET /requirements/{id}` calls.
+
+`GET /api/v1/agent/conversations/{conversation_id}/messages/by-external-id` accepts the required
+`external_message_id` query parameter and returns one `MessageData` envelope. Ownership and HMAC
+rules are identical to the other Agent session endpoints. Missing messages return HTTP 404 with
+`SESSION_NOT_FOUND`. The endpoint supports indexed duplicate-reply lookup and does not replace the
+existing unique `(conversation_id, external_message_id)` constraint.

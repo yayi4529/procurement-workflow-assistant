@@ -66,6 +66,7 @@ class AssistantService:
             )
             if prior_reply is not None:
                 return AssistantTextResponse(text=prior_reply)
+            return AssistantTextResponse(text="该消息正在处理中，请稍候。")
         try:
             state = await self._session_service.state(
                 identity=identity, conversation_id=conversation.conversation_id
@@ -163,17 +164,12 @@ class AssistantService:
     async def _prior_reply(
         self, *, identity: PlatformIdentity, conversation_id: int, external_message_id: str
     ) -> str | None:
-        page = await self._session_service.messages(
-            identity=identity, conversation_id=conversation_id
+        message = await self._session_service.message_by_external_id(
+            identity=identity,
+            conversation_id=conversation_id,
+            external_message_id=f"assistant:{external_message_id}",
         )
-        return next(
-            (
-                item.content
-                for item in reversed(page.items)
-                if item.external_message_id == f"assistant:{external_message_id}"
-            ),
-            None,
-        )
+        return message.content if message is not None else None
 
     async def _save_focused_role(
         self,

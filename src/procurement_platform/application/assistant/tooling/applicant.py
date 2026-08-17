@@ -1,12 +1,12 @@
 """Applicant tools for the optional conversational assistant."""
 
 from datetime import datetime
-from hashlib import sha256
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from procurement_platform.application.applicant.options import DEVICE_PROFESSION_OPTIONS
+from procurement_platform.application.assistant.entity_references import product_reference
 from procurement_platform.application.assistant.tooling.common import (
     DraftUpdateResultBase,
     SessionReferenceStore,
@@ -143,7 +143,13 @@ class RecommendProductOptionsTool:
                 if key in seen:
                     continue
                 seen.add(key)
-                candidates.append(self._candidate(item, len(candidates) + 1))
+                candidates.append(
+                    self._candidate(
+                        item,
+                        device_name=device_name,
+                        device_profession=profession,
+                    )
+                )
                 if len(candidates) == args.limit:
                     break
             if not candidates:
@@ -194,10 +200,21 @@ class RecommendProductOptionsTool:
             )
 
     @staticmethod
-    def _candidate(item: ProductRecommendation, index: int) -> ProductOptionCandidate:
-        digest = sha256(f"{item.brand}|{item.model}".encode()).hexdigest()[:10]
+    def _candidate(
+        item: ProductRecommendation,
+        *,
+        device_name: str,
+        device_profession: str | None,
+    ) -> ProductOptionCandidate:
         return ProductOptionCandidate(
-            candidate_ref=f"product:{index}:{digest}",
+            candidate_ref=product_reference(
+                product_id=item.product_id,
+                device_profession=device_profession,
+                device_name=device_name,
+                brand=item.brand,
+                model=item.model,
+                fallback_discriminator=item.last_purchased_at.isoformat(),
+            ),
             brand=item.brand,
             model=item.model,
             historical_count=item.historical_count,

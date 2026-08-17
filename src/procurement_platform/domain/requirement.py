@@ -339,6 +339,8 @@ class TimelineContact(RequirementModel):
 class PurchaseRecord(RequirementModel):
     requirement_id: int
     requirement_no: str
+    building_id: int | None = None
+    device_profession: str | None = None
     device_name: str | None = None
     brand: str | None = None
     model: str | None = None
@@ -364,6 +366,7 @@ class PurchaseRecordPage(RequirementModel):
 
 
 class ProductRecommendation(RequirementModel):
+    product_id: int | None = None
     brand: str | None
     model: str | None
     historical_count: int

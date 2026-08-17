@@ -106,6 +106,7 @@ from procurement_platform.ports.backend_client import BackendClient
 from procurement_platform.ports.channel import ChannelClient
 from procurement_platform.ports.conversation_lock import ConversationLockManager
 from procurement_platform.ports.event_dedup_store import EventDedupStore
+from procurement_platform.ports.llm_client import LlmClient
 from procurement_platform.ports.notification_delivery_store import NotificationDeliveryStore
 
 
@@ -128,6 +129,7 @@ class ApplicationContainer:
     redis_client: RedisClient | None = None
     capability_registry: CapabilityRegistry | None = None
     capability_policy: CapabilityPolicy | None = None
+    llm_client: LlmClient | None = None
 
     @classmethod
     def build(cls, settings: Settings) -> "ApplicationContainer":
@@ -205,6 +207,7 @@ class ApplicationContainer:
                     timeout_seconds=settings.llm_timeout_seconds,
                     base_url=settings.llm_base_url,
                 )
+                container.llm_client = llm_client
                 session_service = AssistantSessionService(container.backend_client)
                 tool_executor = ToolExecutor(
                     tool_registry, max_result_chars=settings.llm_max_tool_result_chars
@@ -288,6 +291,8 @@ class ApplicationContainer:
         return container
 
     async def aclose(self) -> None:
+        if self.llm_client is not None:
+            await self.llm_client.aclose()
         if self.channel_client is not None:
             await self.channel_client.aclose()
         await self.backend_client.aclose()

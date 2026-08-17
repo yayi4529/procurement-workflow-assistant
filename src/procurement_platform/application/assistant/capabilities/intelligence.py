@@ -6,10 +6,10 @@ The capabilities are advisory READ operations and never advance workflow state.
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from hashlib import sha256
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from procurement_platform.application.assistant.entity_references import product_reference
 from procurement_platform.application.assistant.tooling.common import (
     SessionReferenceStore,
     StrictArgs,
@@ -97,11 +97,19 @@ class DiagnoseProcurementNeedCapability:
             )
             candidates = tuple(
                 ProcurementNeedCandidate(
-                    candidate_ref=self._product_ref(item.brand, item.model),
+                    candidate_ref=product_reference(
+                        product_id=item.product_id,
+                        device_profession=args.profession_hint,
+                        device_name=device_name,
+                        brand=item.brand,
+                        model=item.model,
+                        fallback_discriminator=item.last_purchased_at.isoformat(),
+                    ),
                     device_profession=args.profession_hint,
                     device_name=device_name,
                     brand=item.brand,
                     model=item.model,
+                    product_id=item.product_id,
                     confidence=(
                         MatchConfidence.HIGH
                         if args.device_hint and item.historical_count > 0
@@ -167,11 +175,6 @@ class DiagnoseProcurementNeedCapability:
             awaiting_confirmation=True,
         )
 
-    @staticmethod
-    def _product_ref(brand: str | None, model: str | None) -> str:
-        digest = sha256(f"{brand}|{model}".encode()).hexdigest()[:12]
-        return f"product:{digest}"
-
 
 class SimilarPurchaseCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -197,7 +200,6 @@ class FindSimilarPurchasesArgs(StrictArgs):
     brand: str | None = Field(default=None, max_length=100)
     model: str | None = Field(default=None, max_length=150)
     keyword: str | None = Field(default=None, max_length=200)
-    time_range: str | None = Field(default=None, max_length=50)
     limit: int = Field(default=5, ge=1, le=20)
 
 
@@ -280,20 +282,16 @@ class FindSimilarPurchasesCapability:
             for record in page.items:
                 if record.status is not RequirementStatus.COMPLETED:
                     continue
-                detail = await self._backend.get_requirement(
-                    identity=identity, requirement_id=record.requirement_id
-                )
                 if (
                     args.device_profession
-                    and (detail.applicant_fields.device_profession or "").casefold()
+                    and (record.device_profession or "").casefold()
                     != args.device_profession.casefold()
                 ):
                     continue
                 score, reasons = HistoricalPurchaseRanker.score(
                     record,
                     building_match=(
-                        args.building_id is not None
-                        and detail.building.building_id == args.building_id
+                        args.building_id is not None and record.building_id == args.building_id
                     ),
                     device_name=args.device_name or args.keyword,
                     brand=args.brand,
@@ -305,8 +303,8 @@ class FindSimilarPurchasesCapability:
                         candidate_ref=f"purchase:{record.requirement_id}",
                         requirement_id=record.requirement_id,
                         requirement_no=record.requirement_no,
-                        building_id=detail.building.building_id,
-                        device_profession=detail.applicant_fields.device_profession,
+                        building_id=record.building_id,
+                        device_profession=record.device_profession,
                         device_name=record.device_name,
                         brand=record.brand,
                         model=record.model,
@@ -352,8 +350,6 @@ class FindSimilarPurchasesCapability:
 
 class CompareProductsArgs(StrictArgs):
     candidate_refs: tuple[str, ...] = Field(min_length=2, max_length=10)
-    requirement_id: int | None = Field(default=None, gt=0)
-    comparison_focus: tuple[str, ...] | None = None
 
 
 class ProductComparisonItem(BaseModel):
@@ -431,16 +427,16 @@ class CompareProductsCapability:
             status="SUCCESS" if items else "INVALID_ARGUMENTS",
             items=tuple(items),
             recommended_ref=recommended,
-            recommendation_reason=("历史采购次数最高",) if recommended else (),
-            insufficient_data=("系统没有质量、故障率、交期和实时价格数据",),
+            recommendation_reason=("在当前可用证据中。该候选的历史采购次数最高",)
+            if recommended
+            else (),
+            insufficient_data=("质量、故障率、交期和实时价格均无 authoritative 数据",),
             invalid_refs=invalid,
         )
 
 
 class CompareSuppliersArgs(StrictArgs):
     supplier_refs: tuple[str, ...] = Field(min_length=2, max_length=10)
-    requirement_id: int | None = Field(default=None, gt=0)
-    comparison_focus: tuple[str, ...] | None = None
 
 
 class SupplierComparisonItem(BaseModel):
@@ -489,12 +485,24 @@ class CompareSuppliersCapability:
                 user_message="供应商候选引用不存在或已过期",
                 invalid_refs=args.supplier_refs,
             )
+        if state.purchase_request_id is None:
+            return CompareSuppliersResult(
+                status="INVALID_ARGUMENTS",
+                user_message="供应商比较缺少关联采购单。请重新获取供应商推荐",
+                invalid_refs=args.supplier_refs,
+            )
         valid = {
             item.reference_id
             for item in state.last_recommendations
             if item.kind == "SUPPLIER_RECOMMENDATION"
         }
         invalid = tuple(ref for ref in args.supplier_refs if ref not in valid)
+        snapshots = await self._backend.recommend_suppliers(
+            identity=identity,
+            requirement_id=state.purchase_request_id,
+            limit=30,
+        )
+        by_id = {item.supplier_id: item for item in snapshots.items}
         items: list[SupplierComparisonItem] = []
         for ref in args.supplier_refs:
             if ref not in valid:
@@ -504,19 +512,28 @@ class CompareSuppliersCapability:
             except (IndexError, ValueError):
                 invalid += (ref,)
                 continue
-            supplier = await self._backend.get_supplier(identity=identity, supplier_id=supplier_id)
-            history = await self._backend.list_purchase_records(
-                identity=identity, supplier_id=supplier_id, page=1, page_size=100
-            )
-            blocked = bool(supplier.blacklist and supplier.blacklist.active)
-            count = len(history.items)
+            snapshot = by_id.get(supplier_id)
+            if snapshot is None:
+                items.append(
+                    SupplierComparisonItem(
+                        supplier_ref=ref,
+                        strengths=(),
+                        risks=("供应商当前不在后端可推荐集合中",),
+                        evidence=("后端当前未返回该供应商的可用比较快照",),
+                        fit_score=None,
+                        blocked=True,
+                    )
+                )
+                continue
+            blocked = snapshot.blacklist_status in {"ACTIVE", "BLACKLISTED"}
+            count = snapshot.historical_purchase_count
             items.append(
                 SupplierComparisonItem(
                     supplier_ref=ref,
                     strengths=(f"可见历史采购 {count} 次",) if count else (),
                     risks=("供应商当前在黑名单中",) if blocked else (),
                     evidence=(
-                        f"后端供应商主数据 ID: {supplier.supplier_id}",
+                        f"后端供应商主数据 ID: {snapshot.supplier_id}",
                         f"可见历史采购次数: {count}",
                         f"黑名单状态: {'BLOCKED' if blocked else 'NORMAL'}",
                     ),
@@ -532,7 +549,7 @@ class CompareSuppliersCapability:
             status="SUCCESS" if items else "INVALID_ARGUMENTS",
             items=tuple(items),
             recommended_ref=recommended,
-            recommendation_reason=("可见历史合作次数最高且不在黑名单",) if recommended else (),
+            recommendation_reason=("可见历史采购次数最高且当前不在黑名单",) if recommended else (),
             blocked_refs=blocked_refs,
             insufficient_data=("系统没有交期、服务质量和实时报价数据",),
             invalid_refs=invalid,

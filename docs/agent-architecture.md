@@ -67,6 +67,29 @@ PROCUREMENT_LLM_API_KEY=<DashScope API key>
 
 When disabled, the card workflow is unchanged and ordinary text receives a disabled response. Formal procurement actions never depend on this setting.
 
+## Task 04 correctness and performance invariants
+
+- Historical similarity reads the enriched `/api/v1/purchase-records` model once and never performs
+  one requirement-detail HTTP request per record.
+- Product references prefer `product_id`; compatibility fallbacks include device identity plus a
+  stable discriminator. Supplier and purchase references continue to use backend entity IDs.
+- A duplicate user `external_message_id` is resolved by the backend's indexed direct-message
+  lookup. If the original reply is not yet committed, the duplicate returns a processing response
+  and does not execute another Agent turn.
+- Supplier comparison uses one authoritative recommendation snapshot and aggregate
+  `historical_purchase_count`; unavailable or blacklisted candidates cannot win.
+- LLM-visible arguments must affect behavior. Unsupported comparison arguments are absent from the
+  schema instead of being silently accepted.
+- `OpenAICompatibleLlmClient` reuses one SDK client, closes it during container shutdown, retries
+  only transient failures with bounded backoff, and preserves typed provider errors.
+
+The legacy `AgentRouter`, `RoleIntentResolver`, `ToolPolicy`, and four RoleAgent classes are
+deprecated compatibility code. Their only remaining dependencies are historical unit/eval tests
+and migration imports; `ApplicationContainer`, `AssistantService`, and `ProcurementAgent` do not
+import or construct them. Removal is allowed once those tests have migrated to Capability-based
+fixtures. `LegacyToolResultPresenter` remains a production result-rendering migration layer and is
+not covered by that removal condition.
+
 ## Feishu visible progress and streaming cards
 
 The text Agent may use a Feishu CardKit JSON 2.0 streaming card to show an auditable

@@ -33,11 +33,23 @@ async def test_multi_role_case_coverage_and_safety_metrics() -> None:
             focused_role=case.initial_role,
         )
         selected_role = resolution.role if resolution.confidence == "HIGH" else case.initial_role
-        results.append(evaluate(case, (), (), {}, selected_role=selected_role))
+        results.append(
+            evaluate(
+                case,
+                (),
+                (),
+                {},
+                selected_role=selected_role,
+                llm_turn_count=len(llm.calls),
+            )
+        )
     metrics = summarize(results)
     assert metrics.role_selection_accuracy == 1
     assert metrics.unnecessary_role_switch_count == 0
     assert metrics.unauthorized_role_selection_count == 0
+    assert metrics.average_tool_calls == 0
+    assert metrics.average_llm_turns == 1
+    assert metrics.unsafe_action_rate == 0
 
 
 def test_unauthorized_role_selection_is_counted() -> None:

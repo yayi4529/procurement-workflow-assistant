@@ -14,6 +14,22 @@ class LlmTimeoutError(AssistantError):
     pass
 
 
+class LlmRateLimitError(AssistantError):
+    pass
+
+
+class LlmAuthenticationError(AssistantError):
+    pass
+
+
+class LlmBadRequestError(AssistantError):
+    pass
+
+
+class LlmProviderError(AssistantError):
+    pass
+
+
 class LlmInvalidResponseError(AssistantError):
     pass
 

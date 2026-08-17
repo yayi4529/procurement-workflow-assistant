@@ -1,4 +1,10 @@
+import asyncio
+import inspect
+import logging
+import random
+from collections.abc import Awaitable, Callable
 from importlib import import_module
+from typing import Any
 
 from pydantic import SecretStr
 
@@ -9,20 +15,47 @@ from procurement_platform.domain.assistant import (
     AssistantTurn,
 )
 from procurement_platform.domain.assistant_errors import (
+    AssistantError,
+    LlmAuthenticationError,
+    LlmBadRequestError,
     LlmInvalidResponseError,
+    LlmProviderError,
+    LlmRateLimitError,
     LlmTimeoutError,
     LlmUnavailableError,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class OpenAICompatibleLlmClient:
     def __init__(
-        self, *, api_key: SecretStr, model: str, timeout_seconds: float, base_url: str | None = None
+        self,
+        *,
+        api_key: SecretStr,
+        model: str,
+        timeout_seconds: float,
+        base_url: str | None = None,
+        max_attempts: int = 3,
+        backoff_base_seconds: float = 0.25,
+        client_factory: Callable[..., Any] | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
-        self._api_key = api_key
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
         self._model = model
-        self._timeout_seconds = timeout_seconds
-        self._base_url = base_url
+        self._max_attempts = max_attempts
+        self._backoff_base_seconds = backoff_base_seconds
+        self._sleep = sleep
+        try:
+            factory = client_factory or import_module("openai").AsyncOpenAI
+            self._client: Any = factory(
+                api_key=api_key.get_secret_value(),
+                base_url=base_url,
+                timeout=timeout_seconds,
+            )
+        except ImportError as exc:
+            raise LlmUnavailableError("OpenAI SDK is unavailable") from exc
 
     async def complete(
         self,
@@ -31,49 +64,25 @@ class OpenAICompatibleLlmClient:
         tools: tuple[AssistantToolDefinition, ...],
         tool_choice: str | None = None,
     ) -> AssistantTurn:
-        try:
-            client = import_module("openai").AsyncOpenAI(
-                api_key=self._api_key.get_secret_value(),
-                base_url=self._base_url,
-                timeout=self._timeout_seconds,
-            )
-            request: dict[str, object] = {
-                "model": self._model,
-                "messages": [self._message_payload(message) for message in messages],
-                "tools": [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.parameters,
-                        },
-                    }
-                    for tool in tools
-                ]
-                or None,
-            }
-            # Some OpenAI-compatible providers reject the presence of
-            # ``tool_choice`` in thinking mode, even when its value is null.
-            # Omit it unless the caller explicitly asks for a tool call.
-            if tool_choice is not None:
-                request["tool_choice"] = tool_choice
-            try:
-                response = await client.chat.completions.create(**request)
-            except Exception as exc:
-                if tool_choice is None or not self._tool_choice_is_unsupported(exc):
-                    raise
-                # Thinking-mode providers may support function tools but reject
-                # the forced-choice extension. Retrying without it still lets
-                # the model elect a tool call and keeps the turn responsive.
-                request.pop("tool_choice", None)
-                response = await client.chat.completions.create(**request)
-        except ImportError as exc:
-            raise LlmUnavailableError("OpenAI SDK is unavailable") from exc
-        except Exception as exc:
-            if exc.__class__.__name__ == "APITimeoutError":
-                raise LlmTimeoutError("LLM request timed out") from exc
-            raise LlmUnavailableError("LLM request failed") from exc
+        request: dict[str, object] = {
+            "model": self._model,
+            "messages": [self._message_payload(message) for message in messages],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    },
+                }
+                for tool in tools
+            ]
+            or None,
+        }
+        if tool_choice is not None:
+            request["tool_choice"] = tool_choice
+        response = await self._create_with_retry(request)
         if not response.choices:
             raise LlmInvalidResponseError("LLM returned no choices")
         message = response.choices[0].message
@@ -87,6 +96,62 @@ class OpenAICompatibleLlmClient:
         if not (message.content and message.content.strip()) and not calls:
             raise LlmInvalidResponseError("LLM returned empty response")
         return AssistantTurn(content=message.content, tool_calls=calls)
+
+    async def _create_with_retry(self, request: dict[str, object]) -> Any:
+        fallback_used = False
+        attempt = 0
+        while attempt < self._max_attempts:
+            attempt += 1
+            try:
+                return await self._client.chat.completions.create(**request)
+            except Exception as exc:
+                if (
+                    not fallback_used
+                    and "tool_choice" in request
+                    and self._tool_choice_is_unsupported(exc)
+                ):
+                    fallback_used = True
+                    request = dict(request)
+                    request.pop("tool_choice", None)
+                    logger.info("assistant.llm.tool_choice_fallback", extra={"attempt": attempt})
+                    continue
+                mapped, transient = self._classify(exc)
+                if not transient or attempt >= self._max_attempts:
+                    raise mapped from exc
+                delay = self._backoff_base_seconds * (2 ** (attempt - 1))
+                delay += random.uniform(0, self._backoff_base_seconds)
+                logger.warning(
+                    "assistant.llm.retry",
+                    extra={"attempt": attempt, "error_type": type(mapped).__name__},
+                )
+                await self._sleep(delay)
+        raise LlmUnavailableError("LLM retry policy exhausted")
+
+    @staticmethod
+    def _classify(exc: Exception) -> tuple[AssistantError, bool]:
+        name = exc.__class__.__name__
+        status = getattr(exc, "status_code", None)
+        if name in {"APITimeoutError", "TimeoutError"}:
+            return LlmTimeoutError("LLM request timed out"), True
+        if name == "RateLimitError" or status == 429:
+            return LlmRateLimitError("LLM rate limit exceeded"), True
+        if name in {"AuthenticationError", "PermissionDeniedError"} or status in {401, 403}:
+            return LlmAuthenticationError("LLM authentication or authorization failed"), False
+        if name == "BadRequestError" or status in {400, 422}:
+            return LlmBadRequestError("LLM rejected the request"), False
+        if name == "APIConnectionError":
+            return LlmUnavailableError("LLM connection unavailable"), True
+        if name == "InternalServerError" or (isinstance(status, int) and status >= 500):
+            return LlmProviderError("LLM provider failed"), True
+        return LlmUnavailableError("LLM request failed"), False
+
+    async def aclose(self) -> None:
+        close = getattr(self._client, "close", None)
+        if close is None:
+            return
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
     @staticmethod
     def _message_payload(message: AssistantMessage) -> dict[str, object]:
