@@ -114,3 +114,11 @@ Correctness/performance tests use deterministic counts rather than wall-clock th
 
 The unit CI job measures `procurement_platform` coverage and enforces the measured-baseline guard
 of 80%. Formal workflow transitions remain outside the text Agent in every test environment.
+
+## Task05 asset tests
+
+Task05 adds Backend model/seed/constraint and OpenAPI tests; strict HTTP contract tests for JSON,
+nullable model, aliases, stable refs, and one-round-trip context; FakeBackend parity tests;
+deterministic resolver tests for exact code/name/alias, building filtering, ambiguity and missing
+matches; and grounding tests proving missing model/components/relations are not invented. Existing
+formal procurement regression and the 80% source coverage gate remain unchanged.

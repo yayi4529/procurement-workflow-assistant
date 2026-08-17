@@ -4,6 +4,14 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
+from procurement_platform.domain.assets import (
+    AssetContext,
+    AssetPage,
+    AssetSummary,
+    EquipmentCategorySummary,
+    EquipmentModelPage,
+    EquipmentModelSummary,
+)
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
     AgentConversationCompletion,
@@ -115,6 +123,133 @@ class FakeBackendClient:
         self.timeline_contacts: dict[tuple[int, int, str], TimelineContact] = {}
         self.product_recommendations = ProductRecommendations(items=())
         self.purchase_history_recommendations = PurchaseHistoryRecommendations(items=())
+        self.equipment_categories: list[EquipmentCategorySummary] = []
+        self.equipment_models: list[EquipmentModelSummary] = []
+        self.assets: dict[int, AssetSummary] = {}
+        self.asset_contexts: dict[int, AssetContext] = {}
+
+    def seed_asset_context(self, context: AssetContext) -> None:
+        self.assets[context.asset.asset_id] = context.asset
+        self.asset_contexts[context.asset.asset_id] = context
+        if context.asset.model is not None and all(
+            item.model_id != context.asset.model.model_id for item in self.equipment_models
+        ):
+            self.equipment_models.append(context.asset.model)
+        if all(
+            item.category_id != context.asset.category.category_id
+            for item in self.equipment_categories
+        ):
+            self.equipment_categories.append(context.asset.category)
+
+    async def list_equipment_categories(
+        self,
+        *,
+        identity: PlatformIdentity,
+        parent_category_id: int | None = None,
+        category_level: int | None = None,
+        status: str | None = "ACTIVE",
+    ) -> tuple[EquipmentCategorySummary, ...]:
+        self._record("list_equipment_categories")
+        self._user(identity)
+        return tuple(
+            item
+            for item in self.equipment_categories
+            if (parent_category_id is None or item.parent_category_id == parent_category_id)
+            and (category_level is None or item.category_level == category_level)
+            and (status is None or item.status == status)
+        )
+
+    async def list_equipment_models(
+        self,
+        *,
+        identity: PlatformIdentity,
+        category_id: int | None = None,
+        brand: str | None = None,
+        query: str | None = None,
+        lifecycle_status: str | None = "ACTIVE",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> EquipmentModelPage:
+        self._record("list_equipment_models")
+        self._user(identity)
+        q = (query or "").casefold()
+        items = [
+            item
+            for item in self.equipment_models
+            if (category_id is None or item.category_id == category_id)
+            and (brand is None or brand.casefold() in (item.brand or "").casefold())
+            and (
+                not q
+                or q in " ".join(filter(None, (item.brand, item.model, item.model_name))).casefold()
+            )
+            and (lifecycle_status is None or item.lifecycle_status == lifecycle_status)
+        ]
+        start = (page - 1) * page_size
+        return EquipmentModelPage(
+            items=tuple(items[start : start + page_size]),
+            page=page,
+            page_size=page_size,
+            total=len(items),
+        )
+
+    async def search_assets(
+        self,
+        *,
+        identity: PlatformIdentity,
+        building_id: int | None = None,
+        category_id: int | None = None,
+        category_code: str | None = None,
+        model_id: int | None = None,
+        status: str | None = "ACTIVE",
+        criticality: str | None = None,
+        query: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> AssetPage:
+        self._record("search_assets")
+        self._user(identity)
+        q = (query or "").casefold()
+        items = [
+            item
+            for item in self.assets.values()
+            if (building_id is None or item.building_id == building_id)
+            and (category_id is None or item.category_id == category_id)
+            and (category_code is None or item.category.category_code == category_code)
+            and (model_id is None or item.model_id == model_id)
+            and (status is None or item.status == status)
+            and (criticality is None or item.criticality == criticality)
+            and (
+                not q
+                or q
+                in " ".join(
+                    (item.asset_code, item.asset_name, item.location or "", *item.aliases)
+                ).casefold()
+            )
+        ]
+        items.sort(key=lambda item: item.asset_id)
+        start = (page - 1) * page_size
+        return AssetPage(
+            items=tuple(items[start : start + page_size]),
+            page=page,
+            page_size=page_size,
+            total=len(items),
+        )
+
+    async def get_asset(self, *, identity: PlatformIdentity, asset_id: int) -> AssetSummary:
+        self._record("get_asset")
+        self._user(identity)
+        try:
+            return self.assets[asset_id]
+        except KeyError as exc:
+            raise BackendApplicationError("ASSET_NOT_FOUND", "资产不存在") from exc
+
+    async def get_asset_context(self, *, identity: PlatformIdentity, asset_id: int) -> AssetContext:
+        self._record("get_asset_context")
+        self._user(identity)
+        try:
+            return self.asset_contexts[asset_id]
+        except KeyError as exc:
+            raise BackendApplicationError("ASSET_NOT_FOUND", "资产不存在") from exc
 
     def seed_supplier(self, supplier: SupplierDetail) -> None:
         self._suppliers[supplier.supplier_id] = supplier

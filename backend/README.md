@@ -78,6 +78,13 @@ X-Gateway-Signature
 后端提供供应商搜索、详情、黑名单、产品推荐、采购历史和供应商推荐。黑名单与权限判断
 由后端完成，Agent 只能使用返回的结构化事实。
 
+### Data center assets (Task05)
+
+The backend owns five asset tables (`equipment_category`, `equipment_model`, `asset`,
+`asset_component`, and `asset_relation`) and exposes signed read APIs for categories, models,
+asset search/detail, and aggregate asset context. Demo seed data uses only explicit `TEST-` codes.
+See [Data Center Asset Domain](../docs/data-center-asset-domain.md).
+
 ### Agent Session
 
 ```text

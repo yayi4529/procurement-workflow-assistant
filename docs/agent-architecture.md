@@ -103,3 +103,14 @@ before enabling card interactions. If an update fails, degrade to one final card
 any procurement write operation. Streaming requires `cardkit:card:write`, CardKit JSON 2.0, and
 compliance with Feishu's per-card update-rate limit. Formal workflow actions remain on existing
 deterministic cards.
+## Task05 asset awareness
+
+The optional text Agent receives five read-only capabilities: `search_assets`, `resolve_asset`,
+`get_asset`, `get_asset_components`, and `get_asset_relations`. They follow the existing
+Capability Registry/Policy and BackendClient port. Stable references use Backend primary keys:
+`asset:{id}` and `model:{id}`.
+
+`AssetResolver` is deterministic. Exact code, name, and normalized alias have priority; multiple
+candidates produce `MULTIPLE_MATCHES`. Component and relation reads use the aggregate Backend
+context endpoint, and missing facts are represented explicitly instead of inferred by the LLM.
+These capabilities cannot mutate an asset or invoke a procurement workflow action.

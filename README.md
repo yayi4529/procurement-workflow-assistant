@@ -146,6 +146,7 @@ Agent evals. Live-model evals are manual/release-only. See [docs/eval-baseline.m
 
 ## Documentation
 
+- [Data Center Asset Domain](docs/data-center-asset-domain.md)
 - [Production Runbook](docs/runbook.md)
 - [Architecture](docs/architecture.md)
 - [Agent Architecture](docs/agent-architecture.md)

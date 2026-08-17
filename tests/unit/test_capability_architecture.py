@@ -162,6 +162,15 @@ def test_single_role_permissions_remain_compatible(role: RoleCode, expected: set
     policy = CapabilityPolicy(DEFAULT_CAPABILITY_METADATA)
     user = _user(role)
 
+    expected.update(
+        {
+            "search_assets",
+            "resolve_asset",
+            "get_asset",
+            "get_asset_components",
+            "get_asset_relations",
+        }
+    )
     assert policy.allowed_names_for(user) == frozenset(expected)
     assert ToolPolicy(policy).allowed_tool_names(current_user=user, active_role=role) == frozenset(
         expected
@@ -187,6 +196,11 @@ def test_policy_unions_capabilities_for_multi_role_user() -> None:
             "find_similar_purchases",
             "compare_products",
             "compare_suppliers",
+            "search_assets",
+            "resolve_asset",
+            "get_asset",
+            "get_asset_components",
+            "get_asset_relations",
         }
     )
 

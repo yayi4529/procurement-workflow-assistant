@@ -7,8 +7,14 @@ from procurement_platform.adapters.backend.dto import (
     BackendAgentSessionStateDTO,
     BackendAgentStateSaveDTO,
     BackendAllowedRequirementAction,
+    BackendAssetContextDTO,
+    BackendAssetDTO,
+    BackendAssetPageDTO,
     BackendCreatedRequirementDTO,
     BackendCurrentUserDTO,
+    BackendEquipmentCategoryDTO,
+    BackendEquipmentModelDTO,
+    BackendEquipmentModelPageDTO,
     BackendFieldsSaveDTO,
     BackendHandlerCandidatesDTO,
     BackendProductRecommendationsDTO,
@@ -23,6 +29,18 @@ from procurement_platform.adapters.backend.dto import (
     BackendSupplierRecommendationsDTO,
     BackendTimelineContactDTO,
     BackendTimelineDTO,
+)
+from procurement_platform.domain.assets import (
+    AssetComponent,
+    AssetContext,
+    AssetPage,
+    AssetRelation,
+    AssetSummary,
+    BuildingSummary,
+    EquipmentCategorySummary,
+    EquipmentModelPage,
+    EquipmentModelSummary,
+    RelatedAsset,
 )
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
@@ -496,3 +514,56 @@ def _map_allowed_action(
     if action in aliases:
         return aliases[action]
     return AllowedRequirementAction(action.value)
+
+
+def map_equipment_category(dto: BackendEquipmentCategoryDTO) -> EquipmentCategorySummary:
+    return EquipmentCategorySummary.model_validate(dto.model_dump())
+
+
+def map_equipment_model(dto: BackendEquipmentModelDTO) -> EquipmentModelSummary:
+    return EquipmentModelSummary.model_validate(dto.model_dump())
+
+
+def map_asset(dto: BackendAssetDTO) -> AssetSummary:
+    return AssetSummary(
+        **dto.model_dump(exclude={"category", "model", "building", "aliases"}),
+        aliases=dto.aliases or (),
+        category=map_equipment_category(dto.category),
+        model=map_equipment_model(dto.model) if dto.model is not None else None,
+        building=BuildingSummary.model_validate(dto.building.model_dump()),
+    )
+
+
+def map_asset_page(dto: BackendAssetPageDTO) -> AssetPage:
+    return AssetPage(
+        items=tuple(map_asset(item) for item in dto.items),
+        page=dto.page,
+        page_size=dto.page_size,
+        total=dto.total,
+    )
+
+
+def map_equipment_model_page(dto: BackendEquipmentModelPageDTO) -> EquipmentModelPage:
+    return EquipmentModelPage(
+        items=tuple(map_equipment_model(item) for item in dto.items),
+        page=dto.page,
+        page_size=dto.page_size,
+        total=dto.total,
+    )
+
+
+def map_asset_context(dto: BackendAssetContextDTO) -> AssetContext:
+    return AssetContext(
+        asset=map_asset(dto.asset),
+        components=tuple(
+            AssetComponent.model_validate(item.model_dump()) for item in dto.components
+        ),
+        relations=tuple(
+            AssetRelation(
+                **item.model_dump(exclude={"related_asset"}),
+                related_asset=RelatedAsset.model_validate(item.related_asset.model_dump()),
+            )
+            for item in dto.relations
+        ),
+        redundancy_peers=tuple(map_asset(item) for item in dto.redundancy_peers),
+    )

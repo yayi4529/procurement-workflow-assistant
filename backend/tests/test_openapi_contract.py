@@ -54,6 +54,11 @@ def test_openapi_has_unique_operations_and_all_documented_core_paths() -> None:
         "/api/v1/agent/conversations/{conversation_id}/state",
         "/api/v1/notifications",
         "/api/v1/notifications/dispatch-due",
+        "/api/v1/equipment/categories",
+        "/api/v1/equipment/models",
+        "/api/v1/assets",
+        "/api/v1/assets/{asset_id}",
+        "/api/v1/assets/{asset_id}/context",
         "/health",
         "/ready",
     }

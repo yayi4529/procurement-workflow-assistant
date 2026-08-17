@@ -250,6 +250,11 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
             "diagnose_procurement_need",
             "find_similar_purchases",
             "compare_products",
+            "search_assets",
+            "resolve_asset",
+            "get_asset",
+            "get_asset_components",
+            "get_asset_relations",
         }
     )
     assert (
@@ -259,7 +264,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 active_role=RoleCode.BUILDING_MANAGER,
             )
         )
-        == 9
+        == 14
     )
     assert (
         len(
@@ -267,7 +272,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 current_user=user(RoleCode.PURCHASER), active_role=RoleCode.PURCHASER
             )
         )
-        == 10
+        == 15
     )
     assert (
         len(
@@ -276,7 +281,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 active_role=RoleCode.WAREHOUSE_MANAGER,
             )
         )
-        == 5
+        == 10
     )
 
 
@@ -307,6 +312,11 @@ def test_tool_policy_does_not_merge_tools_for_multi_role_user() -> None:
             "diagnose_procurement_need",
             "find_similar_purchases",
             "compare_products",
+            "search_assets",
+            "resolve_asset",
+            "get_asset",
+            "get_asset_components",
+            "get_asset_relations",
         }
     )
     assert "prepare_purchase_prefill" not in applicant_tools

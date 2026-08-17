@@ -32,6 +32,13 @@ from procurement_platform.application.assistant.agent import ProcurementAgent
 from procurement_platform.application.assistant.capabilities.adapters import (
     ExistingToolCapabilityAdapter,
 )
+from procurement_platform.application.assistant.capabilities.assets import (
+    GetAssetCapability,
+    GetAssetComponentsCapability,
+    GetAssetRelationsCapability,
+    ResolveAssetCapability,
+    SearchAssetsCapability,
+)
 from procurement_platform.application.assistant.capabilities.catalog import (
     DEFAULT_CAPABILITY_METADATA,
 )
@@ -332,6 +339,11 @@ class _UnusedRedisClient:
 def _build_capability_registry(backend_client: BackendClient) -> CapabilityRegistry:
     metadata_by_name = {item.name: item for item in DEFAULT_CAPABILITY_METADATA}
     tools = (
+        SearchAssetsCapability(backend_client),
+        ResolveAssetCapability(backend_client),
+        GetAssetCapability(backend_client),
+        GetAssetComponentsCapability(backend_client),
+        GetAssetRelationsCapability(backend_client),
         DiagnoseProcurementNeedCapability(backend_client),
         FindSimilarPurchasesCapability(backend_client),
         CompareProductsCapability(backend_client),

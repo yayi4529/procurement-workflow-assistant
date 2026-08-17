@@ -159,6 +159,11 @@ async def test_multi_role_union_is_not_cut_by_focused_role() -> None:
             "find_similar_purchases",
             "compare_products",
             "compare_suppliers",
+            "search_assets",
+            "resolve_asset",
+            "get_asset",
+            "get_asset_components",
+            "get_asset_relations",
         }
     )
 

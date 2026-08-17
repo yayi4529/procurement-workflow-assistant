@@ -2,6 +2,13 @@ from datetime import date
 from typing import Protocol
 from uuid import UUID
 
+from procurement_platform.domain.assets import (
+    AssetContext,
+    AssetPage,
+    AssetSummary,
+    EquipmentCategorySummary,
+    EquipmentModelPage,
+)
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
     AgentConversationCompletion,
@@ -48,6 +55,48 @@ from procurement_platform.domain.user import CurrentUser
 
 
 class BackendClient(Protocol):
+    async def list_equipment_categories(
+        self,
+        *,
+        identity: PlatformIdentity,
+        parent_category_id: int | None = None,
+        category_level: int | None = None,
+        status: str | None = "ACTIVE",
+    ) -> tuple[EquipmentCategorySummary, ...]: ...
+
+    async def list_equipment_models(
+        self,
+        *,
+        identity: PlatformIdentity,
+        category_id: int | None = None,
+        brand: str | None = None,
+        query: str | None = None,
+        lifecycle_status: str | None = "ACTIVE",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> EquipmentModelPage: ...
+
+    async def search_assets(
+        self,
+        *,
+        identity: PlatformIdentity,
+        building_id: int | None = None,
+        category_id: int | None = None,
+        category_code: str | None = None,
+        model_id: int | None = None,
+        status: str | None = "ACTIVE",
+        criticality: str | None = None,
+        query: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> AssetPage: ...
+
+    async def get_asset(self, *, identity: PlatformIdentity, asset_id: int) -> AssetSummary: ...
+
+    async def get_asset_context(
+        self, *, identity: PlatformIdentity, asset_id: int
+    ) -> AssetContext: ...
+
     async def get_current_user(self, *, identity: PlatformIdentity) -> CurrentUser: ...
 
     async def create_requirement(

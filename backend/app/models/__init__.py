@@ -1,6 +1,13 @@
 """SQLAlchemy models."""
 
 from app.models.agent import AgentConversation, AgentMessage, AgentSessionState
+from app.models.assets import (
+    Asset,
+    AssetComponent,
+    AssetRelation,
+    EquipmentCategory,
+    EquipmentModel,
+)
 from app.models.identity import (
     Building,
     Employee,
@@ -24,11 +31,16 @@ __all__ = [
     "AgentConversation",
     "AgentMessage",
     "AgentSessionState",
+    "Asset",
+    "AssetComponent",
+    "AssetRelation",
     "Building",
     "Employee",
     "EmployeeBuilding",
     "EmployeeExternalIdentity",
     "EmployeeRole",
+    "EquipmentCategory",
+    "EquipmentModel",
     "NotificationOutbox",
     "PurchaseExecution",
     "PurchaseOperationLog",

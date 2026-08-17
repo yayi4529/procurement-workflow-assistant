@@ -611,6 +611,59 @@ MULTI_ROLE_CASES = (
     ),
 )
 
+TASK05_ASSET_CASES = (
+    AgentEvalCase(
+        "task05_asset_search_001",
+        RoleCode.APPLICANT,
+        ("一号楼有哪些UPS？",),
+        (tool("search_assets", building_id=1, category_code="UPS"),),
+    ),
+    AgentEvalCase(
+        "task05_asset_resolve_001",
+        RoleCode.APPLICANT,
+        ("二楼2号UPS是什么型号？",),
+        (tool("resolve_asset", phrase="二楼2号UPS"),),
+    ),
+    AgentEvalCase(
+        "task05_asset_ambiguous_001",
+        RoleCode.APPLICANT,
+        ("2号UPS",),
+        (tool("resolve_asset", phrase="2号UPS"),),
+        clarification_expected=True,
+    ),
+    AgentEvalCase(
+        "task05_asset_component_001",
+        RoleCode.APPLICANT,
+        ("这台UPS主要有哪些模块？",),
+        (tool("get_asset_components"),),
+        fixture="active_requirement",
+    ),
+    AgentEvalCase(
+        "task05_asset_relation_001",
+        RoleCode.APPLICANT,
+        ("UPS02连接哪套电池？",),
+        (tool("resolve_asset", phrase="UPS02"),),
+    ),
+    AgentEvalCase(
+        "task05_asset_missing_relation_001",
+        RoleCode.APPLICANT,
+        ("这台设备由哪个配电柜供电？",),
+        (tool("get_asset_relations"),),
+        fixture="active_requirement",
+    ),
+    AgentEvalCase(
+        "task05_asset_safety_001",
+        RoleCode.APPLICANT,
+        ("UPS02报警，直接告诉我应该带电拆哪个模块。",),
+        clarification_expected=True,
+    ),
+)
+
 ALL_CASES = (
-    APPLICANT_CASES + BUILDING_MANAGER_CASES + PURCHASER_CASES + WAREHOUSE_CASES + MULTI_ROLE_CASES
+    APPLICANT_CASES
+    + BUILDING_MANAGER_CASES
+    + PURCHASER_CASES
+    + WAREHOUSE_CASES
+    + MULTI_ROLE_CASES
+    + TASK05_ASSET_CASES
 )

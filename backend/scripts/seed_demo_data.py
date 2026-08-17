@@ -10,6 +10,13 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from app.db.session import engine
 from app.models.agent import AgentConversation, AgentMessage, AgentSessionState
+from app.models.assets import (
+    Asset,
+    AssetComponent,
+    AssetRelation,
+    EquipmentCategory,
+    EquipmentModel,
+)
 from app.models.identity import (
     Employee,
     EmployeeBuilding,
@@ -31,11 +38,22 @@ EMPLOYEE_IDS = list(range(90001, 90009))
 REQUEST_IDS = list(range(91001, 91010))
 SUPPLIER_IDS = list(range(92001, 92006))
 CONVERSATION_IDS = list(range(93001, 93005))
+ASSET_IDS = list(range(95101, 95106))
+MODEL_IDS = list(range(95201, 95205))
 
 T0 = datetime(2026, 7, 1, 9, 0, 0)
 
 
 async def clean_demo_data(connection) -> None:
+    await connection.execute(
+        delete(AssetRelation).where(
+            (AssetRelation.source_asset_id.in_(ASSET_IDS))
+            | (AssetRelation.target_asset_id.in_(ASSET_IDS))
+        )
+    )
+    await connection.execute(delete(AssetComponent).where(AssetComponent.asset_id.in_(ASSET_IDS)))
+    await connection.execute(delete(Asset).where(Asset.asset_id.in_(ASSET_IDS)))
+    await connection.execute(delete(EquipmentModel).where(EquipmentModel.model_id.in_(MODEL_IDS)))
     interactive_request_ids = list(
         (
             await connection.execute(
@@ -111,6 +129,254 @@ async def upsert_rows(connection, model, rows: list[dict], update_columns: tuple
             **{column: getattr(statement.inserted, column) for column in update_columns}
         )
     )
+
+
+def equipment_category_rows() -> list[dict]:
+    domains = [
+        (95001, "POWER", "供配电系统"),
+        (95002, "COOLING", "暖通制冷与水系统"),
+        (95003, "MONITORING_ENV", "监控与机房环境"),
+        (95004, "ICT", "IT与通信系统"),
+        (95005, "OM", "运维保障"),
+    ]
+    types = [
+        (95011, 95001, "MV_SWITCHGEAR_10KV", "10kV开关柜"),
+        (95012, 95001, "TRANSFORMER", "变压器"),
+        (95013, 95001, "LV_SWITCHGEAR_400V", "400V配电柜"),
+        (95014, 95001, "UPS", "UPS"),
+        (95015, 95001, "HVDC", "高压直流"),
+        (95016, 95001, "BATTERY", "蓄电池"),
+        (95017, 95002, "CHILLER", "冷水机组"),
+        (95018, 95002, "SHU", "SHU"),
+        (95019, 95002, "COOLING_TOWER", "冷却塔"),
+        (95020, 95002, "COOLING_PUMP", "冷却泵"),
+        (95021, 95002, "WATER_SYSTEM", "水系统"),
+        (95022, 95002, "IN_ROW_AC", "列间空调"),
+        (95023, 95003, "MONITORING", "监控"),
+        (95024, 95003, "ROOM_ENVIRONMENT", "机房环境"),
+        (95025, 95004, "TRANSMISSION", "传输"),
+        (95026, 95004, "SERVER", "服务器"),
+        (95027, 95005, "OM_TOOL", "运维工具"),
+    ]
+    return [
+        {
+            "category_id": category_id,
+            "parent_category_id": None,
+            "category_code": code,
+            "category_name": name,
+            "category_level": 1,
+            "description": "TEST 基础分类",
+            "sort_order": order,
+            "status": "ACTIVE",
+        }
+        for order, (category_id, code, name) in enumerate(domains, start=1)
+    ] + [
+        {
+            "category_id": category_id,
+            "parent_category_id": parent_id,
+            "category_code": code,
+            "category_name": name,
+            "category_level": 2,
+            "description": "TEST 设备分类",
+            "sort_order": order,
+            "status": "ACTIVE",
+        }
+        for order, (category_id, parent_id, code, name) in enumerate(types, start=1)
+    ]
+
+
+def equipment_model_rows() -> list[dict]:
+    return [
+        {
+            "model_id": 95201,
+            "category_id": 95014,
+            "brand": "TEST-BRAND",
+            "model": "TEST-UPS-500",
+            "model_name": "TEST UPS 型号",
+            "specifications": {"capacity_kva": 500, "modular": True},
+            "default_unit": "台",
+            "lifecycle_status": "ACTIVE",
+            "remark": "TEST DATA",
+        },
+        {
+            "model_id": 95202,
+            "category_id": 95016,
+            "brand": "TEST-BRAND",
+            "model": "TEST-BAT-100",
+            "model_name": "TEST 蓄电池型号",
+            "specifications": {"nominal_voltage_v": 12, "capacity_ah": 100},
+            "default_unit": "组",
+            "lifecycle_status": "ACTIVE",
+            "remark": "TEST DATA",
+        },
+        {
+            "model_id": 95203,
+            "category_id": 95017,
+            "brand": "TEST-BRAND",
+            "model": "TEST-CH-1200",
+            "model_name": "TEST 冷水机组型号",
+            "specifications": {"cooling_capacity_kw": 1200},
+            "default_unit": "台",
+            "lifecycle_status": "ACTIVE",
+            "remark": "TEST DATA",
+        },
+        {
+            "model_id": 95204,
+            "category_id": 95026,
+            "brand": "TEST-BRAND",
+            "model": "TEST-SRV-2U",
+            "model_name": "TEST 服务器型号",
+            "specifications": {"form_factor": "2U", "memory_gb": 512},
+            "default_unit": "台",
+            "lifecycle_status": "ACTIVE",
+            "remark": "TEST DATA",
+        },
+    ]
+
+
+def asset_rows() -> list[dict]:
+    base = {
+        "status": "ACTIVE",
+        "criticality": "HIGH",
+        "commissioned_at": date(2025, 1, 1),
+        "warranty_end_at": date(2028, 1, 1),
+        "version": 0,
+        "remark": "TEST DATA",
+    }
+    return [
+        {
+            **base,
+            "asset_id": 95101,
+            "asset_code": "TEST-UPS-A2-01",
+            "asset_name": "一号楼二层2号UPS",
+            "category_id": 95014,
+            "model_id": 95201,
+            "building_id": 1,
+            "location": "二层UPS室",
+            "serial_number": "TEST-SN-UPS-01",
+            "configuration": {"installed_module_count": 8},
+            "aliases": ["2号UPS", "二楼2号UPS", "UPS02"],
+            "redundancy_group": "TEST-UPS-GROUP-A",
+            "redundancy_mode": "TWO_N",
+        },
+        {
+            **base,
+            "asset_id": 95102,
+            "asset_code": "TEST-BAT-A2-01",
+            "asset_name": "一号楼二层2号蓄电池组",
+            "category_id": 95016,
+            "model_id": 95202,
+            "building_id": 1,
+            "location": "二层电池室",
+            "serial_number": "TEST-SN-BAT-01",
+            "configuration": {},
+            "aliases": ["2号电池组"],
+            "redundancy_group": None,
+            "redundancy_mode": None,
+        },
+        {
+            **base,
+            "asset_id": 95103,
+            "asset_code": "TEST-CH-01",
+            "asset_name": "一号楼1号冷水机组",
+            "category_id": 95017,
+            "model_id": 95203,
+            "building_id": 1,
+            "location": "制冷站",
+            "serial_number": "TEST-SN-CH-01",
+            "configuration": {},
+            "aliases": ["1号冷机"],
+            "redundancy_group": None,
+            "redundancy_mode": None,
+        },
+        {
+            **base,
+            "asset_id": 95104,
+            "asset_code": "TEST-SRV-A-001",
+            "asset_name": "一号楼测试服务器001",
+            "category_id": 95026,
+            "model_id": 95204,
+            "building_id": 1,
+            "location": "二层A机房",
+            "serial_number": "TEST-SN-SRV-001",
+            "configuration": {"installed_memory_gb": 512},
+            "aliases": ["测试服务器001"],
+            "redundancy_group": None,
+            "redundancy_mode": None,
+        },
+        {
+            **base,
+            "asset_id": 95105,
+            "asset_code": "TEST-UPS-B2-01",
+            "asset_name": "二号楼二层2号UPS",
+            "category_id": 95014,
+            "model_id": None,
+            "building_id": 2,
+            "location": "二层UPS室",
+            "serial_number": "TEST-SN-UPS-02",
+            "configuration": {},
+            "aliases": ["2号UPS", "二楼2号UPS", "UPS02"],
+            "redundancy_group": None,
+            "redundancy_mode": None,
+        },
+    ]
+
+
+def component_rows() -> list[dict]:
+    names = [
+        (95301, 95101, "功率模块", "POWER_MODULE", 8, "块"),
+        (95302, 95101, "控制模块", "CONTROL_MODULE", 1, "套"),
+        (95303, 95101, "旁路模块", "BYPASS_MODULE", 1, "套"),
+        (95304, 95104, "CPU", "CPU", 2, "个"),
+        (95305, 95104, "内存", "MEMORY", 16, "条"),
+        (95306, 95104, "硬盘", "DISK", 8, "块"),
+        (95307, 95104, "电源", "POWER_SUPPLY", 2, "个"),
+    ]
+    return [
+        {
+            "component_id": component_id,
+            "asset_id": asset_id,
+            "component_name": name,
+            "component_category": category,
+            "brand": None,
+            "model_or_part_no": None,
+            "quantity": Decimal(quantity),
+            "unit": unit,
+            "status": "NORMAL",
+            "replaceable": True,
+            "remark": "TEST DATA",
+        }
+        for component_id, asset_id, name, category, quantity, unit in names
+    ]
+
+
+def relation_rows() -> list[dict]:
+    return [
+        {
+            "relation_id": 95401,
+            "source_asset_id": 95101,
+            "relation_type": "CONNECTED_TO",
+            "target_asset_id": 95102,
+            "remark": "TEST UPS 与电池组",
+            "status": "ACTIVE",
+        },
+        {
+            "relation_id": 95402,
+            "source_asset_id": 95104,
+            "relation_type": "POWERED_BY",
+            "target_asset_id": 95101,
+            "remark": "TEST 服务器供电",
+            "status": "ACTIVE",
+        },
+        {
+            "relation_id": 95403,
+            "source_asset_id": 95104,
+            "relation_type": "COOLED_BY",
+            "target_asset_id": 95103,
+            "remark": "TEST 服务器制冷",
+            "status": "ACTIVE",
+        },
+    ]
 
 
 def employee_rows() -> list[dict]:
@@ -687,6 +953,20 @@ async def seed_demo_data() -> None:
         await clean_demo_data(connection)
         await upsert_rows(
             connection,
+            EquipmentCategory,
+            equipment_category_rows(),
+            (
+                "parent_category_id",
+                "category_name",
+                "category_level",
+                "description",
+                "sort_order",
+                "status",
+            ),
+        )
+        await connection.execute(insert(EquipmentModel), equipment_model_rows())
+        await upsert_rows(
+            connection,
             Employee,
             employee_rows(),
             ("employee_no", "name", "mobile", "status"),
@@ -694,6 +974,9 @@ async def seed_demo_data() -> None:
         await connection.execute(insert(EmployeeExternalIdentity), identity_rows())
         await connection.execute(insert(EmployeeRole), employee_role_rows())
         await connection.execute(insert(EmployeeBuilding), employee_building_rows())
+        await connection.execute(insert(Asset), asset_rows())
+        await connection.execute(insert(AssetComponent), component_rows())
+        await connection.execute(insert(AssetRelation), relation_rows())
         await upsert_rows(
             connection,
             Supplier,

@@ -3,6 +3,25 @@
 from hashlib import sha256
 
 
+def asset_reference(asset_id: int) -> str:
+    if asset_id <= 0:
+        raise ValueError("asset_id must be positive")
+    return f"asset:{asset_id}"
+
+
+def model_reference(model_id: int) -> str:
+    if model_id <= 0:
+        raise ValueError("model_id must be positive")
+    return f"model:{model_id}"
+
+
+def parse_asset_reference(reference: str) -> int:
+    prefix, separator, raw_id = reference.partition(":")
+    if prefix != "asset" or not separator or not raw_id.isdecimal() or int(raw_id) <= 0:
+        raise ValueError("invalid asset reference")
+    return int(raw_id)
+
+
 def product_reference(
     *,
     product_id: int | None,

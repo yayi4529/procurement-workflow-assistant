@@ -1,5 +1,12 @@
 from typing import Protocol
 
+from procurement_platform.application.assistant.capabilities.assets import (
+    GetAssetCapability,
+    GetAssetComponentsCapability,
+    GetAssetRelationsCapability,
+    ResolveAssetCapability,
+    SearchAssetsCapability,
+)
 from procurement_platform.application.assistant.capabilities.drafts import (
     UpdateReviewDraftCapability,
 )
@@ -56,6 +63,11 @@ def _metadata(
 
 
 DEFAULT_CAPABILITY_METADATA: tuple[CapabilityMetadata, ...] = (
+    _metadata(SearchAssetsCapability, ALL_WORKFLOW_ROLES),
+    _metadata(ResolveAssetCapability, ALL_WORKFLOW_ROLES),
+    _metadata(GetAssetCapability, ALL_WORKFLOW_ROLES),
+    _metadata(GetAssetComponentsCapability, ALL_WORKFLOW_ROLES),
+    _metadata(GetAssetRelationsCapability, ALL_WORKFLOW_ROLES),
     _metadata(DiagnoseProcurementNeedCapability, frozenset({RoleCode.APPLICANT})),
     _metadata(FindSimilarPurchasesCapability, ALL_WORKFLOW_ROLES),
     _metadata(

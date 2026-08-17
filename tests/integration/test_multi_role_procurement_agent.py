@@ -117,6 +117,11 @@ async def test_two_multi_role_turns_use_one_agent_without_role_switching() -> No
             "find_similar_purchases",
             "compare_products",
             "compare_suppliers",
+            "search_assets",
+            "resolve_asset",
+            "get_asset",
+            "get_asset_components",
+            "get_asset_relations",
         }
     )
 

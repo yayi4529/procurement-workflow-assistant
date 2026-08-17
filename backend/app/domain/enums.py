@@ -46,3 +46,28 @@ class NotificationStatus(StrEnum):
     PENDING = "PENDING"
     SENT = "SENT"
     FAILED = "FAILED"
+
+
+class AssetStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    STANDBY = "STANDBY"
+    MAINTENANCE = "MAINTENANCE"
+    FAULT = "FAULT"
+    OUT_OF_SERVICE = "OUT_OF_SERVICE"
+    RETIRED = "RETIRED"
+
+
+class AssetCriticality(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class AssetRelationType(StrEnum):
+    CONNECTED_TO = "CONNECTED_TO"
+    POWERED_BY = "POWERED_BY"
+    FEEDS = "FEEDS"
+    COOLED_BY = "COOLED_BY"
+    MONITORED_BY = "MONITORED_BY"
+    DEPENDS_ON = "DEPENDS_ON"

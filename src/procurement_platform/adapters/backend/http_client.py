@@ -11,9 +11,14 @@ from procurement_platform.adapters.backend.dto import (
     BackendAgentMessagePageDTO,
     BackendAgentSessionStateDTO,
     BackendAgentStateSaveDTO,
+    BackendAssetContextDTO,
+    BackendAssetDTO,
+    BackendAssetPageDTO,
     BackendCreatedRequirementDTO,
     BackendCurrentUserDTO,
     BackendEnvelope,
+    BackendEquipmentCategoryListDTO,
+    BackendEquipmentModelPageDTO,
     BackendFieldsSaveDTO,
     BackendHandlerCandidatesDTO,
     BackendProductRecommendationsDTO,
@@ -36,8 +41,13 @@ from procurement_platform.adapters.backend.mapper import (
     map_agent_message_page,
     map_agent_session_state,
     map_agent_state_save,
+    map_asset,
+    map_asset_context,
+    map_asset_page,
     map_created_requirement,
     map_current_user,
+    map_equipment_category,
+    map_equipment_model_page,
     map_fields_save,
     map_handler_candidates,
     map_product_recommendations,
@@ -55,6 +65,13 @@ from procurement_platform.adapters.backend.mapper import (
     map_timeline_contact,
 )
 from procurement_platform.adapters.backend.transport import SignedBackendTransport
+from procurement_platform.domain.assets import (
+    AssetContext,
+    AssetPage,
+    AssetSummary,
+    EquipmentCategorySummary,
+    EquipmentModelPage,
+)
 from procurement_platform.domain.assistant_session import (
     AgentConversation,
     AgentConversationCompletion,
@@ -158,6 +175,102 @@ class HttpBackendClient:
             identity=identity,
         )
         return map_current_user(dto)
+
+    async def list_equipment_categories(
+        self,
+        *,
+        identity: PlatformIdentity,
+        parent_category_id: int | None = None,
+        category_level: int | None = None,
+        status: str | None = "ACTIVE",
+    ) -> tuple[EquipmentCategorySummary, ...]:
+        dto = await self._request_model(
+            BackendEquipmentCategoryListDTO,
+            method="GET",
+            path="/api/v1/equipment/categories",
+            identity=identity,
+            query={
+                "parent_category_id": parent_category_id,
+                "category_level": category_level,
+                "status": status,
+            },
+        )
+        return tuple(map_equipment_category(item) for item in dto.items)
+
+    async def list_equipment_models(
+        self,
+        *,
+        identity: PlatformIdentity,
+        category_id: int | None = None,
+        brand: str | None = None,
+        query: str | None = None,
+        lifecycle_status: str | None = "ACTIVE",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> EquipmentModelPage:
+        dto = await self._request_model(
+            BackendEquipmentModelPageDTO,
+            method="GET",
+            path="/api/v1/equipment/models",
+            identity=identity,
+            query={
+                "category_id": category_id,
+                "brand": brand,
+                "q": query,
+                "lifecycle_status": lifecycle_status,
+                "page": page,
+                "page_size": page_size,
+            },
+        )
+        return map_equipment_model_page(dto)
+
+    async def search_assets(
+        self,
+        *,
+        identity: PlatformIdentity,
+        building_id: int | None = None,
+        category_id: int | None = None,
+        category_code: str | None = None,
+        model_id: int | None = None,
+        status: str | None = "ACTIVE",
+        criticality: str | None = None,
+        query: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> AssetPage:
+        dto = await self._request_model(
+            BackendAssetPageDTO,
+            method="GET",
+            path="/api/v1/assets",
+            identity=identity,
+            query={
+                "building_id": building_id,
+                "category_id": category_id,
+                "category_code": category_code,
+                "model_id": model_id,
+                "status": status,
+                "criticality": criticality,
+                "q": query,
+                "page": page,
+                "page_size": page_size,
+            },
+        )
+        return map_asset_page(dto)
+
+    async def get_asset(self, *, identity: PlatformIdentity, asset_id: int) -> AssetSummary:
+        dto = await self._request_model(
+            BackendAssetDTO, method="GET", path=f"/api/v1/assets/{asset_id}", identity=identity
+        )
+        return map_asset(dto)
+
+    async def get_asset_context(self, *, identity: PlatformIdentity, asset_id: int) -> AssetContext:
+        dto = await self._request_model(
+            BackendAssetContextDTO,
+            method="GET",
+            path=f"/api/v1/assets/{asset_id}/context",
+            identity=identity,
+        )
+        return map_asset_context(dto)
 
     async def create_requirement(
         self, *, identity: PlatformIdentity, building_id: int

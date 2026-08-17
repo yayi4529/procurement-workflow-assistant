@@ -274,3 +274,25 @@ ranking; the Agent must not enrich each row with `GET /requirements/{id}` calls.
 rules are identical to the other Agent session endpoints. Missing messages return HTTP 404 with
 `SESSION_NOT_FOUND`. The endpoint supports indexed duplicate-reply lookup and does not replace the
 existing unique `(conversation_id, external_message_id)` constraint.
+
+## Task05 asset read contract
+
+Every endpoint requires the normal signed current-user dependency:
+
+```text
+GET /api/v1/equipment/categories
+GET /api/v1/equipment/models
+GET /api/v1/assets
+GET /api/v1/assets/{asset_id}
+GET /api/v1/assets/{asset_id}/context
+```
+
+Lists are paginated (maximum `page_size=100`). Asset search supports building, category ID/code,
+model, status, criticality, and `q`. The context response contains one typed asset summary,
+optional model, components, bidirectional relation records with explicit direction and related
+asset summary, and same-redundancy-group peers. `model` is nullable. JSON specifications,
+configuration, and aliases are strictly parsed by the root adapter; extra fields are rejected.
+
+Non-admin visibility is restricted to Backend-provided building memberships. Not found or
+invisible assets return `ASSET_NOT_FOUND`; an explicitly unauthorized building filter returns
+`BUILDING_NOT_ALLOWED`.
