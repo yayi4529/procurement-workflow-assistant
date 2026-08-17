@@ -1,5 +1,11 @@
 # 剩余待确认项（后端 V1.5 / 数据库 V1.4）
 
+## Feishu + Fake 调试模式
+
+- 进程内 Fake 状态和内存幂等存储仅用于 development/test。
+- `DEV_NOTIFICATION_TEST` 仅用于通知网关 Smoke，不属于正式 Outbox 契约。
+- Quick Tunnel 仅提供临时 HTTPS；飞书控制台配置和应用发布仍由用户完成。
+
 ## 已解决
 
 以下旧差异已统一：
@@ -11,6 +17,9 @@
 - `received_quantity`；
 - 楼长联系人姓名、信息和链接；
 - `update_supplier_profile`。
+- 正式交接通知：后端在同一事务中写入 `REQUIREMENT_PENDING_REVIEW`、
+  `REQUIREMENT_PENDING_PURCHASE`、`REQUIREMENT_PENDING_WAREHOUSE` Outbox；三者 payload
+  固定为 `requirement_id`、`requirement_no`、`status`。通知网关将它们分别渲染为楼长、采购员、仓库管理员的待办卡片。
 
 ## 仍待确认
 
@@ -18,28 +27,96 @@
 
 后端配置为 `NOTIFICATION_GATEWAY_URL`，但接收路径尚未冻结。
 
-### 2. 通知事件 Schema
-
-需冻结 event_type 列表、每种 payload、卡片模板和错误响应格式。
-
-### 3. 通知网关生产幂等存储
+### 2. 通知网关生产幂等存储
 
 网关必须按 Idempotency-Key 幂等，但外部 Agent 不直接访问采购后端 MySQL/Redis。需要确定生产存储方案。
 
-### 4. 通知责任文字冲突
+### 3. 通知责任文字冲突
 
 V1.5 个别流程接口仍写“Agent 侧发送提醒”，但 Outbox 与联调说明明确由后端 worker 调用通知网关。为防止双发，本项目暂以 Outbox 为唯一跨角色通知触发源，需后端最终确认。
 
-### 5. 品牌和型号是否业务必填
+### 4. 品牌和型号是否业务必填
 
 数据库 V1.4 将 brand/model 设为可选，旧业务描述要求必填。当前按后端为准：可推荐、可补全，但不阻止提交。
 
-### 6. 统计接口
+### 5. 统计接口
 
 采购历史接口返回明细，没有冻结统计接口。LLM 不得自行计算次数、价格区间和主要供应商。
 
-### 7. Agent 会话与当前用户精确响应 Schema
+### 6. Agent 会话与当前用户精确响应 Schema
 
 现有 V1.5 文档冻结了接口、主要字段和行为，但没有给出所有接口的完整响应 JSON
 Schema（包括字段是否必返、时间字段和分页元数据的精确命名）。Task 1 按当前文档建立了
 严格模型和契约测试；接入真实后端前，需以后端 OpenAPI 或联调响应样例逐字段确认。
+
+### 7. 飞书身份、角色与楼宇绑定入口
+
+当前后端仅提供 `GET /api/v1/users/me` 查询已绑定身份，未提供员工、`FEISHU` 外部身份、
+角色或楼宇权限的创建、绑定或同步接口。真实飞书联调需要后端负责人提供受控的导入/同步
+流程或管理 API；本项目不得直接写 MySQL 绕过该边界。
+
+## Task 2 实施说明
+
+- 通知路径继续由环境变量配置；`/internal/notifications` 仅是开发默认值。
+- 生产容器未注册正式业务 Notification Renderer，等待事件与 Payload Schema 冻结。
+- `MemoryNotificationDeliveryStore` 仅允许 development/test，production 会拒绝；
+  生产级持久化实现仍待选择。
+- `MemoryEventDedupStore` 是单进程基础实现，不具备生产级跨实例去重能力。
+- 当前错误 JSON 沿用 FastAPI 结构，最终响应格式仍待联调冻结。
+## Task 3 联调待确认
+
+- V1.5 仍未提供本任务七个接口的完整响应 JSON Schema；当前采用任务所需最小严格 DTO，
+  接入真实后端前需以 OpenAPI/响应样例逐字段确认。
+- 正式楼长通知 `event_type` 与 payload Schema 尚未冻结，因此 Task 3 未注册生产
+  Notification Renderer，也不会绕过 Outbox 主动通知楼长。
+- `allowed_actions` 的实际完整枚举仍需由后端 OpenAPI 冻结；当前严格支持需求人流程使用的
+  `UPDATE_APPLICANT_FIELDS`、`SUBMIT_REVIEW`、`RESUBMIT_REVIEW`。
+- 驳回原因字段是否为 `rejection_reason` 仍需真实 Schema 确认；当前为可选最小字段，
+  缺失时卡片不编造原因。
+## Task 4 联调待确认
+
+- 三个楼长写接口的完整响应 JSON Schema 仍需以后端 OpenAPI 或真实样例确认。
+- `proposed_supplier_id` 在任务文件中列出，但契约摘要冻结字段清单未列出。
+- `review_record` 嵌套结构及 `review_status` 返回位置尚未冻结。
+- `allowed_actions` 中三个楼长动作的精确编码仍需后端确认。
+- 正式 Outbox 通知事件类型及 Payload 仍未冻结。
+
+## Task 5 联调待确认
+
+- 供应商列表、详情、创建和采购字段保存的完整响应 JSON Schema 仍需以后端 OpenAPI
+  或真实联调样例逐字段确认。
+- `SUPPLIER_MATCH_CONFLICT` 的候选供应商具体承载位置和 Schema 尚未冻结；当前客户端
+  不会自动合并，待后端冻结后再渲染冲突候选确认卡。
+- 后端对不同采购员角色返回完整或脱敏银行账号的精确字段标志尚未冻结；当前采用
+  `bank_account_masked` 最小严格字段，确认卡始终二次脱敏。
+- 采购字段 `missing_fields` 的完整必填清单、`purchased_at` 的时区约束及供应商创建
+  必填字段仍需真实契约确认。
+- 采购员 `allowed_actions` 三个动作的精确编码及正式 Outbox 通知事件 Payload 尚未冻结。
+
+## Task 6 联调待确认
+
+- `warehouse-fields` 与 `complete` 的完整响应 JSON Schema 仍需以后端 OpenAPI 或真实
+  联调样例逐字段确认。
+- 仓库字段保存后的 `missing_fields` 顺序和 `allowed_actions` 精确编码尚未冻结。
+- `completed_at` 是否始终必返、时区格式及重复 action token 的成功/错误响应形态尚未冻结。
+- COMPLETED 事件的正式 Outbox `event_type` 与需求人、楼长、采购员通知 Payload 尚未冻结。
+
+## Task 7 外部阻塞
+
+- 正式通知 `event_type` 与 Payload Schema 仍未冻结，因此没有创造生产 Renderer；
+ 业务状态 E2E 已完成，通知链仍只允许后端 Outbox 调用通知网关。
+- 未提供可用本地后端地址、四角色测试账号及隔离测试数据，因此未执行真实 OpenAPI 或
+ 真实写入 smoke；自动验收使用严格 Fake/HTTP Contract。
+- 通知网关生产持久化幂等方案仍未冻结，内存 Store 继续只允许 development/test。
+
+## Task 9 契约差异与待确认
+
+- `/api/v1/requirements` 当前没有设备名或业务时间过滤参数。Agent 查询先使用
+  `/api/v1/purchase-records` 的可用过滤条件，并在需要业务节点时间时读取单据 timeline
+  做应用层确认；不会把 `created_at` 冒充提交、审批或完成时间。
+- 仓库保存契约当前只支持 `warehouse_location`、`received_quantity` 和 `receipt_remark`。
+  `received_at` 与 `acceptance_result` 不会被 Agent 猜测或写入，等待后端冻结字段。
+- 采购历史推荐响应没有完整供应商主数据或税率证据。精确供应商字段只来自供应商详情；
+  历史税率只作为推荐，并通过历史需求详情快照解析，不能标记为精确值。
+- `REQUIREMENT_PENDING_PURCHASE` 主动预填复用后端 Outbox 通知。预填失败会降级为普通
+  待办通知，不重试业务动作；生产通知幂等存储方案仍沿用既有待确认项。

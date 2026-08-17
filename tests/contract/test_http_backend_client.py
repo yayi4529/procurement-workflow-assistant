@@ -63,10 +63,13 @@ async def test_get_current_user_contract_and_unknown_role_rejection() -> None:
     requests: list[httpx.Request] = []
     data = {
         "employee_id": 7,
+        "employee_no": "TEST-E007",
         "name": "张三",
         "mobile": None,
         "status": "ACTIVE",
-        "roles": [{"role_code": "APPLICANT", "role_name": "需求人"}],
+        "platform_type": "FEISHU",
+        "platform_user_id": "ou_test",
+        "roles": [{"role_id": 1, "role_code": "APPLICANT", "role_name": "需求人"}],
         "buildings": [
             {"building_id": 1, "building_name": "一号楼", "is_primary": True},
             {"building_id": 2, "building_name": "二号楼", "is_primary": False},
@@ -87,7 +90,13 @@ async def test_get_current_user_contract_and_unknown_role_rejection() -> None:
     assert user.mobile is None
     await raw_client.aclose()
 
-    data["roles"] = [{"role_code": "LEGACY_REQUESTER"}]
+    data["roles"] = [
+        {
+            "role_id": 99,
+            "role_code": "LEGACY_REQUESTER",
+            "role_name": "legacy",
+        }
+    ]
     client, raw_client = make_client(handler)
     with pytest.raises(BackendProtocolError):
         await client.get_current_user(identity=identity())
@@ -120,17 +129,15 @@ async def test_agent_conversation_endpoint_contracts() -> None:
     responses: list[object] = [
         {
             "conversation_id": 10,
-            "current_action": "CARD_HELP",
             "status": "ACTIVE",
-            "created_at": NOW,
-            "updated_at": NOW,
+            "purchase_request_id": None,
+            "redis_state_exists": True,
         },
         {"message_id": 11, "created_at": NOW, "duplicate": False},
         {
             "items": [
                 {
                     "message_id": 11,
-                    "conversation_id": 10,
                     "external_message_id": "om_1",
                     "sender_type": "USER",
                     "content": "帮助",
@@ -143,11 +150,17 @@ async def test_agent_conversation_endpoint_contracts() -> None:
         },
         {
             "conversation_id": 10,
-            "expires_in_seconds": 259200,
             "purchase_request_id": None,
             "current_action": "CARD_HELP",
+            "collected_data": {},
+            "missing_fields": [],
+            "pending_field": None,
+            "awaiting_confirmation": False,
+            "recent_messages": [],
+            "last_recommendations": [],
+            "restored_from_snapshot": False,
         },
-        {"conversation_id": 10, "expires_in_seconds": 259200, "updated_at": NOW},
+        {"saved": True, "expires_in_seconds": 259200},
         {
             "snapshot_id": 3,
             "conversation_id": 10,
@@ -190,6 +203,7 @@ async def test_agent_conversation_endpoint_contracts() -> None:
     )
     assert write.duplicate is False
     assert page.items[0].content == "帮助"
+    assert page.items[0].conversation_id == 10
     assert completion.redis_state_deleted is True
     assert [(r.method, r.url.path) for r in requests] == [
         ("POST", "/api/v1/agent/conversations/active"),
@@ -209,6 +223,38 @@ async def test_invalid_pagination_is_rejected_before_http() -> None:
     client, raw_client = make_client(lambda request: httpx.Response(200, json=envelope({})))
     with pytest.raises(ValueError):
         await client.list_agent_messages(identity=identity(), conversation_id=1, page_size=201)
+    await raw_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_agent_message_direct_external_id_lookup_contract() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=envelope(
+                {
+                    "message_id": 7,
+                    "external_message_id": "assistant:om-old",
+                    "sender_type": "AGENT",
+                    "content": "persisted reply",
+                    "created_at": NOW,
+                }
+            ),
+        )
+
+    client, raw_client = make_client(handler)
+    message = await client.get_agent_message_by_external_id(
+        identity=identity(),
+        conversation_id=10,
+        external_message_id="assistant:om-old",
+    )
+    assert message is not None
+    assert message.content == "persisted reply"
+    assert requests[0].url.path == ("/api/v1/agent/conversations/10/messages/by-external-id")
+    assert requests[0].url.params["external_message_id"] == "assistant:om-old"
     await raw_client.aclose()
 
 

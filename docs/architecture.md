@@ -1,5 +1,11 @@
 # 架构设计 V2.1
 
+## 真实飞书 Fake 调试拓扑
+
+`PROCUREMENT_BACKEND_MODE=fake` 将所有应用服务连接到同一进程内
+`FakeBackendClient`，同时保留真实 `FeishuChannelClient`。Fake 用户按真实 open_id
+映射；模式选择只存在于 bootstrap。该模式禁止 production、多 worker 和 reload。
+
 ## 1. 三条入口
 
 ```text
@@ -46,3 +52,90 @@ NotificationGatewayHandler
 - Agent 不直接访问 MySQL/Redis；
 - 正式事实始终从后端加载；
 - 后端通知失败由 Outbox 重试。
+
+## 5. Task 2 实现调用链
+
+```text
+POST 飞书 Webhook
+→ FeishuWebhookParser
+→ EventDedupStore
+→ BaseMessageHandler / BaseCardInteractionHandler
+→ ChannelClient
+→ Feishu SDK Adapter
+```
+
+```text
+Backend notification_outbox worker
+→ POST Notification Gateway
+→ Bearer/Header 校验
+→ NotificationDeliveryStore
+→ NotificationRendererRegistry
+→ ChannelClient
+→ Feishu SDK Adapter
+```
+
+平台 JSON 和 `lark_oapi` 只存在于 `adapters/feishu`。Domain 和 Application 不依赖
+FastAPI、httpx 或飞书 SDK。通知链路不持有 `BackendClient`，失败不会重新执行采购动作。
+## Task 3 需求人调用链
+
+```text
+飞书卡片回调
+→ EventDedupStore
+→ ApplicantActionRouter
+→ ApplicantWorkflowService
+→ BackendClient
+→ ApplicantCardFactory
+→ ChannelClient.update_interaction
+```
+
+该链路不依赖 LLM、Agent Session 或具体飞书 SDK。正式提交成功后仅更新原卡片，
+不根据业务响应主动通知楼长。
+## Task 4 楼长调用链
+
+```text
+飞书楼长卡片回调
+→ BuildingManagerActionRouter
+→ BuildingManagerWorkflowService
+→ BackendClient
+→ BuildingManagerCardFactory
+→ ChannelClient.update_interaction
+```
+
+正式动作前重新读取详情；客户端不直接发送需求人或采购员通知。
+
+## Task 5 采购员调用链
+
+```text
+飞书采购员卡片回调
+→ PurchaserActionRouter
+→ PurchaserWorkflowService
+→ BackendClient
+→ PurchaserCardFactory
+→ ChannelClient.update_interaction
+```
+
+开始采购、保存采购字段和提交仓库前均重新读取后端详情。供应商和黑名单信息只采用
+后端裁剪结果，实际总价只展示后端响应；成功后不直接通知仓库管理员。
+
+## Task 6 仓库管理员调用链
+
+```text
+飞书仓库卡片回调
+→ WarehouseActionRouter
+→ WarehouseWorkflowService
+→ BackendClient
+→ WarehouseCardFactory
+→ ChannelClient.update_interaction
+```
+
+准备完成前重新读取后端详情并以后端 `fields_complete`、`allowed_actions` 和最新 version
+为准。正式完成不直接通知需求人、楼长或采购员。
+
+## Task 7 无 LLM 封板
+
+`PROCUREMENT_LLM_ENABLED=false` 是正式流程默认值。当前容器没有 LLM 或
+Assistant Orchestrator 构造路径，四角色卡片 Application Service 仅依赖
+`BackendClient`，不需要 OpenAI 配置或 Agent Session。
+
+永久测试保护四角色 card/application 不导入 LLM 或 Agent Session、正式动作不直接发
+跨角色通知，以及 `NotificationGatewayService` 不依赖业务流转接口。

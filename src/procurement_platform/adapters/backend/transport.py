@@ -43,11 +43,16 @@ class SignedBackendTransport:
         if not path.startswith("/"):
             raise ValueError("path must start with '/'")
         headers = self._signer.sign(method, path, identity)
+        params = (
+            {key: value for key, value in query.items() if value is not None}
+            if query is not None
+            else None
+        )
         try:
             response = await self._client.request(
                 method.upper(),
                 f"{self._base_url}{path}",
-                params=query,
+                params=params,
                 json=json_body,
                 headers=headers,
                 timeout=self._timeout,

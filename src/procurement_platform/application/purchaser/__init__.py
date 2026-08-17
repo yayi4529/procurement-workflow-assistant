@@ -1,0 +1,1 @@
+"""Deterministic purchaser card workflow."""

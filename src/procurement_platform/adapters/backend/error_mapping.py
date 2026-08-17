@@ -3,7 +3,14 @@ from procurement_platform.domain.errors import (
     BackendApplicationError,
     BackendUnavailableError,
     ConcurrentModificationError,
+    DuplicateOperationError,
+    InvalidHandlerError,
+    InvalidStatusError,
+    MissingRequiredFieldsError,
+    NoHandlerCandidateError,
     PermissionDeniedError,
+    RequirementNotFoundError,
+    RequirementNotOwnedError,
     SessionExpiredError,
     SessionNotFoundError,
     UnknownBackendError,
@@ -16,20 +23,13 @@ _PERMISSION_CODES = {
     "ROLE_NOT_FOUND",
     "PERMISSION_DENIED",
     "BUILDING_NOT_ALLOWED",
-    "REQUIREMENT_NOT_OWNED",
-    "INVALID_HANDLER",
-    "NO_HANDLER_CANDIDATE",
 }
 _VALIDATION_CODES = {
-    "REQUIREMENT_NOT_FOUND",
-    "INVALID_STATUS",
     "INVALID_TRANSITION",
-    "MISSING_REQUIRED_FIELDS",
     "SUPPLIER_NOT_FOUND",
     "SUPPLIER_MATCH_CONFLICT",
     "SUPPLIER_BLACKLISTED",
     "SUPPLIER_ALREADY_BLACKLISTED",
-    "DUPLICATE_OPERATION",
     "INVALID_ACTION_TOKEN",
     "VALIDATION_ERROR",
 }
@@ -54,6 +54,17 @@ def map_backend_error(
         return SessionExpiredError(code, message, trace_id)
     if code == "CONCURRENT_MODIFICATION":
         return ConcurrentModificationError(code, message, trace_id)
+    specific = {
+        "REQUIREMENT_NOT_FOUND": RequirementNotFoundError,
+        "REQUIREMENT_NOT_OWNED": RequirementNotOwnedError,
+        "INVALID_STATUS": InvalidStatusError,
+        "MISSING_REQUIRED_FIELDS": MissingRequiredFieldsError,
+        "INVALID_HANDLER": InvalidHandlerError,
+        "NO_HANDLER_CANDIDATE": NoHandlerCandidateError,
+        "DUPLICATE_OPERATION": DuplicateOperationError,
+    }
+    if code in specific:
+        return specific[code](code, message, trace_id)
     if code in _VALIDATION_CODES:
         return ValidationError(code, message, trace_id)
     if code == "INTERNAL_ERROR":

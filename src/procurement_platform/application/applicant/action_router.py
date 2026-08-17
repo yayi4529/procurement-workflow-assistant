@@ -1,0 +1,116 @@
+from uuid import UUID
+
+from procurement_platform.application.applicant.workflow_service import (
+    ApplicantWorkflowService,
+)
+from procurement_platform.domain.enums import PlatformType
+from procurement_platform.domain.identity import PlatformIdentity
+from procurement_platform.domain.inbound_event import CardInteractionEvent
+from procurement_platform.domain.interaction import InteractionView
+from procurement_platform.domain.json_types import JsonObject, JsonValue
+from procurement_platform.domain.requirement import ApplicantFieldsPatch
+
+
+def _integer(value: JsonValue | None, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError(f"{name} is required")
+    return int(value)
+
+
+def _form_scalar(value: JsonValue) -> JsonValue:
+    if isinstance(value, dict):
+        selected = value.get("selected_option")
+        if isinstance(selected, dict) and "value" in selected:
+            return selected["value"]
+        if "value" in value:
+            return value["value"]
+        if "text" in value:
+            return value["text"]
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if stripped else None
+    return value
+
+
+def _integer_list(value: JsonValue | None) -> tuple[int, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(_integer(item, "requirement_id") for item in value)
+
+
+def _applicant_patch(values: JsonObject) -> ApplicantFieldsPatch:
+    names = ApplicantFieldsPatch.model_fields
+    return ApplicantFieldsPatch.model_validate(
+        {name: _form_scalar(values[name]) for name in names if name in values}
+    )
+
+
+class ApplicantActionRouter:
+    def __init__(self, workflow: ApplicantWorkflowService) -> None:
+        self._workflow = workflow
+
+    async def route(self, event: CardInteractionEvent) -> InteractionView:
+        identity = PlatformIdentity.create(
+            platform_type=PlatformType.FEISHU,
+            platform_user_id=event.external_user_id,
+        )
+        value = event.action_value
+        action = event.action_id
+        if action == "applicant.home":
+            return await self._workflow.home()
+        if action == "applicant.start_new":
+            return await self._workflow.start_new(identity)
+        if action == "applicant.create_draft":
+            raw = event.form_values.get("building_id", value.get("building_id"))
+            return await self._workflow.create_draft(identity, _integer(raw, "building_id"))
+        if action in {"applicant.open", "applicant.refresh"}:
+            return await self._workflow.open(
+                identity,
+                _integer(value.get("requirement_id"), "requirement_id"),
+                return_requirement_ids=_integer_list(value.get("return_requirement_ids")),
+            )
+        if action == "applicant.history_back":
+            return await self._workflow.history_listing(
+                identity, _integer_list(value.get("requirement_ids"))
+            )
+        if action == "applicant.save":
+            return await self._workflow.save(
+                identity,
+                _integer(value.get("requirement_id"), "requirement_id"),
+                _integer(value.get("expected_version"), "expected_version"),
+                _applicant_patch(event.form_values),
+            )
+        if action in {"applicant.prepare_submit", "applicant.prepare_resubmit"}:
+            raw_version = value.get("expected_version")
+            return await self._workflow.prepare(
+                identity,
+                _integer(value.get("requirement_id"), "requirement_id"),
+                expected_version=(
+                    _integer(raw_version, "expected_version") if raw_version is not None else None
+                ),
+                fields=_applicant_patch(event.form_values),
+                resubmit=action.endswith("resubmit"),
+            )
+        if action == "applicant.confirm_handler":
+            employee = event.form_values.get("assigned_to_employee_id")
+            return await self._workflow.confirm_handler(
+                identity,
+                _integer(value.get("requirement_id"), "requirement_id"),
+                _integer(employee, "assigned_to_employee_id"),
+                resubmit=value.get("resubmit") is True,
+            )
+        if action in {"applicant.confirm_submit", "applicant.confirm_resubmit"}:
+            token = value.get("action_token")
+            if not isinstance(token, str):
+                raise ValueError("action_token is required")
+            return await self._workflow.confirm(
+                identity,
+                _integer(value.get("requirement_id"), "requirement_id"),
+                _integer(value.get("expected_version"), "expected_version"),
+                _integer(value.get("assigned_to_employee_id"), "assigned_to_employee_id"),
+                UUID(token),
+                resubmit=action.endswith("resubmit"),
+            )
+        if action == "applicant.list":
+            return await self._workflow.listing(identity, _integer(value.get("page", 1), "page"))
+        raise ValueError("unsupported applicant action")

@@ -1,102 +1,160 @@
 # Procurement Workflow Assistant
 
-基于飞书卡片、智能助手和平台无关通知网关的采购流程自动化平台。
+飞书采购流程助手的单仓库工程，包含：
 
-## 核心定位
+- `src/`：飞书 Webhook、正式卡片流程、可选文本 Agent 和 HTTP Backend Adapter。
+- `backend/`：采购业务 FastAPI 后端、MySQL/Redis、Agent Session 和通知 Outbox。
+- `tests/`：Agent、卡片、集成、契约和安全回归测试。
+
+正式采购动作始终由确定性的飞书卡片完成。文本 Agent 只负责查询、解释、推荐和草稿辅助，
+不会直接提交、驳回、开始采购或确认完成。
+
+## Runtime topology
 
 ```text
-正式流程：飞书卡片 → 后端
-智能辅助：自然语言 → Agent → 后端查询或预填
+Feishu → Agent service :8000 → HMAC HTTP → Procurement backend :8001
+                                               ├─ MySQL :3307
+                                               └─ Redis :6380
 ```
 
-即使 LLM 不可用，四角色正式流程仍必须可运行。
+| Service | URL |
+|---|---|
+| Agent liveness | `http://127.0.0.1:8000/health/live` |
+| Agent readiness | `http://127.0.0.1:8000/health/ready` |
+| Feishu webhook | `http://127.0.0.1:8000/webhooks/feishu` |
+| Backend health | `http://127.0.0.1:8001/health` |
+| Backend readiness | `http://127.0.0.1:8001/ready` |
+| Backend OpenAPI | `http://127.0.0.1:8001/openapi.json` |
 
-## 四个角色
+## Architecture
 
-- 需求人 `APPLICANT`
-- 楼长 `BUILDING_MANAGER`
-- 采购员 `PURCHASER`
-- 仓库管理员 `WAREHOUSE_MANAGER`
+```text
+AssistantService → ContextBuilder → CapabilityPolicy → ProcurementAgent
+→ AssistantRuntime → CapabilityRegistry → Domain Capability → BackendClient HTTP Port
+```
 
-## 数据所有权
+正式动作使用独立链路：
 
-- 飞书通讯录：身份、组织和楼宇上游来源；
-- 后端：正式业务事实；
-- MySQL：正式业务数据；
-- Redis：Agent 实时会话；
-- 本项目：飞书交互、卡片、智能助手和后端 API 适配。
+```text
+Feishu Card → Action Router → Application Service → Backend
+```
 
-## 入口
+`BusinessFacts` 从后端事实重建；`AgentTaskState` 和 `ReferenceStore` 通过后端 Agent Session
+跨 worker 持久化。角色只决定能力权限并集，不再切换 RoleAgent。
 
-### 卡片入口
+当前文本能力包括采购需求诊断、历史采购查询、产品/供应商比较、供应商资料查询、推荐、
+状态和时间线查询，以及各角色草稿字段辅助。所有 LLM-visible Capability 都不执行正式
+状态流转，并且每轮最多执行一个 MUTATE 草稿操作。
 
-负责填写、保存、确认和状态流转，不调用 LLM。
+## Requirements
 
-### Agent 入口
+- Python 3.11+（后端推荐 Python 3.12）
+- Docker Desktop
+- MySQL 8 和 Redis 7（由 `backend/compose.yaml` 提供）
+- 可选：真实飞书应用、OpenAI-compatible LLM endpoint、Cloudflare Tunnel
 
-负责查询、预填、流程说明、历史总结和卡片填写帮助。
+## Quick start
 
-## 文档
+### Start backend
 
-优先阅读：
-
-1. `AGENTS.md`
-2. `CODEX_PROJECT_SPEC.md`
-3. `docs/architecture.md`
-4. `docs/card-agent-interaction.md`
-5. `docs/backend-contract.md`
-6. `docs/assistant-session.md`
-7. `docs/development-roadmap.md`
-8. `docs/testing-strategy.md`
-9. `docs/open-decisions.md`
-
-
-## V1.5 联调关键点
-
-- 采购后端请求使用 HMAC 身份网关签名；
-- Agent 会话通过后端 HTTP 管理 Redis；
-- 跨角色通知由后端 Outbox 异步调用本项目通知网关；
-- 本项目不得在业务接口成功后再次主动推送同一通知；
-- 契约差异见 `docs/backend-v1.5-delta.md`。
-
-## Task 1 已实现
-
-- `src` layout、强类型 Settings、身份/用户/Agent 会话领域模型；
-- `GatewayIdentitySigner` 与 `SignedBackendTransport`；
-- `BackendClient` Protocol、`HttpBackendClient`、`FakeBackendClient`；
-- 统一后端 envelope 解析、错误映射、trace id 保留；
-- `/health/live`、`/health/ready`；
-- `/api/v1/users/me` 与全部 Agent 会话接口适配。
-
-本阶段不包含飞书 SDK、通知网关、LLM、卡片或四角色正式采购流程，也不直接访问
-MySQL/Redis。
-
-## 本地开发
-
-Python 3.11+ 环境中安装：
-
-```bash
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
+python scripts\bootstrap_env.py
+docker compose --env-file .env.docker up -d
+python -m alembic upgrade head
+\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --workers 1
 ```
 
-复制 `.env.example` 到本地 `.env` 或导出其中变量。必须为
-`PROCUREMENT_IDENTITY_GATEWAY_SECRET` 设置开发密钥；不要提交或记录真实密钥。
+### Start Agent
 
-运行检查：
+Copy `.env.example` or an existing local environment file to `.env`, then configure the backend URL,
+HMAC secret and optional LLM credentials.
 
-```bash
+```powershell
+cd ..
+.\scripts\start_http_integration.ps1 `
+  -EnvFile .env `
+  -BackendBaseUrl http://127.0.0.1:8001 `
+  -HostAddress 0.0.0.0 `
+  -Port 8000 `
+  -EnableLlm
+```
+
+For Feishu + Fake Backend development:
+
+```powershell
+.\scripts\start_feishu_fake.ps1 -EnvFile .env.feishu-fake -HostAddress 0.0.0.0 -Port 8000
+```
+
+Verify:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8001/health
+Invoke-RestMethod http://127.0.0.1:8001/ready
+Invoke-RestMethod http://127.0.0.1:8000/health/live
+Invoke-RestMethod http://127.0.0.1:8000/health/ready
+```
+
+## Feishu public webhook
+
+For temporary development exposure:
+
+```powershell
+.\scripts\start_feishu_tunnel.ps1 -Provider cloudflared -LocalUrl http://127.0.0.1:8000
+```
+
+In the Feishu developer console, use the generated HTTPS URL plus `/webhooks/feishu`:
+
+```text
+https://YOUR-QUICK-TUNNEL.trycloudflare.com/webhooks/feishu
+```
+
+Quick Tunnels are temporary; use a named tunnel for long-running environments.
+
+## Production safety
+
+Production must use distributed Redis persistence:
+
+```dotenv
+PROCUREMENT_EVENT_DEDUP_STORE_BACKEND=redis
+PROCUREMENT_CONVERSATION_LOCK_BACKEND=redis
+PROCUREMENT_NOTIFICATION_DELIVERY_STORE_BACKEND=redis
+PROCUREMENT_REDIS_URL=redis://user:password@host:6379/0
+```
+
+Production rejects memory deduplication, local conversation locks, Fake Backend, missing Redis URL,
+and development identity probing. See [docs/runbook.md](docs/runbook.md).
+
+Never commit Feishu secrets, `IDENTITY_GATEWAY_SECRET`, LLM keys, Redis passwords, notification
+tokens, `.env`, `.env.docker`, `.venv`, logs or generated outputs.
+
+## Testing and CI
+
+```powershell
 ruff format --check .
 ruff check .
 mypy src
 pytest -q
+git diff --check
 ```
 
-启动最小服务（`create_app` 会从环境变量加载 Settings）：
+GitHub Actions runs format, lint, source type checks, unit, integration, contract and deterministic
+Agent evals. Live-model evals are manual/release-only. See [docs/eval-baseline.md](docs/eval-baseline.md).
 
-```bash
-uvicorn --factory procurement_platform.interfaces.http.app:create_app
-```
+## Documentation
 
-测试应用服务可以注入 `FakeBackendClient(CurrentUser(...))`，再构造
-`ApplicationContainer(settings, fake)`；Fake 支持活动会话、消息幂等与分页、状态、
-快照、完成、调用计数和按方法错误注入。
+- [Data Center Asset Domain](docs/data-center-asset-domain.md)
+- [Production Runbook](docs/runbook.md)
+- [Architecture](docs/architecture.md)
+- [Agent Architecture](docs/agent-architecture.md)
+- [Backend Contract](docs/backend-contract.md)
+- [Testing Strategy](docs/testing-strategy.md)
+- [No-LLM E2E Acceptance](docs/no-llm-e2e-acceptance.md)
+- [Feishu Fake Debugging](docs/feishu-fake-debugging.md)
+- [Backend README](backend/README.md)
+
+The backend remains independently runnable from `backend/`, while this GitHub repository is the
+single integrated project.

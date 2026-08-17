@@ -31,16 +31,16 @@ class RecentVisibleMessage(SessionModel):
 
 class AgentConversation(SessionModel):
     conversation_id: int
-    current_action: str
+    current_action: str = "ASSISTANT_CHAT"
     status: AgentConversationStatus
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class AgentMessage(SessionModel):
     message_id: int
     conversation_id: int
-    external_message_id: str
+    external_message_id: str | None
     sender_type: AgentMessageSender
     content: str
     created_at: datetime
@@ -75,13 +75,13 @@ class AgentSessionStateUpdate(SessionModel):
 
 class AgentSessionState(AgentSessionStateUpdate):
     conversation_id: int
-    expires_in_seconds: int = Field(gt=0)
+    restored_from_snapshot: bool = False
+    expires_in_seconds: int | None = Field(default=None, gt=0)
 
 
 class AgentStateSaveResult(SessionModel):
-    conversation_id: int
+    saved: bool = True
     expires_in_seconds: int = Field(gt=0)
-    updated_at: datetime
 
 
 class AgentSessionSnapshot(SessionModel):

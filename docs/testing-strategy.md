@@ -1,5 +1,11 @@
 # 测试策略 V2.1
 
+## Feishu + Fake 调试支撑
+
+自动化覆盖运行模式生产保护、严格 Fake 种子、多 open_id 身份隔离、身份探针、通知幂等
+和日志脱敏。真实飞书权限、发布、Webhook 与四账号流转按照
+`docs/feishu-fake-debugging.md` 人工验收，不能用本地测试冒充外部平台验证。
+
 ## 架构
 
 - LLM 不可用，四角色卡片流程可用；
@@ -45,6 +51,10 @@
 - payload 校验；
 - 不调用正式业务接口。
 
+Task 2 另覆盖 Challenge、私聊文本、群聊忽略、空文本、错误 Token、
+`foundation.echo`、事件去重与失败重试、Interaction 严格模型与渲染、通知 SHA-256
+指纹、投递幂等、自定义路由以及 Fake Channel 无网络链路。
+
 ## 字段规则
 
 - brand/model 可选；
@@ -54,3 +64,61 @@
 - received_quantity 可小于/等于/大于；
 - 少收时 receipt_remark 必填；
 - 黑名单仅 COMPLETED 采购单。
+## Task 3 测试
+
+新增严格 BackendClient 契约测试与 Fake 驱动的无 LLM 端到端测试，覆盖字符串数量、
+显式 null、可选 brand/model、角色/楼宇、候选楼长、首次提交、重新提交、版本递增及
+调用端点隔离。架构约束继续禁止应用层依赖 httpx、飞书 SDK、LLM、MySQL 或 Redis。
+## Task 4 测试
+
+覆盖审核字段部分更新、显式 null、字符串金额、后端总价、合同条件必填、0/1/多候选
+分支、版本冲突、稳定 action token、重复点击、驳回和提交采购员；正式链路不写 Agent
+会话且不直接发送跨角色通知。
+
+## Task 5 测试
+
+覆盖新增 HTTP 接口的方法、路径、Query、JSON 和签名传输链路；覆盖空供应商关键词、
+供应商候选与详情、敏感账号 repr、字符串金额和税率、后端总价、档案同步默认否、
+仓库管理员候选、`expected_version`、稳定 `action_token` 及从 PENDING_PURCHASE 到
+PENDING_WAREHOUSE 的无 LLM 集成链路。
+
+## Task 6 测试
+
+覆盖 `warehouse-fields` 与 `complete` 的方法、路径和 JSON 契约；覆盖字符串 Decimal
+数量、零/负数、等量、多收、少收无备注、少收补备注、部分更新、显式 null、字段完整性、
+current_handler 清空和从 PENDING_WAREHOUSE 到 COMPLETED 的无 LLM 集成链路。
+
+## Task 7 测试
+
+- 显式解析 `PROCUREMENT_LLM_ENABLED=false`，无 OpenAI 配置时容器可构建；
+- 同一 Fake 后端切换后端返回的四角色身份，覆盖驳回、原单重提和完整状态链；
+- 断言正式 E2E 没有调用任一 Agent Session 接口；
+- 架构测试禁止正式卡片应用模块导入 LLM、OpenAI 或 Agent Session；
+- 通知网关不得依赖 `BackendClient` 或任何业务流转方法；
+- Task 2～6 回归继续覆盖事件/通知去重、版本冲突、旧卡片刷新、权限和字段完整性。
+# Task 04 regression invariants
+
+Correctness/performance tests use deterministic counts rather than wall-clock thresholds:
+
+- 100 historical purchase records produce one list call and zero per-record requirement-detail
+  calls; non-completed and mismatched-profession records are excluded.
+- supplier comparison performs one aggregate recommendation read and never recommends a blocked
+  candidate;
+- unsupported LLM-visible arguments are absent from strict schemas;
+- stable entity references do not collide for null display fields or distinct backend IDs;
+- immediate, old (more than 50 later messages), and concurrent duplicate deliveries execute at
+  most one logical Agent turn;
+- the OpenAI-compatible adapter has deterministic tests for client reuse, close, bounded retries,
+  permanent failures, tool-choice fallback, and invalid responses;
+- production container/service imports remain independent from legacy RoleAgent routing.
+
+The unit CI job measures `procurement_platform` coverage and enforces the measured-baseline guard
+of 80%. Formal workflow transitions remain outside the text Agent in every test environment.
+
+## Task05 asset tests
+
+Task05 adds Backend model/seed/constraint and OpenAPI tests; strict HTTP contract tests for JSON,
+nullable model, aliases, stable refs, and one-round-trip context; FakeBackend parity tests;
+deterministic resolver tests for exact code/name/alias, building filtering, ambiguity and missing
+matches; and grounding tests proving missing model/components/relations are not invented. Existing
+formal procurement regression and the 80% source coverage gate remain unchanged.
