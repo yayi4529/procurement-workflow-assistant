@@ -142,6 +142,13 @@ Invoke-WebRequest http://127.0.0.1:8001/openapi.json -OutFile .local\backend-ope
 
 字段级请求和响应以运行时 OpenAPI 为准。不要用旧文档、Fake 模型或任意 JSON 覆盖真实契约。
 
+## Task06 多采购项接口
+
+Task06-A 新增申请项整体替换、逐项评审、逐项采购和追加收货接口，并在申请详情返回完整
+履约图。正式流程继续使用七种既有状态；收货累计量、是否完成等结果由后端实时派生。
+数据库升级采用连续的 expand/backfill 与 constrain 两个 Alembic revision。完整规则见根项目
+`docs/task06-multi-item-procurement-model.md`。
+
 ## Security
 
 禁止提交或记录：

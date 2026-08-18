@@ -1342,3 +1342,29 @@ td .button {
     padding: 28px 24px 46px;
   }
 }
+
+.asset-layout { grid-template-columns: minmax(420px, .8fr) minmax(560px, 1.2fr); align-items: start; }
+.asset-warning { margin-bottom: 18px; }
+.asset-toolbar { align-items: end; flex-wrap: wrap; }
+.asset-toolbar label { min-width: 150px; flex: 1; }
+.asset-list { display: grid; gap: 8px; max-height: 660px; overflow: auto; }
+.asset-row { display: grid; grid-template-columns: 42px 1fr auto; align-items: center; gap: 12px; text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 12px; cursor: pointer; color: inherit; }
+.asset-row:hover, .asset-row.active { border-color: var(--accent); background: var(--accent-soft); }
+.asset-row-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: #e7f0ff; color: #315ea8; font-weight: 700; }
+.asset-row-main, .asset-row-side { display: grid; gap: 4px; }
+.asset-row-main small, .asset-row-side small, .reference-row span { color: var(--muted); font-size: 12px; }
+.asset-row-side { justify-items: end; }
+.asset-reference-panel { margin-top: 18px; }
+.asset-reference-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; }
+.asset-reference-grid h3 { margin: 0 0 10px; }
+.reference-list { display: grid; gap: 7px; max-height: 260px; overflow: auto; }
+.reference-row { display: flex; width: 100%; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid transparent; border-bottom-color: var(--line); background: transparent; color: inherit; text-align: left; }
+.category-row { cursor: pointer; border-radius: 8px; }
+.category-row:hover, .category-row.active { border-color: var(--accent); background: var(--accent-soft); }
+.reference-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-row span { white-space: nowrap; }
+.asset-json { margin: 0; max-height: 180px; overflow: auto; background: #f6f8fb; border-radius: 8px; padding: 12px; font-size: 12px; }
+.mini-table { display: grid; gap: 6px; }
+.mini-row { display: flex; justify-content: space-between; gap: 16px; padding: 9px 11px; border-radius: 8px; background: #f8fafc; font-size: 13px; }
+.mini-row span { color: var(--muted); text-align: right; }
+@media (max-width: 900px) { .asset-layout, .asset-reference-grid { grid-template-columns: 1fr; } }

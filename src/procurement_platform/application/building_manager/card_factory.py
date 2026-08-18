@@ -1,4 +1,7 @@
+# ruff: noqa: RUF001
+
 from procurement_platform.application.card_values import quantity_text
+from procurement_platform.application.multi_item_presenter import multi_item_markdown
 from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.enums import RequirementStatus
 from procurement_platform.domain.interaction import (
@@ -56,7 +59,40 @@ class BuildingManagerCardFactory:
                 )
             )
         )
+        if detail.items:
+            elements.append(MarkdownBlock(markdown=multi_item_markdown(detail)))
         if detail.status is RequirementStatus.PENDING_REVIEW:
+            for item in detail.items:
+                if not item.is_active:
+                    continue
+                existing = next(
+                    (
+                        value
+                        for value in detail.review_items
+                        if value.request_item_id == item.request_item_id
+                    ),
+                    None,
+                )
+                elements.extend(
+                    (
+                        TextInput(
+                            name=f"review_supplier_{item.request_item_id}",
+                            label=f"{item.item_no}. {item.item_name} 建议供应商ID（选填）",
+                            default_value=(
+                                str(existing.proposed_supplier_id)
+                                if existing and existing.proposed_supplier_id
+                                else None
+                            ),
+                            required=False,
+                        ),
+                        TextInput(
+                            name=f"review_price_{item.request_item_id}",
+                            label=f"{item.item_no}. {item.item_name} 预计单价（选填）",
+                            default_value=existing.estimated_unit_price if existing else None,
+                            required=False,
+                        ),
+                    )
+                )
             specs = (
                 (
                     "proposed_supplier_name",
@@ -94,7 +130,12 @@ class BuildingManagerCardFactory:
                 ("review_remark", "楼长备注", review.review_remark if review else None, False),
             )
             elements.extend(
-                TextInput(name=name, label=label, default_value=value, required=required)
+                TextInput(
+                    name=name,
+                    label=label,
+                    default_value=value,
+                    required=required and not detail.items,
+                )
                 for name, label, value, required in specs
             )
             elements.extend(
@@ -106,7 +147,7 @@ class BuildingManagerCardFactory:
                             SelectOption(label="是否需要合同: 是", value="true"),
                             SelectOption(label="是否需要合同: 否", value="false"),
                         ),
-                        required=True,
+                        required=not detail.items,
                         default_value=(
                             None
                             if review is None or review.need_contract is None
@@ -116,7 +157,7 @@ class BuildingManagerCardFactory:
                     DateInput(
                         name="expected_arrival_date",
                         label="预计到货日期",
-                        required=True,
+                        required=not detail.items,
                         default_value=review.expected_arrival_date if review else None,
                     ),
                 )
@@ -128,6 +169,12 @@ class BuildingManagerCardFactory:
                     )
                 )
         actions = (
+            ActionButton(
+                action_id="building_manager.save_review_items",
+                label="保存逐项审核",
+                value={"requirement_id": detail.requirement_id, "expected_version": detail.version},
+                style="primary",
+            ),
             ActionButton(
                 action_id="building_manager.save_review_fields",
                 label="保存审核信息",

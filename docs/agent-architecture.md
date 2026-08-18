@@ -114,3 +114,16 @@ Capability Registry/Policy and BackendClient port. Stable references use Backend
 candidates produce `MULTIPLE_MATCHES`. Component and relation reads use the aggregate Backend
 context endpoint, and missing facts are represented explicitly instead of inferred by the LLM.
 These capabilities cannot mutate an asset or invoke a procurement workflow action.
+
+## Task06-B multi-item draft boundary
+
+The optional text Agent exposes `update_multi_item_draft` only to applicants. Its strict input
+supports whole-draft replacement, header changes, and add/update/remove item operations with a
+session-stable `draft_item_id`. A draft may reference a Task05 asset, but the capability first
+validates the asset through `BackendClient`; it never infers a source asset or diagnoses a fault.
+
+The capability may create or replace items on a backend `DRAFT`. It cannot submit review, approve,
+purchase, receive, complete, choose a handler, or update supplier governance. Those operations
+remain deterministic card actions using backend versions, action tokens, permissions, and current
+state. Persisted `request_item_id` values are copied back into session state so later edits retain
+item identity and do not create duplicate active rows.

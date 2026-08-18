@@ -43,6 +43,7 @@ from procurement_platform.application.assistant.capabilities.catalog import (
     DEFAULT_CAPABILITY_METADATA,
 )
 from procurement_platform.application.assistant.capabilities.drafts import (
+    UpdateMultiItemDraftCapability,
     UpdateReviewDraftCapability,
 )
 from procurement_platform.application.assistant.capabilities.intelligence import (
@@ -353,6 +354,7 @@ def _build_capability_registry(backend_client: BackendClient) -> CapabilityRegis
         GetPurchaseTimelineCapability(backend_client),
         RecommendProductsCapability(backend_client),
         UpdateApplicantDraftCapability(backend_client),
+        UpdateMultiItemDraftCapability(backend_client),
         RecommendSuppliersCapability(backend_client),
         UpdateReviewDraftCapability(backend_client),
         GetSupplierProfileCapability(backend_client),

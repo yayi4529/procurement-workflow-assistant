@@ -40,7 +40,7 @@ class Binding:
 BINDINGS = (
     Binding(90001, "APPLICANT", 1, "ou_3da4d0e3765ebe815eae094a70e0ca8d", "测试需求人"),
     Binding(90002, "BUILDING_MANAGER", 1, "ou_1b706cd21f22664d8d8543300907f8c2", "测试一号楼楼长"),
-    Binding(90003, "PURCHASER", None, "ou_ea5a26a5072babe56a67ba7f79a04cea", "测试采购员"),
+    Binding(90003, "PURCHASER", None, "ou_3aa1271accd7642d1b3f0d25adb8d7bd", "测试采购员"),
     Binding(
         90004, "WAREHOUSE_MANAGER", None, "ou_181fb1f4d15a557abca07402af468c18", "测试仓库管理员"
     ),

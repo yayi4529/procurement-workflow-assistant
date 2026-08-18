@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.domain.enums import PurchaseItemKind, RequestType
+
 DeviceType = Literal[
     "电气",
     "暖通",
@@ -118,6 +120,71 @@ class SaveWarehouseFieldsRequest(BaseModel):
     fields: WarehouseFields
 
 
+class RequestItemInput(BaseModel):
+    request_item_id: int | None = None
+    item_no: int | None = Field(default=None, gt=0)
+    item_kind: PurchaseItemKind
+    equipment_category_id: int | None = None
+    equipment_model_id: int | None = None
+    item_name: str = Field(min_length=1, max_length=200)
+    brand_snapshot: str | None = Field(default=None, max_length=150)
+    model_snapshot: str | None = Field(default=None, max_length=150)
+    quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=3)
+    unit: str = Field(min_length=1, max_length=30)
+    requires_warehouse: bool | None = None
+    item_reason: str | None = None
+    remark: str | None = None
+
+
+class ReplaceRequestItemsRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+    request_type: RequestType | None = None
+    source_asset_id: int | None = None
+    items: list[RequestItemInput] = Field(min_length=1)
+
+
+class ReviewItemInput(BaseModel):
+    request_item_id: int
+    proposed_supplier_id: int | None = None
+    supplier_contact_name: str | None = Field(default=None, max_length=100)
+    supplier_contact_info: str | None = Field(default=None, max_length=255)
+    supplier_link: str | None = Field(default=None, max_length=1000)
+    estimated_unit_price: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+    estimated_total_price: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+    need_contract: bool = False
+    contract_type: str | None = Field(default=None, max_length=100)
+    payment_method: str | None = Field(default=None, max_length=100)
+    expected_arrival_date: date | None = None
+    warranty_info: str | None = Field(default=None, max_length=255)
+    item_remark: str | None = None
+
+
+class SaveReviewItemsRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+    items: list[ReviewItemInput] = Field(min_length=1)
+
+
+class SavePurchaseItemRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+    action_token: str = Field(min_length=8, max_length=64)
+    fields: PurchaseFields
+
+
+class SubmitWarehouseRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+    assigned_to_employee_id: int | None = None
+    action_token: str = Field(min_length=8, max_length=64)
+
+
+class AppendReceiptRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+    action_token: str = Field(min_length=8, max_length=64)
+    execution_id: int
+    warehouse_location: str = Field(min_length=1, max_length=255)
+    received_quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=3)
+    receipt_remark: str | None = None
+
+
 class CurrentHandlerData(BaseModel):
     employee_id: int
     name: str
@@ -168,6 +235,12 @@ class RequirementDetailData(BaseModel):
     review_records: list[dict[str, Any]]
     purchase_execution: dict[str, Any] | None
     warehouse_receipt: dict[str, Any] | None
+    request_type: str = RequestType.PURCHASE.value
+    source_asset: dict[str, Any] | None = None
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    executions: list[dict[str, Any]] = Field(default_factory=list)
+    receipts: list[dict[str, Any]] = Field(default_factory=list)
+    request_fulfillment: dict[str, Any] = Field(default_factory=dict)
     missing_fields: list[str]
     allowed_actions: list[str]
 

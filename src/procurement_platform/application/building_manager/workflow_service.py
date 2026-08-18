@@ -20,6 +20,7 @@ from procurement_platform.domain.requirement import (
     RequirementDetail,
     RequirementTransitionResult,
     ReviewFieldsPatch,
+    ReviewItemDraft,
 )
 from procurement_platform.ports.backend_client import BackendClient
 
@@ -102,6 +103,24 @@ class BuildingManagerWorkflowService:
             detail = await self._detail(identity, requirement_id)
             return self._cards.detail(detail, "版本冲突, 已加载后端最新字段, 请重新确认。")
 
+    async def save_review_items(
+        self,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        items: tuple[ReviewItemDraft, ...],
+    ) -> InteractionView:
+        latest = await self._detail(identity, requirement_id)
+        if latest.version != expected_version:
+            return self._cards.detail(latest, "版本冲突, 已加载后端最新采购项。")
+        await self._backend.update_review_items(
+            identity=identity,
+            requirement_id=requirement_id,
+            expected_version=latest.version,
+            items=items,
+        )
+        return self._cards.detail(await self._detail(identity, requirement_id), "逐项审核已保存。")
+
     async def _synchronize_supplier_reference(
         self, identity: PlatformIdentity, fields: ReviewFieldsPatch
     ) -> ReviewFieldsPatch:
@@ -179,7 +198,12 @@ class BuildingManagerWorkflowService:
         if (
             detail.status is not RequirementStatus.PENDING_REVIEW
             or AllowedRequirementAction.SUBMIT_PURCHASER not in detail.allowed_actions
-            or not detail.fields_complete
+            or (
+                bool(detail.items)
+                and {item.request_item_id for item in detail.review_items}
+                != {item.request_item_id for item in detail.items if item.is_active}
+            )
+            or (not detail.items and not detail.fields_complete)
         ):
             return self._cards.detail(detail, "后端当前字段或状态不允许提交采购员。")
         candidates = await self._backend.list_handler_candidates(

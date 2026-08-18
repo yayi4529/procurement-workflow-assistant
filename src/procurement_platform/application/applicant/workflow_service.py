@@ -1,3 +1,5 @@
+# ruff: noqa: RUF001
+
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -16,7 +18,12 @@ from procurement_platform.domain.errors import (
 )
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.interaction import InteractionView
-from procurement_platform.domain.requirement import ApplicantFieldsPatch, RequirementDetail
+from procurement_platform.domain.requirement import (
+    ApplicantFieldsPatch,
+    PurchaseRequestItem,
+    RequestItemDraft,
+    RequirementDetail,
+)
 from procurement_platform.ports.backend_client import BackendClient
 
 
@@ -158,14 +165,14 @@ class ApplicantWorkflowService:
                 detail = await self._detail(identity, requirement_id)
                 return self._cards.detail(
                     detail,
-                    notice="版本已变化，我已刷新后端最新内容，请重新检查后再提交。",  # noqa: RUF001
+                    notice="版本已变化，我已刷新后端最新内容，请重新检查后再提交。",
                 )
             except ValidationError:
                 detail = await self._detail(identity, requirement_id)
                 return self._cards.detail(
                     detail,
                     notice=(
-                        "保存失败：后端校验未通过。请确认设备专业使用下拉选项，"  # noqa: RUF001
+                        "保存失败：后端校验未通过。请确认设备专业使用下拉选项，"
                         "数量为大于 0 的数字。"
                     ),
                 )
@@ -178,7 +185,13 @@ class ApplicantWorkflowService:
         expected_status = RequirementStatus.REJECTED if resubmit else RequirementStatus.DRAFT
         if detail.status is not expected_status or action not in detail.allowed_actions:
             return self._cards.detail(detail, notice="后端当前状态不允许此操作。")
-        if not detail.fields_complete or detail.missing_fields:
+        multi_item_ready = bool(
+            tuple(item for item in detail.items if item.is_active)
+            and detail.applicant_fields.application_reason
+        )
+        if (detail.items and not multi_item_ready) or (
+            not detail.items and (not detail.fields_complete or detail.missing_fields)
+        ):
             return self._cards.detail(detail, notice="请先补全后端列出的必填字段。")
         candidates = await self._backend.list_handler_candidates(
             identity=identity,
@@ -188,6 +201,84 @@ class ApplicantWorkflowService:
         if not candidates.items:
             return self._cards.detail(detail, notice="当前没有可用楼长候选人。")
         return self._cards.handler_selection(detail, candidates, resubmit=resubmit)
+
+    async def add_item(
+        self,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        item: RequestItemDraft,
+    ) -> InteractionView:
+        detail = await self._detail(identity, requirement_id)
+        if detail.version != expected_version:
+            return self._cards.detail(detail, notice="版本已变化，请重新填写采购项。")
+        items = (
+            *(self._item_draft(value) for value in detail.items if value.is_active),
+            item,
+        )
+        await self._backend.replace_request_items(
+            identity=identity,
+            requirement_id=requirement_id,
+            expected_version=detail.version,
+            request_type=detail.request_type,
+            source_asset_id=self._source_asset_id(detail),
+            items=items,
+        )
+        return self._cards.detail(
+            await self._detail(identity, requirement_id), notice="采购项已新增。"
+        )
+
+    async def remove_item(
+        self,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        request_item_id: int,
+    ) -> InteractionView:
+        detail = await self._detail(identity, requirement_id)
+        if detail.version != expected_version:
+            return self._cards.detail(detail, notice="版本已变化，请刷新后重试。")
+        items = tuple(
+            self._item_draft(value)
+            for value in detail.items
+            if value.is_active and value.request_item_id != request_item_id
+        )
+        if not items:
+            return self._cards.detail(detail, notice="采购申请至少需要一个有效采购项。")
+        await self._backend.replace_request_items(
+            identity=identity,
+            requirement_id=requirement_id,
+            expected_version=detail.version,
+            request_type=detail.request_type,
+            source_asset_id=self._source_asset_id(detail),
+            items=items,
+        )
+        return self._cards.detail(
+            await self._detail(identity, requirement_id), notice="采购项已移除。"
+        )
+
+    @staticmethod
+    def _item_draft(item: PurchaseRequestItem) -> RequestItemDraft:
+        return RequestItemDraft(
+            request_item_id=item.request_item_id,
+            item_no=item.item_no,
+            item_kind=item.item_kind,
+            item_name=item.item_name,
+            quantity=item.quantity,
+            unit=item.unit,
+            requires_warehouse=item.requires_warehouse,
+            equipment_category_id=item.equipment_category_id,
+            equipment_model_id=item.equipment_model_id,
+            brand_snapshot=item.brand_snapshot,
+            model_snapshot=item.model_snapshot,
+            item_reason=item.item_reason,
+            remark=item.remark,
+        )
+
+    @staticmethod
+    def _source_asset_id(detail: RequirementDetail) -> int | None:
+        value = detail.source_asset.get("asset_id") if detail.source_asset else None
+        return value if isinstance(value, int) else None
 
     async def confirm_handler(
         self,

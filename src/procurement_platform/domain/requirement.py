@@ -6,6 +6,9 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from procurement_platform.domain.enums import (
     AllowedRequirementAction,
+    ItemFulfillmentStatus,
+    PurchaseItemKind,
+    RequestType,
     RequirementStatus,
     ReviewStatus,
 )
@@ -295,6 +298,114 @@ class RequirementDetail(RequirementSummary):
     created_at: datetime | None = None
     review_manager_name: str | None = None
     review_manager_mobile: str | None = None
+    request_type: RequestType = RequestType.PURCHASE
+    source_asset: dict[str, object] | None = None
+    items: tuple["PurchaseRequestItem", ...] = ()
+    review_items: tuple["PurchaseReviewItem", ...] = ()
+    executions: tuple["PurchaseExecutionView", ...] = ()
+    receipts: tuple["WarehouseReceiptView", ...] = ()
+    request_fulfillment: "RequirementFulfillmentSummary | None" = None
+
+
+class PurchaseRequestItem(RequirementModel):
+    request_item_id: int
+    item_no: int
+    item_kind: PurchaseItemKind
+    item_name: str
+    quantity: str
+    unit: str
+    requires_warehouse: bool
+    is_active: bool
+    fulfillment_status: ItemFulfillmentStatus
+    equipment_category_id: int | None = None
+    equipment_model_id: int | None = None
+    brand_snapshot: str | None = None
+    model_snapshot: str | None = None
+    item_reason: str | None = None
+    remark: str | None = None
+
+
+class PurchaseReviewItem(RequirementModel):
+    review_item_id: int
+    request_item_id: int
+    item_kind_snapshot: PurchaseItemKind
+    item_name_snapshot: str
+    quantity_snapshot: str
+    unit_snapshot: str
+    proposed_supplier_id: int | None = None
+    proposed_supplier_name: str | None = None
+    estimated_unit_price: str | None = None
+    estimated_total_price: str | None = None
+
+
+class PurchaseExecutionView(RequirementModel):
+    execution_id: int
+    request_item_id: int
+    supplier_id: int
+    supplier_name: str
+    purchased_quantity: str
+    actual_unit_price: str
+    actual_total_price: str
+    tax_rate: str | None = None
+    purchased_at: datetime
+    purchase_remark: str | None = None
+
+
+class WarehouseReceiptView(RequirementModel):
+    receipt_id: int
+    execution_id: int
+    warehouse_location: str
+    received_quantity: str
+    receipt_remark: str | None = None
+    received_at: datetime
+
+
+class RequirementFulfillmentSummary(RequirementModel):
+    active_item_count: int
+    fulfilled_item_count: int
+    all_active_items_fulfilled: bool
+
+
+class RequestItemDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_item_id: int | None = None
+    item_no: int | None = None
+    item_kind: PurchaseItemKind
+    item_name: str
+    quantity: str
+    unit: str
+    requires_warehouse: bool | None = None
+    equipment_category_id: int | None = None
+    equipment_model_id: int | None = None
+    brand_snapshot: str | None = None
+    model_snapshot: str | None = None
+    item_reason: str | None = None
+    remark: str | None = None
+
+
+class ReviewItemDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_item_id: int
+    proposed_supplier_id: int | None = None
+    estimated_unit_price: str | None = None
+    estimated_total_price: str | None = None
+    need_contract: bool = False
+    contract_type: str | None = None
+    payment_method: str | None = None
+    expected_arrival_date: date | None = None
+    warranty_info: str | None = None
+    item_remark: str | None = None
+
+
+class AppendReceiptCommand(RequirementModel):
+    expected_version: int
+    action_token: UUID
+    execution_id: int
+    warehouse_location: str
+    received_quantity: str
+    receipt_remark: str | None = None
 
 
 class RequirementListItem(RequirementModel):

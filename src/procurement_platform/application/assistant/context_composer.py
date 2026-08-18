@@ -24,6 +24,11 @@ class AgentContextComposer:
                 else None
             )
         applicant_fields = detail.applicant_fields.model_dump(mode="json") if detail else {}
+        item_facts = (
+            [item.model_dump(mode="json") for item in detail.items if item.is_active]
+            if detail
+            else []
+        )
         review_draft = (
             detail.review_fields.model_dump(mode="json") if detail and detail.review_fields else {}
         )
@@ -52,6 +57,20 @@ class AgentContextComposer:
         }
         if turn_context.active_role.value == "APPLICANT":
             data["applicant_fields"] = applicant_fields
+            data["request_type"] = detail.request_type.value if detail else None
+            data["source_asset"] = detail.source_asset if detail else None
+            data["items"] = item_facts
+            data["executions"] = (
+                [item.model_dump(mode="json") for item in detail.executions] if detail else []
+            )
+            data["receipts"] = (
+                [item.model_dump(mode="json") for item in detail.receipts] if detail else []
+            )
+            data["request_fulfillment"] = (
+                detail.request_fulfillment.model_dump(mode="json")
+                if detail and detail.request_fulfillment
+                else None
+            )
             allowed = {
                 "device_profession",
                 "device_name",

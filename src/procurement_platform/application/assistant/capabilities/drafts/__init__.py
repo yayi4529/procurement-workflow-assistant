@@ -1,5 +1,6 @@
 from procurement_platform.application.assistant.capabilities.drafts.capabilities import (
     UpdateApplicantDraftCapability,
+    UpdateMultiItemDraftCapability,
     UpdatePurchaseDraftCapability,
     UpdateReviewDraftCapability,
     UpdateWarehouseDraftCapability,
@@ -7,6 +8,7 @@ from procurement_platform.application.assistant.capabilities.drafts.capabilities
 
 __all__ = (
     "UpdateApplicantDraftCapability",
+    "UpdateMultiItemDraftCapability",
     "UpdatePurchaseDraftCapability",
     "UpdateReviewDraftCapability",
     "UpdateWarehouseDraftCapability",

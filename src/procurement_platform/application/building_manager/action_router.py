@@ -8,7 +8,7 @@ from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import CardInteractionEvent
 from procurement_platform.domain.interaction import InteractionView
 from procurement_platform.domain.json_types import JsonValue
-from procurement_platform.domain.requirement import ReviewFieldsPatch
+from procurement_platform.domain.requirement import ReviewFieldsPatch, ReviewItemDraft
 
 
 def _integer(value: JsonValue | None, name: str) -> int:
@@ -87,6 +87,31 @@ class BuildingManagerActionRouter:
                 requirement_id,
                 _integer(value.get("expected_version"), "expected_version"),
                 ReviewFieldsPatch.model_validate(raw),
+            )
+        if action == "building_manager.save_review_items":
+            detail = await self._workflow._detail(identity, requirement_id)
+            items = []
+            for item in detail.items:
+                if not item.is_active:
+                    continue
+                supplier_raw = event.form_values.get(f"review_supplier_{item.request_item_id}")
+                price_raw = event.form_values.get(f"review_price_{item.request_item_id}")
+                items.append(
+                    ReviewItemDraft(
+                        request_item_id=item.request_item_id,
+                        proposed_supplier_id=_optional_positive_integer(
+                            supplier_raw, "proposed_supplier_id"
+                        ),
+                        estimated_unit_price=(
+                            str(price_raw).strip() if price_raw not in (None, "") else None
+                        ),
+                    )
+                )
+            return await self._workflow.save_review_items(
+                identity,
+                requirement_id,
+                _integer(value.get("expected_version"), "expected_version"),
+                tuple(items),
             )
         if action == "building_manager.prepare_reject":
             reason = event.form_values.get("reason")

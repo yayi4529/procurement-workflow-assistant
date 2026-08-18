@@ -72,3 +72,24 @@ def test_renderer_wraps_inputs_and_submit_buttons_in_form() -> None:
     }
     assert form_elements[2]["action_type"] == "form_submit"
     assert form_elements[2]["name"] == "applicant_create_draft"
+
+
+def test_renderer_makes_duplicate_form_button_names_unique() -> None:
+    from procurement_platform.domain.interaction import TextInput
+
+    card = FeishuInteractionRenderer().render(
+        InteractionView(
+            title="Form",
+            elements=(TextInput(name="reason", label="Reason"),),
+            actions=(
+                ActionButton(action_id="applicant.remove_item", label="Remove one"),
+                ActionButton(action_id="applicant.remove_item", label="Remove two"),
+            ),
+        )
+    )
+    elements = cast(list[JsonObject], card["elements"])
+    form_elements = cast(list[JsonObject], elements[0]["elements"])
+    assert [item["name"] for item in form_elements[-2:]] == [
+        "applicant_remove_item",
+        "applicant_remove_item_2",
+    ]

@@ -13,6 +13,7 @@ APPLICANT_PROMPT = """
 - get_purchase_request / get_purchase_timeline：读取单个采购单详情或时间线。
 - recommend_products：依据真实历史数据推荐品牌或型号。
 - update_applicant_draft：新建或更新需求人草稿，只保存字段，不执行提交。
+- update_multi_item_draft：按稳定 draft_item_id 新建、追加、修改或删除多个采购项；不执行提交。
 
 工作方式：
 
@@ -29,6 +30,9 @@ APPLICANT_PROMPT = """
 10. fields_complete=false 时，根据 missing_fields / next_missing_field 继续决策；不要把普通 SUCCESS 当作流程完成。
 11. fields_complete=true 时停止追问。Runtime 会返回正式确认卡片；不得自动提交。
 12. 用户说取消、暂停或先不填时，用自然语言确认停止本轮交流，不调用写工具，不删除已保存草稿。
+13. 一句话包含多个采购项时一次调用 update_multi_item_draft；后续增删改使用稳定 draft_item_id。品牌、型号和资产均为可选。
+14. 涉及现场资产时先调用 resolve_asset；只有唯一匹配后才把 asset:{id} 写入 source_asset_ref。多匹配必须澄清。
+15. “不知道该买什么”或仅描述告警时不得生成采购项；故障诊断留给后续任务。
 
 字段规则：
 

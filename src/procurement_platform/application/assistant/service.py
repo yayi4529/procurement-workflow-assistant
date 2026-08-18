@@ -1,5 +1,6 @@
 # ruff: noqa: RUF001
 
+from procurement_platform.application.applicant.card_factory import ApplicantCardFactory
 from procurement_platform.application.assistant.agent import ProcurementAgent
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
 from procurement_platform.application.assistant.session_service import AssistantSessionService
@@ -9,6 +10,7 @@ from procurement_platform.application.assistant.task_context_service import (
 )
 from procurement_platform.application.assistant.turn_context import AgentTurnContext
 from procurement_platform.domain.assistant import (
+    AssistantInteractionResponse,
     AssistantMessage,
     AssistantResponse,
     AssistantTextResponse,
@@ -133,6 +135,28 @@ class AssistantService:
             business_facts=BusinessFactsBuilder.build(current_user, active_requirement),
             task_state=AgentTaskStateService.from_session(state),
         )
+        if (
+            context_role is RoleCode.APPLICANT
+            and state is not None
+            and state.purchase_request_id is not None
+            and self._is_confirmation_card_request(event.text)
+        ):
+            detail = await self._backend_client.get_requirement(
+                identity=identity, requirement_id=state.purchase_request_id
+            )
+            notice = "请核对当前多采购项草稿，并通过下方确认卡提交。"
+            await self._session_service.append(
+                identity=identity,
+                conversation_id=conversation.conversation_id,
+                external_message_id=f"assistant:{event.external_message_id}",
+                sender=AgentMessageSender.AGENT,
+                content=notice,
+            )
+            return AssistantInteractionResponse(
+                view=ApplicantCardFactory().detail(
+                    detail, notice=notice, confirmation_mode=True
+                )
+            )
         return await self._procurement_agent.run(
             external_message_id=event.external_message_id,
             user_text=event.text,
@@ -224,3 +248,11 @@ class AssistantService:
             if normalized in {ROLE_LABELS[role], role.value}:
                 return role
         return None
+
+    @staticmethod
+    def _is_confirmation_card_request(text: str) -> bool:
+        normalized = text.strip().lower()
+        return (
+            "确认" in normalized
+            and ("卡" in normalized or "提交" in normalized or "草稿" in normalized)
+        )

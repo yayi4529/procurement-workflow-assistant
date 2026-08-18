@@ -62,6 +62,12 @@ class PurchaserActionRouter:
         requirement_id = _integer(value.get("requirement_id"), "requirement_id")
         if action in {"purchaser.open_requirement", "purchaser.refresh"}:
             return await self._workflow.open_requirement(identity, requirement_id)
+        if action == "purchaser.open_purchase_item":
+            return await self._workflow.open_purchase_item(
+                identity,
+                requirement_id,
+                _integer(value.get("request_item_id"), "request_item_id"),
+            )
         if action == "purchaser.start_purchase":
             return await self._workflow.start_purchase(
                 identity,
@@ -90,6 +96,22 @@ class PurchaserActionRouter:
                 _integer(value.get("expected_version"), "expected_version"),
                 PurchaseFieldsPatch.model_validate(raw),
             )
+        if action == "purchaser.save_purchase_item":
+            raw = {
+                name: event.form_values[name]
+                for name in PurchaseFieldsPatch.model_fields
+                if name in event.form_values
+            }
+            raw["supplier_id"] = _integer(event.form_values.get("supplier_id"), "supplier_id")
+            raw["purchased_at"] = datetime.now().astimezone()
+            return await self._workflow.save_purchase_item(
+                identity,
+                requirement_id,
+                _integer(value.get("request_item_id"), "request_item_id"),
+                _integer(value.get("expected_version"), "expected_version"),
+                UUID(str(value.get("action_token"))),
+                PurchaseFieldsPatch.model_validate(raw),
+            )
         if action == "purchaser.prepare_submit_warehouse":
             employee = event.form_values.get("assigned_to_employee_id")
             return await self._workflow.prepare_submit_warehouse(
@@ -98,11 +120,12 @@ class PurchaserActionRouter:
                 _integer(employee, "assigned_to_employee_id") if employee is not None else None,
             )
         if action == "purchaser.confirm_submit_warehouse":
+            employee = value.get("assigned_to_employee_id")
             return await self._workflow.confirm_submit_warehouse(
                 identity,
                 requirement_id,
                 _integer(value.get("expected_version"), "expected_version"),
-                _integer(value.get("assigned_to_employee_id"), "assigned_to_employee_id"),
+                _integer(employee, "assigned_to_employee_id") if employee is not None else None,
                 UUID(str(value.get("action_token"))),
             )
         raise ValueError("unsupported purchaser action")

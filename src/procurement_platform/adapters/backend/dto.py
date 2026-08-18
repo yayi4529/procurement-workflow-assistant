@@ -5,11 +5,14 @@ from enum import StrEnum
 from typing import Generic, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from procurement_platform.domain.enums import (
     AgentConversationStatus,
+    ItemFulfillmentStatus,
     PlatformType,
+    PurchaseItemKind,
+    RequestType,
     RequirementStatus,
     ReviewStatus,
     RoleCode,
@@ -232,6 +235,41 @@ class BackendApplicantFieldsDTO(BackendDTO):
     applicant_remark: str | None
 
 
+class BackendRequestItemDTO(BackendDTO):
+    request_item_id: int
+    item_no: int
+    item_kind: PurchaseItemKind
+    equipment_category_id: int | None
+    equipment_model_id: int | None
+    item_name: str
+    brand_snapshot: str | None
+    model_snapshot: str | None
+    quantity: Decimal
+    unit: str
+    requires_warehouse: bool
+    item_reason: str | None
+    is_active: bool
+    remark: str | None
+    fulfillment_status: ItemFulfillmentStatus
+
+
+class BackendReviewItemDTO(BackendDTO):
+    review_item_id: int
+    request_item_id: int
+    item_kind_snapshot: PurchaseItemKind
+    item_name_snapshot: str
+    quantity_snapshot: Decimal
+    unit_snapshot: str
+    brand_snapshot: str | None
+    model_snapshot: str | None
+    proposed_supplier_id: int | None
+    proposed_supplier_name: str | None
+    estimated_unit_price: Decimal | None
+    estimated_total_price: Decimal | None
+    expected_arrival_date: date | None
+    item_remark: str | None
+
+
 class BackendReviewRecordDTO(BackendDTO):
     review_round: int
     review_status: ReviewStatus
@@ -251,6 +289,7 @@ class BackendReviewRecordDTO(BackendDTO):
     warranty_info: str | None
     review_remark: str | None
     reviewed_at: datetime | None
+    items: tuple[BackendReviewItemDTO, ...] = ()
 
 
 class BackendPurchaseExecutionDTO(BackendDTO):
@@ -275,6 +314,34 @@ class BackendWarehouseReceiptDTO(BackendDTO):
     received_at: datetime
 
 
+class BackendExecutionViewDTO(BackendDTO):
+    execution_id: int
+    request_item_id: int
+    supplier_id: int
+    supplier_name: str
+    purchased_quantity: Decimal
+    actual_unit_price: Decimal
+    actual_total_price: Decimal
+    tax_rate: Decimal | None
+    purchased_at: datetime
+    purchase_remark: str | None
+
+
+class BackendReceiptViewDTO(BackendDTO):
+    receipt_id: int
+    execution_id: int
+    warehouse_location: str
+    received_quantity: Decimal
+    receipt_remark: str | None
+    received_at: datetime
+
+
+class BackendFulfillmentSummaryDTO(BackendDTO):
+    active_item_count: int
+    fulfilled_item_count: int
+    all_active_items_fulfilled: bool
+
+
 class BackendRequirementDetailDTO(BackendDTO):
     requirement_id: int
     requirement_no: str
@@ -288,6 +355,18 @@ class BackendRequirementDetailDTO(BackendDTO):
     warehouse_receipt: BackendWarehouseReceiptDTO | None
     missing_fields: tuple[str, ...]
     allowed_actions: tuple[BackendAllowedRequirementAction, ...]
+    request_type: RequestType = RequestType.PURCHASE
+    source_asset: dict[str, object] | None = None
+    items: tuple[BackendRequestItemDTO, ...] = ()
+    executions: tuple[BackendExecutionViewDTO, ...] = ()
+    receipts: tuple[BackendReceiptViewDTO, ...] = ()
+    request_fulfillment: BackendFulfillmentSummaryDTO = Field(
+        default_factory=lambda: BackendFulfillmentSummaryDTO(
+            active_item_count=0,
+            fulfilled_item_count=0,
+            all_active_items_fulfilled=False,
+        )
+    )
 
 
 class BackendRequirementListItemDTO(BackendDTO):

@@ -12,6 +12,9 @@ from procurement_platform.application.assistant.tooling import (
     RecommendProductOptionsResult,
     UpdatePurchaseDraftResult,
 )
+from procurement_platform.application.assistant.tooling.multi_item import (
+    UpdateMultiItemDraftResult,
+)
 from procurement_platform.application.assistant.tools import ToolExecutor
 from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.assistant import (
@@ -71,6 +74,26 @@ class ApplicantAgent(BasicRoleAgent):
                     result=result,
                     context=context,
                     external_message_id=external_message_id,
+                )
+            return None
+
+        if isinstance(result, UpdateMultiItemDraftResult):
+            if result.status != "SUCCESS":
+                return await super().handle_tool_result(
+                    result=result,
+                    context=context,
+                    external_message_id=external_message_id,
+                )
+            if result.fields_complete and result.requirement_id is not None:
+                detail = await self._backend_client.get_requirement(
+                    identity=self._identity(context), requirement_id=result.requirement_id
+                )
+                notice = "多采购项草稿已完整，请在正式确认卡中检查并提交。"
+                await self._append_reply(context, external_message_id, notice)
+                return AssistantInteractionResponse(
+                    view=ApplicantCardFactory().detail(
+                        detail, notice=notice, confirmation_mode=True
+                    )
                 )
             return None
 

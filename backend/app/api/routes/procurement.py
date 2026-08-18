@@ -7,18 +7,23 @@ from app.core.responses import ApiResponse
 from app.domain.workflow import WorkflowCommand, WorkflowOperation
 from app.schemas.procurement import (
     ActionRequest,
+    AppendReceiptRequest,
     AssignedActionRequest,
     CreateRequirementRequest,
     CurrentHandlerData,
     FieldsSaveData,
     RejectRequest,
+    ReplaceRequestItemsRequest,
     RequirementDetailData,
     RequirementListData,
     RequirementMutationData,
     SaveApplicantFieldsRequest,
     SavePurchaseFieldsRequest,
+    SavePurchaseItemRequest,
     SaveReviewFieldsRequest,
+    SaveReviewItemsRequest,
     SaveWarehouseFieldsRequest,
+    SubmitWarehouseRequest,
 )
 from app.services.procurement import ProcurementService
 
@@ -108,6 +113,27 @@ async def save_applicant_fields(
             missing_fields=missing,
             next_missing_field=missing[0] if missing else None,
             fields_complete=not missing,
+        )
+    )
+
+
+@router.put("/{requirement_id}/items", response_model=ApiResponse[FieldsSaveData])
+async def replace_request_items(
+    requirement_id: int,
+    payload: ReplaceRequestItemsRequest,
+    current_user: CurrentUserDependency,
+    session: DbSession,
+) -> ApiResponse[FieldsSaveData]:
+    request = await ProcurementService().replace_request_items(
+        session, current_user, requirement_id, payload
+    )
+    return ApiResponse(
+        data=FieldsSaveData(
+            requirement_id=requirement_id,
+            status=request.status,
+            version=request.version,
+            missing_fields=[],
+            fields_complete=True,
         )
     )
 
@@ -280,6 +306,27 @@ async def save_review_fields(
     )
 
 
+@router.put("/{requirement_id}/review-items", response_model=ApiResponse[FieldsSaveData])
+async def save_review_items(
+    requirement_id: int,
+    payload: SaveReviewItemsRequest,
+    current_user: CurrentUserDependency,
+    session: DbSession,
+) -> ApiResponse[FieldsSaveData]:
+    request = await ProcurementService().save_review_items(
+        session, current_user, requirement_id, payload
+    )
+    return ApiResponse(
+        data=FieldsSaveData(
+            requirement_id=requirement_id,
+            status=request.status,
+            version=request.version,
+            missing_fields=[],
+            fields_complete=True,
+        )
+    )
+
+
 @router.post(
     "/{requirement_id}/submit-purchaser",
     response_model=ApiResponse[RequirementMutationData],
@@ -371,13 +418,44 @@ async def save_purchase_fields(
     )
 
 
+@router.patch(
+    "/{requirement_id}/purchase-items/{request_item_id}",
+    response_model=ApiResponse[FieldsSaveData],
+)
+async def save_purchase_item(
+    requirement_id: int,
+    request_item_id: int,
+    payload: SavePurchaseItemRequest,
+    current_user: CurrentUserDependency,
+    session: DbSession,
+) -> ApiResponse[FieldsSaveData]:
+    request = await ProcurementService().save_purchase_item(
+        session,
+        current_user,
+        requirement_id,
+        request_item_id,
+        payload.expected_version,
+        payload.fields,
+        payload.action_token,
+    )
+    return ApiResponse(
+        data=FieldsSaveData(
+            requirement_id=requirement_id,
+            status=request.status,
+            version=request.version,
+            missing_fields=[],
+            fields_complete=True,
+        )
+    )
+
+
 @router.post(
     "/{requirement_id}/submit-warehouse",
     response_model=ApiResponse[RequirementMutationData],
 )
 async def submit_warehouse(
     requirement_id: int,
-    payload: AssignedActionRequest,
+    payload: SubmitWarehouseRequest,
     current_user: CurrentUserDependency,
     session: DbSession,
 ) -> ApiResponse[RequirementMutationData]:
@@ -419,6 +497,27 @@ async def save_warehouse_fields(
         requirement_id,
         payload.expected_version,
         payload.fields,
+    )
+    return ApiResponse(
+        data=FieldsSaveData(
+            requirement_id=requirement_id,
+            status=request.status,
+            version=request.version,
+            missing_fields=[],
+            fields_complete=True,
+        )
+    )
+
+
+@router.post("/{requirement_id}/receipts", response_model=ApiResponse[FieldsSaveData])
+async def append_receipt(
+    requirement_id: int,
+    payload: AppendReceiptRequest,
+    current_user: CurrentUserDependency,
+    session: DbSession,
+) -> ApiResponse[FieldsSaveData]:
+    request = await ProcurementService().append_receipt(
+        session, current_user, requirement_id, payload
     )
     return ApiResponse(
         data=FieldsSaveData(

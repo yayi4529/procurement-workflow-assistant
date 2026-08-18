@@ -2,6 +2,7 @@ from procurement_platform.application.assistant.tooling.applicant import UpdateP
 from procurement_platform.application.assistant.tooling.building_manager import (
     UpdateReviewDraftTool,
 )
+from procurement_platform.application.assistant.tooling.multi_item import UpdateMultiItemDraftTool
 from procurement_platform.application.assistant.tooling.purchaser import (
     UpdatePurchaseExecutionDraftTool,
 )
@@ -16,6 +17,10 @@ class UpdateApplicantDraftCapability(UpdatePurchaseDraftTool):
         "Create or incrementally update the applicant's purchase request draft. Use only "
         "for user-provided or confirmed fields; it never submits or advances the workflow."
     )
+
+
+class UpdateMultiItemDraftCapability(UpdateMultiItemDraftTool):
+    pass
 
 
 class UpdateReviewDraftCapability(UpdateReviewDraftTool):

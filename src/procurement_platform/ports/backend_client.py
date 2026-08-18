@@ -22,12 +22,14 @@ from procurement_platform.domain.assistant_session import (
 )
 from procurement_platform.domain.enums import (
     AgentMessageSender,
+    RequestType,
     RequirementStatus,
     RequirementView,
     RoleCode,
 )
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.requirement import (
+    AppendReceiptCommand,
     ApplicantFieldsPatch,
     ApplicantFieldsSaveResult,
     FieldsSaveResult,
@@ -36,6 +38,7 @@ from procurement_platform.domain.requirement import (
     PurchaseFieldsPatch,
     PurchaseHistoryRecommendations,
     PurchaseRecordPage,
+    RequestItemDraft,
     RequirementCompletionResult,
     RequirementDetail,
     RequirementPage,
@@ -43,6 +46,7 @@ from procurement_platform.domain.requirement import (
     RequirementTimeline,
     RequirementTransitionResult,
     ReviewFieldsPatch,
+    ReviewItemDraft,
     SupplierDetail,
     SupplierPage,
     SupplierRecommendations,
@@ -55,6 +59,45 @@ from procurement_platform.domain.user import CurrentUser
 
 
 class BackendClient(Protocol):
+    async def replace_request_items(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        items: tuple[RequestItemDraft, ...],
+        request_type: RequestType | None = None,
+        source_asset_id: int | None = None,
+    ) -> FieldsSaveResult: ...
+
+    async def update_review_items(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        items: tuple[ReviewItemDraft, ...],
+    ) -> FieldsSaveResult: ...
+
+    async def update_purchase_item(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        request_item_id: int,
+        expected_version: int,
+        action_token: UUID,
+        fields: PurchaseFieldsPatch,
+    ) -> FieldsSaveResult: ...
+
+    async def append_receipt(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        command: AppendReceiptCommand,
+    ) -> FieldsSaveResult: ...
+
     async def list_equipment_categories(
         self,
         *,
@@ -277,7 +320,7 @@ class BackendClient(Protocol):
         identity: PlatformIdentity,
         requirement_id: int,
         expected_version: int,
-        assigned_to_employee_id: int,
+        assigned_to_employee_id: int | None,
         action_token: UUID,
     ) -> RequirementTransitionResult: ...
 

@@ -25,6 +25,8 @@ class WorkflowService:
         session: AsyncSession,
         current_user: CurrentUser,
         command: WorkflowCommand,
+        *,
+        to_status_override: PurchaseStatus | None = None,
     ) -> WorkflowResult:
         if await self.repository.action_token_exists(session, command.action_token):
             raise AppError("DUPLICATE_OPERATION", "该操作已经执行", 409)
@@ -34,13 +36,13 @@ class WorkflowService:
             raise AppError("REQUIREMENT_NOT_FOUND", "采购申请不存在", 404)
 
         rule = TRANSITION_RULES[command.operation]
+        to_status = to_status_override or rule.to_status
         actor_role = self._validate_actor(current_user, purchase_request, rule)
         self._validate_state_and_version(purchase_request, command, rule)
-        next_handler = await self._resolve_next_handler(
-            session,
-            purchase_request,
-            command,
-            rule,
+        next_handler = (
+            None
+            if to_status == PurchaseStatus.COMPLETED
+            else await self._resolve_next_handler(session, purchase_request, command, rule)
         )
         now = datetime.now()
         updated = await self.repository.advance_request(
@@ -48,12 +50,12 @@ class WorkflowService:
             request_id=purchase_request.request_id,
             expected_version=command.expected_version,
             from_status=rule.from_status.value,
-            to_status=rule.to_status.value,
+            to_status=to_status.value,
             current_handler_employee_id=next_handler,
             submitted_at=(
                 now if command.operation.value in {"SUBMIT_REVIEW", "RESUBMIT_REVIEW"} else None
             ),
-            completed_at=now if rule.to_status == PurchaseStatus.COMPLETED else None,
+            completed_at=now if to_status == PurchaseStatus.COMPLETED else None,
         )
         if not updated:
             raise AppError("CONCURRENT_MODIFICATION", "采购申请已被其他操作更新", 409)
@@ -73,7 +75,7 @@ class WorkflowService:
                 action_token=command.action_token,
                 action_type=command.operation.value,
                 from_status=rule.from_status.value,
-                to_status=rule.to_status.value,
+                to_status=to_status.value,
                 operation_summary=command.operation_summary,
                 operated_at=now,
             ),
@@ -88,7 +90,7 @@ class WorkflowService:
 
         return WorkflowResult(
             request_id=purchase_request.request_id,
-            status=rule.to_status.value,
+            status=to_status.value,
             version=command.expected_version + 1,
             current_handler_employee_id=next_handler,
         )

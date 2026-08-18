@@ -19,6 +19,29 @@ class PurchaseStatus(StrEnum):
     COMPLETED = "COMPLETED"
 
 
+class RequestType(StrEnum):
+    PURCHASE = "PURCHASE"
+    MAINTENANCE = "MAINTENANCE"
+    FAULT = "FAULT"
+    RETIREMENT = "RETIREMENT"
+
+
+class PurchaseItemKind(StrEnum):
+    EQUIPMENT = "EQUIPMENT"
+    COMPONENT = "COMPONENT"
+    MATERIAL = "MATERIAL"
+    SERVICE = "SERVICE"
+    TOOL = "TOOL"
+
+
+class ItemFulfillmentStatus(StrEnum):
+    INACTIVE = "INACTIVE"
+    PENDING_PURCHASE = "PENDING_PURCHASE"
+    PURCHASED = "PURCHASED"
+    PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED"
+    FULFILLED = "FULFILLED"
+
+
 class ReviewStatus(StrEnum):
     DRAFT = "DRAFT"
     COMPLETED = "COMPLETED"

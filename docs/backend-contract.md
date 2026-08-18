@@ -296,3 +296,22 @@ configuration, and aliases are strictly parsed by the root adapter; extra fields
 Non-admin visibility is restricted to Backend-provided building memberships. Not found or
 invisible assets return `ASSET_NOT_FOUND`; an explicitly unauthorized building filter returns
 `BUILDING_NOT_ALLOWED`.
+
+## Task06 multi-item procurement contract
+
+Task06 adds typed item replacement, item review, per-item purchase, and append-only receipt
+endpoints. Requirement detail returns `items`, `review_items`, `executions`, `receipts`, and a
+derived `request_fulfillment` summary. All writes retain Backend identity and authorization,
+optimistic `expected_version`, and operation logging; receipt writes also require an idempotent
+`action_token` and reject cumulative over-receipt while the execution row is locked.
+
+Legacy field endpoints remain available only as a single-item compatibility bridge. They reject
+multi-item or receipt-history cases instead of silently flattening data. See
+`docs/task06-multi-item-procurement-model.md` for the frozen V1 rules and endpoint list.
+
+Task06-B requires `action_token` on per-item purchase writes as well as receipt and transition
+writes. `submit-warehouse` accepts a nullable `assigned_to_employee_id` only for a request whose
+active items are all service items; the backend then completes the request without creating a
+warehouse assignment. Supplier resolution performs the effective blacklist check in the backend.
+Assignment notification payloads may include a concise item count and item summary; consumers
+must tolerate their absence for older Outbox rows.

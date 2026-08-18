@@ -3,12 +3,12 @@ from uuid import UUID
 from procurement_platform.application.applicant.workflow_service import (
     ApplicantWorkflowService,
 )
-from procurement_platform.domain.enums import PlatformType
+from procurement_platform.domain.enums import PlatformType, PurchaseItemKind
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import CardInteractionEvent
 from procurement_platform.domain.interaction import InteractionView
 from procurement_platform.domain.json_types import JsonObject, JsonValue
-from procurement_platform.domain.requirement import ApplicantFieldsPatch
+from procurement_platform.domain.requirement import ApplicantFieldsPatch, RequestItemDraft
 
 
 def _integer(value: JsonValue | None, name: str) -> int:
@@ -79,6 +79,27 @@ class ApplicantActionRouter:
                 _integer(value.get("requirement_id"), "requirement_id"),
                 _integer(value.get("expected_version"), "expected_version"),
                 _applicant_patch(event.form_values),
+            )
+        if action == "applicant.add_item":
+            return await self._workflow.add_item(
+                identity,
+                _integer(value.get("requirement_id"), "requirement_id"),
+                _integer(value.get("expected_version"), "expected_version"),
+                RequestItemDraft(
+                    item_kind=PurchaseItemKind(
+                        str(_form_scalar(event.form_values.get("item_kind")))
+                    ),
+                    item_name=str(_form_scalar(event.form_values.get("item_name"))),
+                    quantity=str(_form_scalar(event.form_values.get("item_quantity"))),
+                    unit=str(_form_scalar(event.form_values.get("item_unit"))),
+                ),
+            )
+        if action == "applicant.remove_item":
+            return await self._workflow.remove_item(
+                identity,
+                _integer(value.get("requirement_id"), "requirement_id"),
+                _integer(value.get("expected_version"), "expected_version"),
+                _integer(value.get("request_item_id"), "request_item_id"),
             )
         if action in {"applicant.prepare_submit", "applicant.prepare_resubmit"}:
             raw_version = value.get("expected_version")

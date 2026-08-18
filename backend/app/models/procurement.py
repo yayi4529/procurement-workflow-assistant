@@ -20,7 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.domain.enums import PurchaseStatus, ReviewStatus
+from app.domain.enums import PurchaseStatus, RequestType, ReviewStatus
 
 
 class Supplier(Base):
@@ -52,13 +52,14 @@ class Supplier(Base):
 class PurchaseRequest(Base):
     __tablename__ = "purchase_request"
     __table_args__ = (
-        CheckConstraint("quantity > 0", name="quantity_positive"),
         CheckConstraint("version >= 0", name="version_non_negative"),
         Index("ix_purchase_request_applicant_employee_id", "applicant_employee_id"),
         Index("ix_purchase_request_status", "status"),
         Index("ix_purchase_request_current_handler_employee_id", "current_handler_employee_id"),
         Index("ix_purchase_request_building_id", "building_id"),
         Index("ix_purchase_request_updated_at", "updated_at"),
+        Index("ix_purchase_request_source_asset_id", "source_asset_id"),
+        Index("ix_purchase_request_request_type", "request_type"),
     )
 
     request_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -67,6 +68,14 @@ class PurchaseRequest(Base):
         BigInteger,
         ForeignKey("building.building_id", ondelete="RESTRICT"),
         nullable=False,
+    )
+    source_asset_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("asset.asset_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    request_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=RequestType.PURCHASE.value
     )
     applicant_employee_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -98,6 +107,56 @@ class PurchaseRequest(Base):
     )
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PurchaseRequestItem(Base):
+    __tablename__ = "purchase_request_item"
+    __table_args__ = (
+        UniqueConstraint("request_id", "item_no", name="uq_purchase_request_item_no"),
+        CheckConstraint("item_no > 0", name="request_item_no_positive"),
+        CheckConstraint("quantity > 0", name="request_item_quantity_positive"),
+        Index("ix_purchase_request_item_request_id", "request_id"),
+        Index("ix_purchase_request_item_request_active", "request_id", "is_active"),
+        Index("ix_purchase_request_item_kind", "item_kind"),
+        Index("ix_purchase_request_item_category_id", "equipment_category_id"),
+        Index("ix_purchase_request_item_model_id", "equipment_model_id"),
+    )
+
+    request_item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    request_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("purchase_request.request_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    item_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    item_kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    equipment_category_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("equipment_category.category_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    equipment_model_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("equipment_model.model_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    item_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    brand_snapshot: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    model_snapshot: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 3), nullable=False)
+    unit: Mapped[str] = mapped_column(String(30), nullable=False)
+    requires_warehouse: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    item_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("1")
+    )
+    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
@@ -165,6 +224,63 @@ class PurchaseReview(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class PurchaseReviewItem(Base):
+    __tablename__ = "purchase_review_item"
+    __table_args__ = (
+        UniqueConstraint("review_id", "request_item_id", name="uq_purchase_review_item"),
+        CheckConstraint("quantity_snapshot > 0", name="review_item_quantity_positive"),
+        CheckConstraint(
+            "estimated_unit_price IS NULL OR estimated_unit_price >= 0",
+            name="review_item_unit_price_non_negative",
+        ),
+        CheckConstraint(
+            "estimated_total_price IS NULL OR estimated_total_price >= 0",
+            name="review_item_total_price_non_negative",
+        ),
+        Index("ix_purchase_review_item_review_id", "review_id"),
+        Index("ix_purchase_review_item_request_item_id", "request_item_id"),
+        Index("ix_purchase_review_item_supplier_id", "proposed_supplier_id"),
+    )
+
+    review_item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    review_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("purchase_review.review_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    request_item_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("purchase_request_item.request_item_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    item_kind_snapshot: Mapped[str] = mapped_column(String(30), nullable=False)
+    item_name_snapshot: Mapped[str] = mapped_column(String(200), nullable=False)
+    quantity_snapshot: Mapped[Decimal] = mapped_column(Numeric(18, 3), nullable=False)
+    unit_snapshot: Mapped[str] = mapped_column(String(30), nullable=False)
+    brand_snapshot: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    model_snapshot: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    proposed_supplier_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("supplier.supplier_id", ondelete="RESTRICT"), nullable=True
+    )
+    proposed_supplier_name_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    supplier_contact_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    supplier_contact_info: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    supplier_link: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    estimated_unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    estimated_total_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    need_contract: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+    contract_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    expected_arrival_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    warranty_info: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    item_remark: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
 class PurchaseExecution(Base):
     __tablename__ = "purchase_execution"
     __table_args__ = (
@@ -176,6 +292,9 @@ class PurchaseExecution(Base):
         ),
         Index("ix_purchase_execution_purchaser_employee_id", "purchaser_employee_id"),
         Index("ix_purchase_execution_supplier_id", "supplier_id"),
+        Index("ix_purchase_execution_request_id", "request_id"),
+        UniqueConstraint("request_item_id", name="uq_purchase_execution_request_item_id"),
+        CheckConstraint("purchased_quantity > 0", name="purchased_quantity_positive"),
     )
 
     execution_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -183,7 +302,11 @@ class PurchaseExecution(Base):
         BigInteger,
         ForeignKey("purchase_request.request_id", ondelete="RESTRICT"),
         nullable=False,
-        unique=True,
+    )
+    request_item_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("purchase_request_item.request_item_id", ondelete="RESTRICT"),
+        nullable=False,
     )
     purchaser_employee_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -206,6 +329,7 @@ class PurchaseExecution(Base):
     supplier_address_snapshot: Mapped[str | None] = mapped_column(String(500), nullable=True)
     contract_contact_info_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
     actual_unit_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    purchased_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 3), nullable=False)
     actual_total_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     tax_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     purchased_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -220,6 +344,8 @@ class WarehouseReceipt(Base):
     __table_args__ = (
         CheckConstraint("received_quantity > 0", name="received_quantity_positive"),
         Index("ix_warehouse_receipt_warehouse_employee_id", "warehouse_employee_id"),
+        Index("ix_warehouse_receipt_request_id", "request_id"),
+        Index("ix_warehouse_receipt_execution_id", "execution_id"),
     )
 
     receipt_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -227,7 +353,11 @@ class WarehouseReceipt(Base):
         BigInteger,
         ForeignKey("purchase_request.request_id", ondelete="RESTRICT"),
         nullable=False,
-        unique=True,
+    )
+    execution_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("purchase_execution.execution_id", ondelete="RESTRICT"),
+        nullable=False,
     )
     warehouse_employee_id: Mapped[int] = mapped_column(
         BigInteger,
