@@ -85,6 +85,7 @@ from procurement_platform.domain.assistant_session import (
 )
 from procurement_platform.domain.enums import (
     AgentMessageSender,
+    RequestType,
     RequirementStatus,
     RequirementView,
     RoleCode,
@@ -92,6 +93,7 @@ from procurement_platform.domain.enums import (
 from procurement_platform.domain.errors import BackendProtocolError, SessionNotFoundError
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.requirement import (
+    AppendReceiptCommand,
     ApplicantFieldsPatch,
     ApplicantFieldsSaveResult,
     FieldsSaveResult,
@@ -100,6 +102,7 @@ from procurement_platform.domain.requirement import (
     PurchaseFieldsPatch,
     PurchaseHistoryRecommendations,
     PurchaseRecordPage,
+    RequestItemDraft,
     RequirementCompletionResult,
     RequirementDetail,
     RequirementPage,
@@ -107,6 +110,7 @@ from procurement_platform.domain.requirement import (
     RequirementTimeline,
     RequirementTransitionResult,
     ReviewFieldsPatch,
+    ReviewItemDraft,
     SupplierDetail,
     SupplierPage,
     SupplierRecommendations,
@@ -123,6 +127,89 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 class HttpBackendClient:
     def __init__(self, transport: SignedBackendTransport) -> None:
         self._transport = transport
+
+    async def replace_request_items(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        items: tuple[RequestItemDraft, ...],
+        request_type: RequestType | None = None,
+        source_asset_id: int | None = None,
+    ) -> FieldsSaveResult:
+        dto = await self._request_model(
+            BackendFieldsSaveDTO,
+            method="PUT",
+            path=f"/api/v1/requirements/{requirement_id}/items",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "request_type": request_type.value if request_type is not None else None,
+                "source_asset_id": source_asset_id,
+                "items": [item.model_dump(mode="json", exclude_none=True) for item in items],
+            },
+        )
+        return map_fields_save(dto)
+
+    async def update_review_items(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        items: tuple[ReviewItemDraft, ...],
+    ) -> FieldsSaveResult:
+        dto = await self._request_model(
+            BackendFieldsSaveDTO,
+            method="PUT",
+            path=f"/api/v1/requirements/{requirement_id}/review-items",
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "items": [item.model_dump(mode="json", exclude_none=True) for item in items],
+            },
+        )
+        return map_fields_save(dto)
+
+    async def update_purchase_item(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        request_item_id: int,
+        expected_version: int,
+        action_token: UUID,
+        fields: PurchaseFieldsPatch,
+    ) -> FieldsSaveResult:
+        dto = await self._request_model(
+            BackendFieldsSaveDTO,
+            method="PATCH",
+            path=(f"/api/v1/requirements/{requirement_id}/purchase-items/{request_item_id}"),
+            identity=identity,
+            json_body={
+                "expected_version": expected_version,
+                "action_token": str(action_token),
+                "fields": fields.model_dump(mode="json", exclude_unset=True),
+            },
+        )
+        return map_fields_save(dto)
+
+    async def append_receipt(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        command: AppendReceiptCommand,
+    ) -> FieldsSaveResult:
+        dto = await self._request_model(
+            BackendFieldsSaveDTO,
+            method="POST",
+            path=f"/api/v1/requirements/{requirement_id}/receipts",
+            identity=identity,
+            json_body=command.model_dump(mode="json"),
+        )
+        return map_fields_save(dto)
 
     async def _request_model(
         self,
@@ -475,7 +562,7 @@ class HttpBackendClient:
         identity: PlatformIdentity,
         requirement_id: int,
         expected_version: int,
-        assigned_to_employee_id: int,
+        assigned_to_employee_id: int | None,
         action_token: UUID,
     ) -> RequirementTransitionResult:
         dto = await self._request_model(
@@ -707,7 +794,7 @@ class HttpBackendClient:
         identity: PlatformIdentity,
         requirement_id: int,
         expected_version: int,
-        assigned_to_employee_id: int,
+        assigned_to_employee_id: int | None,
         action_token: UUID,
     ) -> RequirementTransitionResult:
         dto = await self._request_model(

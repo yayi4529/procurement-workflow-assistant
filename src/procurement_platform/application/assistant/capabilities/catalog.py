@@ -8,6 +8,7 @@ from procurement_platform.application.assistant.capabilities.assets import (
     SearchAssetsCapability,
 )
 from procurement_platform.application.assistant.capabilities.drafts import (
+    UpdateMultiItemDraftCapability,
     UpdateReviewDraftCapability,
 )
 from procurement_platform.application.assistant.capabilities.intelligence import (
@@ -83,6 +84,7 @@ DEFAULT_CAPABILITY_METADATA: tuple[CapabilityMetadata, ...] = (
     _metadata(GetPurchaseTimelineCapability, ALL_WORKFLOW_ROLES),
     _metadata(RecommendProductsCapability, frozenset({RoleCode.APPLICANT})),
     _metadata(UpdateApplicantDraftCapability, frozenset({RoleCode.APPLICANT})),
+    _metadata(UpdateMultiItemDraftCapability, frozenset({RoleCode.APPLICANT})),
     _metadata(RecommendSuppliersCapability, frozenset({RoleCode.BUILDING_MANAGER})),
     _metadata(UpdateReviewDraftCapability, frozenset({RoleCode.BUILDING_MANAGER})),
     _metadata(

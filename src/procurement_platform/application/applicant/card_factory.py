@@ -1,7 +1,8 @@
 from procurement_platform.application.applicant.options import DEVICE_PROFESSION_OPTIONS
 from procurement_platform.application.card_values import quantity_text
+from procurement_platform.application.multi_item_presenter import multi_item_markdown
 from procurement_platform.application.status_labels import requirement_status_label
-from procurement_platform.domain.enums import RequirementStatus
+from procurement_platform.domain.enums import PurchaseItemKind, RequirementStatus
 from procurement_platform.domain.interaction import (
     ActionButton,
     InteractionElement,
@@ -74,9 +75,11 @@ class ApplicantCardFactory:
         *,
         notice: str | None = None,
         return_requirement_ids: tuple[int, ...] = (),
+        confirmation_mode: bool = False,
     ) -> InteractionView:
         fields = detail.applicant_fields
         editable = detail.status in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}
+        show_editor = editable and not confirmation_mode
         elements: list[InteractionElement] = []
         if notice:
             elements.append(MarkdownBlock(markdown=notice))
@@ -106,9 +109,11 @@ class ApplicantCardFactory:
             )
         )
         elements.append(KeyValueSection(fields=tuple(summary_fields)))
+        if detail.items:
+            elements.append(MarkdownBlock(markdown=multi_item_markdown(detail)))
         if detail.rejection_reason:
             elements.append(MarkdownBlock(markdown=f"**驳回原因:** {detail.rejection_reason}"))
-        if editable:
+        if show_editor:
             elements.append(
                 SelectInput(
                     name="device_profession",
@@ -116,7 +121,7 @@ class ApplicantCardFactory:
                     options=tuple(
                         SelectOption(label=item, value=item) for item in DEVICE_PROFESSION_OPTIONS
                     ),
-                    required=True,
+                    required=not detail.items,
                     default_value=(
                         fields.device_profession
                         if fields.device_profession in DEVICE_PROFESSION_OPTIONS
@@ -134,10 +139,56 @@ class ApplicantCardFactory:
                 ("applicant_remark", "备注(选填)", fields.applicant_remark, False),
             )
             elements.extend(
-                TextInput(name=name, label=label, default_value=value, required=required)
+                TextInput(
+                    name=name,
+                    label=label,
+                    default_value=value,
+                    required=required and not detail.items,
+                )
                 for name, label, value, required in specs
             )
+            elements.extend(
+                (
+                    SelectInput(
+                        name="item_kind",
+                        label="新增采购项类型",
+                        options=tuple(
+                            SelectOption(label=value.value, value=value.value)
+                            for value in PurchaseItemKind
+                        ),
+                        required=False,
+                    ),
+                    TextInput(name="item_name", label="新增采购项名称", required=False),
+                    TextInput(name="item_quantity", label="新增采购项数量", required=False),
+                    TextInput(name="item_unit", label="新增采购项单位", required=False),
+                )
+            )
         actions = []
+        if show_editor:
+            actions.append(
+                ActionButton(
+                    action_id="applicant.add_item",
+                    label="新增采购项",
+                    value={
+                        "requirement_id": detail.requirement_id,
+                        "expected_version": detail.version,
+                    },
+                )
+            )
+            actions.extend(
+                ActionButton(
+                    action_id="applicant.remove_item",
+                    label=f"移除 {item.item_no}. {item.item_name}",
+                    value={
+                        "requirement_id": detail.requirement_id,
+                        "expected_version": detail.version,
+                        "request_item_id": item.request_item_id,
+                    },
+                    style="danger",
+                )
+                for item in detail.items
+                if item.is_active
+            )
         if editable:
             actions.append(
                 ActionButton(
@@ -165,7 +216,9 @@ class ApplicantCardFactory:
         else:
             actions.append(ActionButton(action_id="applicant.list", label="我的申请"))
         return InteractionView(
-            title="采购申请详情", elements=tuple(elements), actions=tuple(actions)
+            title="采购申请确认" if confirmation_mode else "采购申请详情",
+            elements=tuple(elements),
+            actions=tuple(actions),
         )
 
     def handler_selection(
@@ -208,23 +261,14 @@ class ApplicantCardFactory:
         *,
         resubmit: bool,
     ) -> InteractionView:
-        fields = detail.applicant_fields
         return InteractionView(
             title="重新提交确认" if resubmit else "提交审批确认",
             elements=(
+                MarkdownBlock(markdown=multi_item_markdown(detail, include_status=False)),
                 KeyValueSection(
                     fields=(
                         KeyValueField(label="采购单编号", value=detail.requirement_no),
                         KeyValueField(label="所属楼宇", value=detail.building.building_name),
-                        KeyValueField(label="设备专业", value=fields.device_profession or "-"),
-                        KeyValueField(label="设备名称", value=fields.device_name or "-"),
-                        KeyValueField(label="品牌", value=fields.brand or "未填写"),
-                        KeyValueField(label="型号", value=fields.model or "未填写"),
-                        KeyValueField(
-                            label="数量和单位",
-                            value=f"{quantity_text(fields.quantity)} {fields.unit or ''}".strip(),
-                        ),
-                        KeyValueField(label="需求原因", value=fields.application_reason or "-"),
                         KeyValueField(label="审批楼长", value=manager_name),
                         KeyValueField(label="申请人", value=detail.applicant_name or "-"),
                         KeyValueField(label="申请时间", value=self._application_date(detail)),
@@ -258,6 +302,7 @@ class ApplicantCardFactory:
         return InteractionView(
             title="提交成功",
             elements=(
+                MarkdownBlock(markdown=multi_item_markdown(detail)),
                 KeyValueSection(
                     fields=(
                         KeyValueField(label="采购单编号", value=detail.requirement_no),

@@ -83,6 +83,31 @@ cd ..
   -EnableLlm
 ```
 
+To enable the Task07 fault-guidance conversation, also configure the Agent-owned Redis URL and
+start with the explicit feature switch:
+
+```dotenv
+PROCUREMENT_REDIS_URL=redis://127.0.0.1:6379/0
+FAULT_KNOWLEDGE_PATH=knowledge/fault-guidance
+FAULT_STATE_TTL_SECONDS=86400
+```
+
+```powershell
+.\scripts\start_http_integration.ps1 `
+  -EnvFile .env `
+  -BackendBaseUrl http://127.0.0.1:8001 `
+  -HostAddress 0.0.0.0 `
+  -Port 8000 `
+  -EnableLlm `
+  -EnableFaultGuidance
+```
+
+An applicant can then send `故障引导` or start directly with a message such as
+`故障引导：2号 UPS 最近频繁报警`. Follow-up messages stay in the fault-guidance conversation.
+When the user confirms a grounded purchase proposal, the runtime creates a backend `DRAFT` and
+returns the existing applicant confirmation card; formal submission still uses the deterministic
+card action.
+
 For Feishu + Fake Backend development:
 
 ```powershell
@@ -147,6 +172,7 @@ Agent evals. Live-model evals are manual/release-only. See [docs/eval-baseline.m
 ## Documentation
 
 - [Data Center Asset Domain](docs/data-center-asset-domain.md)
+- [Task06 Multi-item Workflow](docs/task06-multi-item-workflow.md)
 - [Production Runbook](docs/runbook.md)
 - [Architecture](docs/architecture.md)
 - [Agent Architecture](docs/agent-architecture.md)

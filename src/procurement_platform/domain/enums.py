@@ -45,6 +45,42 @@ class RequirementStatus(StrEnum):
     COMPLETED = "COMPLETED"
 
 
+class RequestType(StrEnum):
+    PURCHASE = "PURCHASE"
+    MAINTENANCE = "MAINTENANCE"
+    FAULT = "FAULT"
+    RETIREMENT = "RETIREMENT"
+
+
+class PurchaseItemKind(StrEnum):
+    EQUIPMENT = "EQUIPMENT"
+    COMPONENT = "COMPONENT"
+    MATERIAL = "MATERIAL"
+    SERVICE = "SERVICE"
+    TOOL = "TOOL"
+
+
+class FaultAction(StrEnum):
+    ANSWER = "ANSWER"
+    ASK = "ASK"
+    PROPOSE_ITEM = "PROPOSE_ITEM"
+    DIRECT_TO_PROCUREMENT = "DIRECT_TO_PROCUREMENT"
+
+
+class ValidationStatus(StrEnum):
+    VALID = "VALID"
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
+    INVALID = "INVALID"
+
+
+class ItemFulfillmentStatus(StrEnum):
+    INACTIVE = "INACTIVE"
+    PENDING_PURCHASE = "PENDING_PURCHASE"
+    PURCHASED = "PURCHASED"
+    PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED"
+    FULFILLED = "FULFILLED"
+
+
 class RequirementView(StrEnum):
     CREATED_BY_ME = "CREATED_BY_ME"
     PENDING_FOR_ME = "PENDING_FOR_ME"

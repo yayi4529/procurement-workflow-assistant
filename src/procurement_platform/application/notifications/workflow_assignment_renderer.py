@@ -1,3 +1,5 @@
+# ruff: noqa: RUF001
+
 from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict
@@ -17,6 +19,8 @@ class WorkflowAssignmentPayload(BaseModel):
     requirement_id: int
     requirement_no: str
     status: str
+    item_count: int | None = None
+    item_summary: str | None = None
 
 
 class WorkflowAssignmentRenderer:
@@ -54,6 +58,10 @@ class WorkflowAssignmentRenderer:
         except ValueError:
             status = payload.status
         title, message, button_label, action_id = self._metadata[self.event_type]
+        item_line = ""
+        if payload.item_summary:
+            count = f"（共 {payload.item_count} 项）" if payload.item_count else ""
+            item_line = f"\n**采购项:** {payload.item_summary}{count}"
         return InteractionNotification(
             view=InteractionView(
                 title=title,
@@ -62,7 +70,7 @@ class WorkflowAssignmentRenderer:
                         markdown=(
                             f"{message}\n\n"
                             f"**采购单编号:** {payload.requirement_no}\n"
-                            f"**当前状态:** {status}"
+                            f"**当前状态:** {status}{item_line}"
                         )
                     ),
                 ),

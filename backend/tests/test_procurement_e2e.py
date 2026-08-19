@@ -15,7 +15,9 @@ from app.models.procurement import (
     PurchaseExecution,
     PurchaseOperationLog,
     PurchaseRequest,
+    PurchaseRequestItem,
     PurchaseReview,
+    PurchaseReviewItem,
     SupplierBlacklist,
     WarehouseReceipt,
 )
@@ -77,6 +79,15 @@ async def cleanup_requirement(request_id: int) -> None:
                 delete(SupplierBlacklist).where(SupplierBlacklist.source_request_id == request_id)
             )
             await session.execute(
+                delete(PurchaseReviewItem).where(
+                    PurchaseReviewItem.review_id.in_(
+                        select(PurchaseReview.review_id).where(
+                            PurchaseReview.request_id == request_id
+                        )
+                    )
+                )
+            )
+            await session.execute(
                 delete(PurchaseReview).where(PurchaseReview.request_id == request_id)
             )
             await session.execute(
@@ -84,6 +95,9 @@ async def cleanup_requirement(request_id: int) -> None:
             )
             await session.execute(
                 delete(PurchaseOperationLog).where(PurchaseOperationLog.request_id == request_id)
+            )
+            await session.execute(
+                delete(PurchaseRequestItem).where(PurchaseRequestItem.request_id == request_id)
             )
             await session.execute(
                 delete(PurchaseRequest).where(PurchaseRequest.request_id == request_id)
@@ -392,7 +406,7 @@ async def test_complete_procurement_flow_with_rejection_and_resubmission() -> No
             assert receipt_saved.json()["data"]["version"] == 11
 
             complete_path = f"/api/v1/requirements/{request_id}/complete"
-            completed = await call(
+            incomplete = await call(
                 client,
                 "POST",
                 complete_path,
@@ -402,9 +416,48 @@ async def test_complete_procurement_flow_with_rejection_and_resubmission() -> No
                     "action_token": f"E2E-COMPLETE-{uuid4().hex}",
                 },
             )
+            assert incomplete.status_code == 400
+            assert incomplete.json()["code"] == "MISSING_REQUIRED_FIELDS"
+
+            detail_before_final_receipt = await call(
+                client,
+                "GET",
+                f"/api/v1/requirements/{request_id}",
+                "test-user-04",
+            )
+            execution_id = detail_before_final_receipt.json()["data"]["executions"][0][
+                "execution_id"
+            ]
+            final_receipt = await call(
+                client,
+                "POST",
+                f"/api/v1/requirements/{request_id}/receipts",
+                "test-user-04",
+                json={
+                    "expected_version": 11,
+                    "action_token": f"E2E-RECEIPT-{uuid4().hex}",
+                    "execution_id": execution_id,
+                    "warehouse_location": "TEST-E2E-A区",
+                    "received_quantity": "1",
+                    "receipt_remark": "延期到货补收",
+                },
+            )
+            assert final_receipt.status_code == 200, final_receipt.text
+            assert final_receipt.json()["data"]["version"] == 12
+
+            completed = await call(
+                client,
+                "POST",
+                complete_path,
+                "test-user-04",
+                json={
+                    "expected_version": 12,
+                    "action_token": f"E2E-COMPLETE-{uuid4().hex}",
+                },
+            )
             assert completed.status_code == 200, completed.text
             assert completed.json()["data"]["status"] == "COMPLETED"
-            assert completed.json()["data"]["version"] == 12
+            assert completed.json()["data"]["version"] == 13
             assert completed.json()["data"]["current_handler"] is None
 
             detail_path = f"/api/v1/requirements/{request_id}"
@@ -454,7 +507,7 @@ async def test_complete_procurement_flow_with_rejection_and_resubmission() -> No
                         )
                     ).all()
                 )
-            assert log_count == 8
+            assert log_count == 10
             assert notification_count == 7
             assert notification_event_types[:4] == [
                 "REQUIREMENT_PENDING_REVIEW",

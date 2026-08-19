@@ -18,6 +18,9 @@ from procurement_platform.application.assistant.tooling import (
     UpdateReviewDraftResult,
     UpdateWarehouseReceiptDraftResult,
 )
+from procurement_platform.application.assistant.tooling.multi_item import (
+    UpdateMultiItemDraftResult,
+)
 from procurement_platform.application.building_manager.card_factory import (
     BuildingManagerCardFactory,
 )
@@ -68,6 +71,14 @@ class LegacyToolResultPresenter:
         if isinstance(result, UpdatePurchaseDraftResult):
             if result.status == "SUCCESS" and result.fields_complete:
                 return await self._applicant_card(result, context, external_message_id)
+            return None
+        if isinstance(result, UpdateMultiItemDraftResult):
+            if (
+                result.status == "SUCCESS"
+                and result.fields_complete
+                and result.requirement_id is not None
+            ):
+                return await self._multi_item_applicant_card(result, context, external_message_id)
             return None
         if isinstance(result, UpdateReviewDraftResult):
             if result.status == "SUCCESS" and result.fields_complete:
@@ -120,6 +131,22 @@ class LegacyToolResultPresenter:
         await self._append_reply(context, external_message_id, notice)
         return AssistantInteractionResponse(
             view=BuildingManagerCardFactory().detail(detail, notice=notice)
+        )
+
+    async def _multi_item_applicant_card(
+        self,
+        result: UpdateMultiItemDraftResult,
+        context: AssistantToolContext,
+        external_message_id: str,
+    ) -> AssistantResponse:
+        assert result.requirement_id is not None
+        detail = await self._backend_client.get_requirement(
+            identity=self._identity(context), requirement_id=result.requirement_id
+        )
+        notice = "多采购项草稿已完整，请在正式确认卡中检查并提交。"
+        await self._append_reply(context, external_message_id, notice)
+        return AssistantInteractionResponse(
+            view=ApplicantCardFactory().detail(detail, notice=notice, confirmation_mode=True)
         )
 
     async def _purchase_card(

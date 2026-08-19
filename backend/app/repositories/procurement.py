@@ -9,13 +9,111 @@ from app.models.procurement import (
     PurchaseExecution,
     PurchaseOperationLog,
     PurchaseRequest,
+    PurchaseRequestItem,
     PurchaseReview,
+    PurchaseReviewItem,
     Supplier,
     WarehouseReceipt,
 )
 
 
 class ProcurementRepository:
+    async def list_request_items(
+        self, session: AsyncSession, request_id: int, *, include_inactive: bool = False
+    ) -> list[PurchaseRequestItem]:
+        statement = select(PurchaseRequestItem).where(PurchaseRequestItem.request_id == request_id)
+        if not include_inactive:
+            statement = statement.where(PurchaseRequestItem.is_active.is_(True))
+        return list((await session.scalars(statement.order_by(PurchaseRequestItem.item_no))).all())
+
+    async def get_request_item(
+        self, session: AsyncSession, request_item_id: int
+    ) -> PurchaseRequestItem | None:
+        return await session.get(PurchaseRequestItem, request_item_id)
+
+    async def list_review_items(
+        self, session: AsyncSession, review_id: int
+    ) -> list[PurchaseReviewItem]:
+        return list(
+            (
+                await session.scalars(
+                    select(PurchaseReviewItem)
+                    .where(PurchaseReviewItem.review_id == review_id)
+                    .order_by(PurchaseReviewItem.request_item_id)
+                )
+            ).all()
+        )
+
+    async def list_review_items_by_request(
+        self, session: AsyncSession, request_id: int
+    ) -> list[PurchaseReviewItem]:
+        return list(
+            (
+                await session.scalars(
+                    select(PurchaseReviewItem)
+                    .join(PurchaseReview, PurchaseReview.review_id == PurchaseReviewItem.review_id)
+                    .where(PurchaseReview.request_id == request_id)
+                    .order_by(PurchaseReviewItem.review_id, PurchaseReviewItem.request_item_id)
+                )
+            ).all()
+        )
+
+    async def get_execution_by_item(
+        self, session: AsyncSession, request_item_id: int, *, for_update: bool = False
+    ) -> PurchaseExecution | None:
+        statement = select(PurchaseExecution).where(
+            PurchaseExecution.request_item_id == request_item_id
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return await session.scalar(statement)
+
+    async def list_executions_by_request(
+        self, session: AsyncSession, request_id: int
+    ) -> list[PurchaseExecution]:
+        return list(
+            (
+                await session.scalars(
+                    select(PurchaseExecution)
+                    .where(PurchaseExecution.request_id == request_id)
+                    .order_by(PurchaseExecution.request_item_id)
+                )
+            ).all()
+        )
+
+    async def list_receipts_by_execution(
+        self, session: AsyncSession, execution_id: int
+    ) -> list[WarehouseReceipt]:
+        return list(
+            (
+                await session.scalars(
+                    select(WarehouseReceipt)
+                    .where(WarehouseReceipt.execution_id == execution_id)
+                    .order_by(WarehouseReceipt.received_at, WarehouseReceipt.receipt_id)
+                )
+            ).all()
+        )
+
+    async def list_receipts_by_request(
+        self, session: AsyncSession, request_id: int
+    ) -> list[WarehouseReceipt]:
+        return list(
+            (
+                await session.scalars(
+                    select(WarehouseReceipt)
+                    .where(WarehouseReceipt.request_id == request_id)
+                    .order_by(WarehouseReceipt.received_at, WarehouseReceipt.receipt_id)
+                )
+            ).all()
+        )
+
+    async def get_received_total(self, session: AsyncSession, execution_id: int) -> object:
+        return await session.scalar(
+            select(func.coalesce(func.sum(WarehouseReceipt.received_quantity), 0)).where(
+                WarehouseReceipt.execution_id == execution_id
+            )
+        )
+
     async def get_request(
         self,
         session: AsyncSession,
@@ -51,7 +149,10 @@ class ProcurementRepository:
         request_id: int,
     ) -> PurchaseExecution | None:
         return await session.scalar(
-            select(PurchaseExecution).where(PurchaseExecution.request_id == request_id)
+            select(PurchaseExecution)
+            .where(PurchaseExecution.request_id == request_id)
+            .order_by(PurchaseExecution.request_item_id)
+            .limit(1)
         )
 
     async def get_receipt(
@@ -60,7 +161,10 @@ class ProcurementRepository:
         request_id: int,
     ) -> WarehouseReceipt | None:
         return await session.scalar(
-            select(WarehouseReceipt).where(WarehouseReceipt.request_id == request_id)
+            select(WarehouseReceipt)
+            .where(WarehouseReceipt.request_id == request_id)
+            .order_by(WarehouseReceipt.received_at, WarehouseReceipt.receipt_id)
+            .limit(1)
         )
 
     async def get_active_review(

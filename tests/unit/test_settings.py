@@ -25,7 +25,40 @@ def test_settings_load_and_hide_secret() -> None:
     settings = Settings.from_env(environment())
     assert settings.backend_request_timeout_seconds == 10
     assert settings.llm_enabled is False
+    assert settings.fault_knowledge_path == "knowledge/fault-guidance"
+    assert settings.fault_state_ttl_seconds == 86400
+    assert settings.fault_guidance_enabled is False
     assert "secret" not in repr(settings)
+
+
+def test_fault_guidance_settings_can_be_overridden() -> None:
+    settings = Settings.from_env(
+        environment(FAULT_KNOWLEDGE_PATH="custom/knowledge", FAULT_STATE_TTL_SECONDS="120")
+    )
+    assert settings.fault_knowledge_path == "custom/knowledge"
+    assert settings.fault_state_ttl_seconds == 120
+    with pytest.raises(ValueError, match="knowledge path"):
+        Settings.from_env(environment(FAULT_KNOWLEDGE_PATH=" "))
+
+
+def test_fault_guidance_requires_llm_and_redis() -> None:
+    with pytest.raises(ValueError, match="LLM"):
+        Settings.from_env(environment(PROCUREMENT_FAULT_GUIDANCE_ENABLED="true"))
+    with pytest.raises(ValueError, match="REDIS_URL"):
+        Settings.from_env(
+            environment(
+                PROCUREMENT_FAULT_GUIDANCE_ENABLED="true",
+                PROCUREMENT_LLM_ENABLED="true",
+            )
+        )
+    settings = Settings.from_env(
+        environment(
+            PROCUREMENT_FAULT_GUIDANCE_ENABLED="true",
+            PROCUREMENT_LLM_ENABLED="true",
+            PROCUREMENT_REDIS_URL="redis://localhost:6379/0",
+        )
+    )
+    assert settings.fault_guidance_enabled is True
 
 
 def test_llm_setting_is_explicit_and_strict() -> None:

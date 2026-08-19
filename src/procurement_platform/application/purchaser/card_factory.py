@@ -1,6 +1,9 @@
+# ruff: noqa: RUF001
+
 from uuid import uuid4
 
 from procurement_platform.application.card_values import quantity_text
+from procurement_platform.application.multi_item_presenter import multi_item_markdown
 from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.enums import RequirementStatus
 from procurement_platform.domain.interaction import (
@@ -122,7 +125,19 @@ class PurchaserCardFactory:
                 )
             )
         )
-        if detail.status is RequirementStatus.PURCHASING:
+        if detail.items:
+            elements.append(MarkdownBlock(markdown=multi_item_markdown(detail)))
+            elements.append(
+                MarkdownBlock(
+                    markdown=(
+                        f"采购进度：{len(detail.executions)} / "
+                        f"{sum(1 for item in detail.items if item.is_active)} 项已执行"
+                    )
+                )
+            )
+        active_items = tuple(item for item in detail.items if item.is_active)
+        is_multi_item = len(active_items) > 1
+        if detail.status is RequirementStatus.PURCHASING and not is_multi_item:
             specs = (
                 (
                     "actual_unit_price",
@@ -182,24 +197,80 @@ class PurchaserCardFactory:
                 ),
             )
         if detail.status is RequirementStatus.PURCHASING:
-            actions[0:0] = [
+            executed = {value.request_item_id for value in detail.executions}
+            actions.extend(
                 ActionButton(
-                    action_id="purchaser.save_purchase_fields",
-                    label="保存采购信息",
+                    action_id="purchaser.open_purchase_item",
+                    label=f"采购 {item.item_no}. {item.item_name}",
                     value={
                         "requirement_id": detail.requirement_id,
-                        "expected_version": detail.version,
+                        "request_item_id": item.request_item_id,
                     },
                     style="primary",
-                ),
+                )
+                for item in detail.items
+                if item.is_active and item.request_item_id not in executed
+            )
+            if not is_multi_item:
+                actions.insert(
+                    0,
+                    ActionButton(
+                        action_id="purchaser.save_purchase_fields",
+                        label="保存采购信息",
+                        value={
+                            "requirement_id": detail.requirement_id,
+                            "expected_version": detail.version,
+                        },
+                        style="primary",
+                    ),
+                )
+            actions.insert(
+                1 if not is_multi_item else 0,
                 ActionButton(
                     action_id="purchaser.prepare_submit_warehouse",
                     label="提交仓库",
                     value={"requirement_id": detail.requirement_id},
                 ),
-            ]
+            )
         return InteractionView(
             title="采购员采购执行", elements=tuple(elements), actions=tuple(actions)
+        )
+
+    def purchase_item_form(
+        self, detail: RequirementDetail, request_item_id: int
+    ) -> InteractionView:
+        item = next(value for value in detail.items if value.request_item_id == request_item_id)
+        return InteractionView(
+            title=f"采购 {item.item_no}. {item.item_name}",
+            elements=(
+                MarkdownBlock(
+                    markdown=f"数量：{quantity_text(item.quantity)}{item.unit}\n\n"
+                    f"品牌/型号：{item.brand_snapshot or '未指定'} / "
+                    f"{item.model_snapshot or '未指定'}"
+                ),
+                TextInput(name="supplier_id", label="最终供应商 ID", required=True),
+                TextInput(name="actual_unit_price", label="实际单价", required=True),
+                TextInput(name="tax_rate", label="税率（%）", required=False),
+                TextInput(name="purchase_remark", label="采购备注", required=False),
+            ),
+            actions=(
+                ActionButton(
+                    action_id="purchaser.save_purchase_item",
+                    label="确认采购此项",
+                    value={
+                        "requirement_id": detail.requirement_id,
+                        "request_item_id": request_item_id,
+                        "expected_version": detail.version,
+                        "action_token": str(uuid4()),
+                    },
+                    style="primary",
+                ),
+                ActionButton(
+                    action_id="purchaser.open_requirement",
+                    label="返回",
+                    value={"requirement_id": detail.requirement_id},
+                ),
+            ),
         )
 
     def listing(self, page: RequirementPage) -> InteractionView:
@@ -377,12 +448,32 @@ class PurchaserCardFactory:
             ),
         )
 
+    def service_completion_confirmation(
+        self, detail: RequirementDetail, token: str
+    ) -> InteractionView:
+        return InteractionView(
+            title="确认完成服务类采购",
+            elements=(MarkdownBlock(markdown=multi_item_markdown(detail)),),
+            actions=(
+                ActionButton(
+                    action_id="purchaser.confirm_submit_warehouse",
+                    label="确认完成采购",
+                    value={
+                        "requirement_id": detail.requirement_id,
+                        "expected_version": detail.version,
+                        "action_token": token,
+                    },
+                    style="primary",
+                ),
+            ),
+        )
+
     def result(self, detail: RequirementDetail) -> InteractionView:
         purchase = detail.purchase_fields
         applicant = detail.applicant_fields
         review = detail.review_fields
         return InteractionView(
-            title="已提交仓库",
+            title=("采购已完成" if detail.status is RequirementStatus.COMPLETED else "已提交仓库"),
             elements=(
                 KeyValueSection(
                     fields=(

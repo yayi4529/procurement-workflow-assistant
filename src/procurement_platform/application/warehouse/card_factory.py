@@ -1,6 +1,11 @@
 from decimal import Decimal
+from uuid import uuid4
 
 from procurement_platform.application.card_values import quantity_text
+from procurement_platform.application.multi_item_presenter import (
+    item_is_complete,
+    multi_item_markdown,
+)
 from procurement_platform.application.status_labels import requirement_status_label
 from procurement_platform.domain.interaction import (
     ActionButton,
@@ -53,6 +58,20 @@ class WarehouseCardFactory:
                 )
             )
         )
+        if detail.items:
+            elements.append(MarkdownBlock(markdown=multi_item_markdown(detail)))
+            execution_by_item = {value.request_item_id: value for value in detail.executions}
+            for item in detail.items:
+                execution = execution_by_item.get(item.request_item_id)
+                if not item.is_active or not item.requires_warehouse or execution is None:
+                    continue
+                elements.append(
+                    TextInput(
+                        name=f"receipt_quantity_{execution.execution_id}",
+                        label=f"{item.item_no}. {item.item_name} 本次入库数量",
+                        required=False,
+                    )
+                )
         elements.extend(
             (
                 TextInput(
@@ -81,6 +100,25 @@ class WarehouseCardFactory:
             title="仓库入库处理",
             elements=tuple(elements),
             actions=(
+                *(
+                    ActionButton(
+                        action_id="warehouse.append_receipt",
+                        label=f"入库 {item.item_no}. {item.item_name}",
+                        value={
+                            "requirement_id": detail.requirement_id,
+                            "execution_id": execution.execution_id,
+                            "expected_version": detail.version,
+                            "action_token": str(uuid4()),
+                        },
+                        style="primary",
+                    )
+                    for item in detail.items
+                    for execution in detail.executions
+                    if item.is_active
+                    and item.requires_warehouse
+                    and execution.request_item_id == item.request_item_id
+                    and not item_is_complete(item)
+                ),
                 ActionButton(
                     action_id="warehouse.save_fields",
                     label="保存入库信息",

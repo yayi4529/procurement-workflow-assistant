@@ -90,9 +90,15 @@ class FeishuInteractionRenderer:
             else:
                 raise TypeError(f"unsupported interaction element: {type(element).__name__}")
         if form_elements:
-            form_elements.extend(
-                self._render_button(button, form_submit=True) for button in view.actions
-            )
+            button_name_counts: dict[str, int] = {}
+            for button in view.actions:
+                base_name = button.action_id.replace(".", "_")
+                occurrence = button_name_counts.get(base_name, 0) + 1
+                button_name_counts[base_name] = occurrence
+                form_name = base_name if occurrence == 1 else f"{base_name}_{occurrence}"
+                form_elements.append(
+                    self._render_button(button, form_submit=True, form_name=form_name)
+                )
             elements.append(
                 {
                     "tag": "form",
@@ -119,7 +125,9 @@ class FeishuInteractionRenderer:
         }
 
     @staticmethod
-    def _render_button(button: ActionButton, *, form_submit: bool) -> JsonObject:
+    def _render_button(
+        button: ActionButton, *, form_submit: bool, form_name: str | None = None
+    ) -> JsonObject:
         rendered: JsonObject = {
             "tag": "button",
             "text": {"tag": "plain_text", "content": button.label},
@@ -128,5 +136,5 @@ class FeishuInteractionRenderer:
         }
         if form_submit:
             rendered["action_type"] = "form_submit"
-            rendered["name"] = button.action_id.replace(".", "_")
+            rendered["name"] = form_name or button.action_id.replace(".", "_")
         return rendered

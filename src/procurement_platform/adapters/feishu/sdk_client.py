@@ -190,7 +190,15 @@ class LarkOapiTransport:
         success = getattr(response, "success", lambda: False)()
         if not success:
             code = getattr(response, "code", "unknown")
-            raise RuntimeError(f"Feishu SDK request failed with code {code}")
+            message = getattr(response, "msg", None)
+            log_id_getter = getattr(response, "get_log_id", None)
+            log_id = log_id_getter() if callable(log_id_getter) else None
+            details = f"code {code}"
+            if isinstance(message, str) and message:
+                details += f", message {message}"
+            if isinstance(log_id, str) and log_id:
+                details += f", log_id {log_id}"
+            raise RuntimeError(f"Feishu SDK request failed with {details}")
         data = getattr(response, "data", None)
         message_id = getattr(getattr(data, "message", None), "message_id", None)
         return FeishuSdkResult(message_id=message_id)

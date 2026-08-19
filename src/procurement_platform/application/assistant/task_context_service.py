@@ -5,9 +5,14 @@ encoded under reserved ``collected_data`` keys until a native backend contract i
 available.  Business facts are always rebuilt from authoritative backend models.
 """
 
+import json
+
+from pydantic import ValidationError as PydanticValidationError
+
 from procurement_platform.domain.assistant_context import (
     AgentTaskState,
     BusinessFacts,
+    MultiItemRequestDraft,
     PendingChoice,
     StoredReference,
 )
@@ -84,6 +89,15 @@ class AgentTaskStateService:
             if key.startswith(f"{_TASK_PREFIX}known:")
         }
         unresolved = data.get(f"{_TASK_PREFIX}unresolved")
+        raw_request_draft = data.get(f"{_TASK_PREFIX}request_draft")
+        request_draft = None
+        if isinstance(raw_request_draft, str):
+            try:
+                parsed = json.loads(raw_request_draft)
+                if isinstance(parsed, dict):
+                    request_draft = MultiItemRequestDraft.model_validate(parsed)
+            except (json.JSONDecodeError, PydanticValidationError):
+                request_draft = None
         return AgentTaskState(
             active_goal=data.get(f"{_TASK_PREFIX}goal")
             if isinstance(data.get(f"{_TASK_PREFIX}goal"), str)
@@ -99,6 +113,7 @@ class AgentTaskStateService:
                 if isinstance(data.get(f"{_TASK_PREFIX}last_capability"), str)
                 else None
             ),
+            request_draft=request_draft,
         )
 
     async def save(
@@ -108,6 +123,7 @@ class AgentTaskStateService:
         conversation_id: int,
         session: AgentSessionState | None,
         task: AgentTaskState,
+        purchase_request_id: int | None = None,
     ) -> None:
         base = (
             AgentSessionStateUpdate.model_validate(
@@ -134,6 +150,8 @@ class AgentTaskStateService:
             data[f"{_TASK_PREFIX}pending_source"] = task.pending_choice.source_capability
         if task.last_observation_capability:
             data[f"{_TASK_PREFIX}last_capability"] = task.last_observation_capability
+        if task.request_draft is not None:
+            data[f"{_TASK_PREFIX}request_draft"] = task.request_draft.model_dump_json()
         await self._backend.update_agent_state(
             identity=identity,
             conversation_id=conversation_id,
@@ -141,6 +159,11 @@ class AgentTaskStateService:
                 update={
                     "collected_data": data,
                     "awaiting_confirmation": task.pending_confirmation,
+                    "purchase_request_id": (
+                        purchase_request_id
+                        if purchase_request_id is not None
+                        else base.purchase_request_id
+                    ),
                 }
             ),
         )

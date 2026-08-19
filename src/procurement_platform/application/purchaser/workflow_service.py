@@ -1,3 +1,5 @@
+# ruff: noqa: RUF001
+
 from uuid import UUID, uuid4
 
 from procurement_platform.application.purchaser.card_factory import PurchaserCardFactory
@@ -70,6 +72,43 @@ class PurchaserWorkflowService:
         self, identity: PlatformIdentity, requirement_id: int
     ) -> InteractionView:
         return self._cards.detail(await self._detail(identity, requirement_id))
+
+    async def open_purchase_item(
+        self, identity: PlatformIdentity, requirement_id: int, request_item_id: int
+    ) -> InteractionView:
+        return self._cards.purchase_item_form(
+            await self._detail(identity, requirement_id), request_item_id
+        )
+
+    async def save_purchase_item(
+        self,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        request_item_id: int,
+        expected_version: int,
+        action_token: UUID,
+        fields: PurchaseFieldsPatch,
+    ) -> InteractionView:
+        latest = await self._detail(identity, requirement_id)
+        if latest.version != expected_version:
+            return self._cards.detail(latest, "版本已变化，请重新填写。")
+        try:
+            await self._backend.update_purchase_item(
+                identity=identity,
+                requirement_id=requirement_id,
+                request_item_id=request_item_id,
+                expected_version=latest.version,
+                action_token=action_token,
+                fields=fields,
+            )
+        except DuplicateOperationError:
+            pass
+        except BackendApplicationError as exc:
+            refreshed = await self._detail(identity, requirement_id)
+            if exc.error_code == "ITEM_ALREADY_PURCHASED":
+                return self._cards.detail(refreshed, "该采购项已经完成采购, 未创建重复执行。")
+            raise
+        return await self.open_requirement(identity, requirement_id)
 
     async def start_purchase(
         self,
@@ -152,10 +191,14 @@ class PurchaserWorkflowService:
         latest = await self._detail(identity, requirement_id)
         if (
             latest.status is not RequirementStatus.PURCHASING
-            or not latest.fields_complete
             or AllowedRequirementAction.SUBMIT_WAREHOUSE not in latest.allowed_actions
+            or {value.request_item_id for value in latest.executions}
+            != {value.request_item_id for value in latest.items if value.is_active}
         ):
             return self._cards.detail(latest, "后端当前字段或状态不允许提交仓库。")
+        active_items = tuple(item for item in latest.items if item.is_active)
+        if active_items and not any(item.requires_warehouse for item in active_items):
+            return self._cards.service_completion_confirmation(latest, str(uuid4()))
         candidates = await self._backend.list_handler_candidates(
             identity=identity,
             requirement_id=requirement_id,
@@ -175,17 +218,19 @@ class PurchaserWorkflowService:
         identity: PlatformIdentity,
         requirement_id: int,
         expected_version: int,
-        employee_id: int,
+        employee_id: int | None,
         action_token: UUID,
     ) -> InteractionView:
         latest = await self._detail(identity, requirement_id)
-        candidates = await self._backend.list_handler_candidates(
-            identity=identity,
-            requirement_id=requirement_id,
-            target_role=RoleCode.WAREHOUSE_MANAGER,
-        )
-        if not any(x.employee_id == employee_id for x in candidates.items):
-            return self._cards.warehouse_selection(latest, candidates)
+        requires_warehouse = any(item.requires_warehouse for item in latest.items if item.is_active)
+        if requires_warehouse:
+            candidates = await self._backend.list_handler_candidates(
+                identity=identity,
+                requirement_id=requirement_id,
+                target_role=RoleCode.WAREHOUSE_MANAGER,
+            )
+            if not any(x.employee_id == employee_id for x in candidates.items):
+                return self._cards.warehouse_selection(latest, candidates)
         if latest.version != expected_version:
             return self._cards.detail(latest, "版本已变化, 请重新确认。")
         try:
@@ -198,7 +243,10 @@ class PurchaserWorkflowService:
             )
         except (DuplicateOperationError, ConcurrentModificationError):
             refreshed = await self._detail(identity, requirement_id)
-            if refreshed.status is RequirementStatus.PENDING_WAREHOUSE:
+            if refreshed.status in {
+                RequirementStatus.PENDING_WAREHOUSE,
+                RequirementStatus.COMPLETED,
+            }:
                 return self._cards.result(refreshed)
             else:
                 return self._cards.detail(refreshed, "操作未完成, 已加载后端最新状态。")

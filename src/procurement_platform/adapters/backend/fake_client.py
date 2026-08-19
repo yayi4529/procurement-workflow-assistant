@@ -27,6 +27,8 @@ from procurement_platform.domain.enums import (
     AgentConversationStatus,
     AgentMessageSender,
     AllowedRequirementAction,
+    ItemFulfillmentStatus,
+    RequestType,
     RequirementStatus,
     RequirementView,
     ReviewStatus,
@@ -45,17 +47,23 @@ from procurement_platform.domain.errors import (
 )
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.requirement import (
+    AppendReceiptCommand,
     ApplicantFields,
     ApplicantFieldsPatch,
     ApplicantFieldsSaveResult,
+    FieldsSaveResult,
     HandlerCandidates,
     ProductRecommendations,
+    PurchaseExecutionView,
     PurchaseFields,
     PurchaseFieldsPatch,
     PurchaseFieldsSaveResult,
     PurchaseHistoryRecommendations,
     PurchaseRecord,
     PurchaseRecordPage,
+    PurchaseRequestItem,
+    PurchaseReviewItem,
+    RequestItemDraft,
     RequirementBuilding,
     RequirementCompletionResult,
     RequirementDetail,
@@ -68,6 +76,7 @@ from procurement_platform.domain.requirement import (
     ReviewFields,
     ReviewFieldsPatch,
     ReviewFieldsSaveResult,
+    ReviewItemDraft,
     ReviewRecordSummary,
     SupplierDetail,
     SupplierPage,
@@ -79,6 +88,7 @@ from procurement_platform.domain.requirement import (
     WarehouseFields,
     WarehouseFieldsPatch,
     WarehouseFieldsSaveResult,
+    WarehouseReceiptView,
 )
 from procurement_platform.domain.user import CurrentUser
 
@@ -384,6 +394,228 @@ class FakeBackendClient:
         self._record("get_requirement")
         return self._require_requirement(requirement_id)
 
+    async def replace_request_items(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        items: tuple[RequestItemDraft, ...],
+        request_type: RequestType | None = None,
+        source_asset_id: int | None = None,
+    ) -> FieldsSaveResult:
+        self._record("replace_request_items")
+        detail = self._require_requirement(requirement_id)
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "采购申请版本已变化")
+        if detail.status not in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}:
+            raise InvalidStatusError("INVALID_STATUS", "当前状态不允许编辑采购项")
+        existing = {value.request_item_id: value for value in detail.items}
+        next_id = max(existing, default=requirement_id * 1000) + 1
+        next_no = max((value.item_no for value in detail.items), default=0) + 1
+        mapped = []
+        for value in items:
+            request_item_id = value.request_item_id or next_id
+            if value.request_item_id is None:
+                next_id += 1
+            previous = existing.get(request_item_id)
+            item_no = previous.item_no if previous is not None else (value.item_no or next_no)
+            next_no = max(next_no, item_no + 1)
+            mapped.append(
+                PurchaseRequestItem(
+                    request_item_id=request_item_id,
+                    item_no=item_no,
+                    item_kind=value.item_kind,
+                    item_name=value.item_name,
+                    quantity=value.quantity,
+                    unit=value.unit,
+                    requires_warehouse=(
+                        value.requires_warehouse
+                        if value.requires_warehouse is not None
+                        else value.item_kind.value != "SERVICE"
+                    ),
+                    is_active=True,
+                    fulfillment_status=ItemFulfillmentStatus.PENDING_PURCHASE,
+                    equipment_category_id=value.equipment_category_id,
+                    equipment_model_id=value.equipment_model_id,
+                    brand_snapshot=value.brand_snapshot,
+                    model_snapshot=value.model_snapshot,
+                    item_reason=value.item_reason,
+                    remark=value.remark,
+                )
+            )
+        updated = detail.model_copy(
+            update={
+                "items": tuple(mapped),
+                "version": expected_version + 1,
+                "request_type": request_type or detail.request_type,
+                "source_asset": (
+                    {"asset_id": source_asset_id}
+                    if source_asset_id is not None
+                    else detail.source_asset
+                ),
+            }
+        )
+        self._requirements[requirement_id] = updated
+        return FieldsSaveResult(
+            requirement_id=requirement_id,
+            status=updated.status,
+            version=updated.version,
+            missing_fields=(),
+            fields_complete=True,
+        )
+
+    async def update_review_items(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        expected_version: int,
+        items: tuple[ReviewItemDraft, ...],
+    ) -> FieldsSaveResult:
+        self._record("update_review_items")
+        detail = self._require_requirement(requirement_id)
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "采购申请版本已变化")
+        request_items = {value.request_item_id: value for value in detail.items if value.is_active}
+        if {value.request_item_id for value in items} != set(request_items):
+            raise MissingRequiredFieldsError("MISSING_REQUIRED_FIELDS", "审核项不完整")
+        mapped = tuple(
+            PurchaseReviewItem(
+                review_item_id=requirement_id * 1000 + index,
+                request_item_id=value.request_item_id,
+                item_kind_snapshot=request_items[value.request_item_id].item_kind,
+                item_name_snapshot=request_items[value.request_item_id].item_name,
+                quantity_snapshot=request_items[value.request_item_id].quantity,
+                unit_snapshot=request_items[value.request_item_id].unit,
+                proposed_supplier_id=value.proposed_supplier_id,
+                estimated_unit_price=value.estimated_unit_price,
+                estimated_total_price=value.estimated_total_price,
+            )
+            for index, value in enumerate(items, start=1)
+        )
+        updated = detail.model_copy(
+            update={"review_items": mapped, "version": expected_version + 1}
+        )
+        self._requirements[requirement_id] = updated
+        return FieldsSaveResult(
+            requirement_id=requirement_id,
+            status=updated.status,
+            version=updated.version,
+            missing_fields=(),
+            fields_complete=True,
+        )
+
+    async def update_purchase_item(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        request_item_id: int,
+        expected_version: int,
+        action_token: UUID,
+        fields: PurchaseFieldsPatch,
+    ) -> FieldsSaveResult:
+        self._record("update_purchase_item")
+        if action_token in self._action_results:
+            raise DuplicateOperationError("DUPLICATE_OPERATION", "操作已执行")
+        detail = self._require_requirement(requirement_id)
+        if detail.version != expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "采购申请版本已变化")
+        item = next(value for value in detail.items if value.request_item_id == request_item_id)
+        if any(value.request_item_id == request_item_id for value in detail.executions):
+            raise BackendApplicationError("ITEM_ALREADY_PURCHASED", "该采购项已经完成采购执行")
+        if (
+            fields.supplier_id is None
+            or fields.actual_unit_price is None
+            or fields.purchased_at is None
+        ):
+            raise MissingRequiredFieldsError("MISSING_REQUIRED_FIELDS", "采购执行字段不完整")
+        total = str(
+            (Decimal(item.quantity) * Decimal(fields.actual_unit_price)).quantize(Decimal("0.01"))
+        )
+        execution = PurchaseExecutionView(
+            execution_id=requirement_id * 1000 + request_item_id,
+            request_item_id=request_item_id,
+            supplier_id=fields.supplier_id,
+            supplier_name=f"Supplier {fields.supplier_id}",
+            purchased_quantity=item.quantity,
+            actual_unit_price=fields.actual_unit_price,
+            actual_total_price=total,
+            tax_rate=fields.tax_rate,
+            purchased_at=fields.purchased_at,
+            purchase_remark=fields.purchase_remark,
+        )
+        executions = (
+            *(value for value in detail.executions if value.request_item_id != request_item_id),
+            execution,
+        )
+        updated = detail.model_copy(
+            update={"executions": executions, "version": expected_version + 1}
+        )
+        self._requirements[requirement_id] = updated
+        self._action_results[action_token] = RequirementTransitionResult(
+            requirement_id=updated.requirement_id,
+            requirement_no=updated.requirement_no,
+            status=updated.status,
+            version=updated.version,
+            current_handler=updated.current_handler,
+        )
+        return FieldsSaveResult(
+            requirement_id=requirement_id,
+            status=updated.status,
+            version=updated.version,
+            missing_fields=(),
+            fields_complete=True,
+        )
+
+    async def append_receipt(
+        self,
+        *,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        command: AppendReceiptCommand,
+    ) -> FieldsSaveResult:
+        self._record("append_receipt")
+        detail = self._require_requirement(requirement_id)
+        if detail.version != command.expected_version:
+            raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "采购申请版本已变化")
+        execution = next(
+            value for value in detail.executions if value.execution_id == command.execution_id
+        )
+        received = sum(
+            (
+                Decimal(value.received_quantity)
+                for value in detail.receipts
+                if value.execution_id == execution.execution_id
+            ),
+            Decimal("0"),
+        )
+        if received + Decimal(command.received_quantity) > Decimal(execution.purchased_quantity):
+            raise BackendApplicationError("OVER_RECEIPT", "累计收货数量不能超过采购数量")
+        receipt = WarehouseReceiptView(
+            receipt_id=requirement_id * 10000 + len(detail.receipts) + 1,
+            execution_id=execution.execution_id,
+            warehouse_location=command.warehouse_location,
+            received_quantity=command.received_quantity,
+            receipt_remark=command.receipt_remark,
+            received_at=datetime.now(UTC),
+        )
+        updated = detail.model_copy(
+            update={
+                "receipts": (*detail.receipts, receipt),
+                "version": command.expected_version + 1,
+            }
+        )
+        self._requirements[requirement_id] = updated
+        return FieldsSaveResult(
+            requirement_id=requirement_id,
+            status=updated.status,
+            version=updated.version,
+            missing_fields=(),
+            fields_complete=True,
+        )
+
     async def list_requirements(
         self,
         *,
@@ -568,7 +800,7 @@ class FakeBackendClient:
         method: str,
         requirement_id: int,
         expected_version: int,
-        assigned_to_employee_id: int,
+        assigned_to_employee_id: int | None,
         action_token: UUID,
     ) -> RequirementTransitionResult:
         self._record(method)
@@ -1053,7 +1285,7 @@ class FakeBackendClient:
         identity: PlatformIdentity,
         requirement_id: int,
         expected_version: int,
-        assigned_to_employee_id: int,
+        assigned_to_employee_id: int | None,
         action_token: UUID,
     ) -> RequirementTransitionResult:
         self._record("submit_warehouse")
@@ -1065,7 +1297,33 @@ class FakeBackendClient:
             raise InvalidStatusError("INVALID_STATUS", "当前状态不能提交仓库")
         if detail.version != expected_version:
             raise ConcurrentModificationError("CONCURRENT_MODIFICATION", "版本冲突")
-        if not detail.fields_complete:
+        active_items = tuple(item for item in detail.items if item.is_active)
+        if active_items and {value.request_item_id for value in detail.executions} != {
+            value.request_item_id for value in active_items
+        }:
+            raise MissingRequiredFieldsError("MISSING_REQUIRED_FIELDS", "采购项尚未全部执行")
+        requires_warehouse = any(item.requires_warehouse for item in active_items)
+        if active_items and not requires_warehouse:
+            updated = detail.model_copy(
+                update={
+                    "status": RequirementStatus.COMPLETED,
+                    "version": detail.version + 1,
+                    "current_handler": None,
+                    "allowed_actions": (),
+                    "completed_at": datetime.now(UTC),
+                }
+            )
+            self._requirements[requirement_id] = updated
+            result = RequirementTransitionResult(
+                requirement_id=updated.requirement_id,
+                requirement_no=updated.requirement_no,
+                status=updated.status,
+                version=updated.version,
+                current_handler=None,
+            )
+            self._action_results[action_token] = result
+            return result
+        if not active_items and not detail.fields_complete:
             raise MissingRequiredFieldsError("MISSING_REQUIRED_FIELDS", "采购字段不完整")
         candidate = next(
             (

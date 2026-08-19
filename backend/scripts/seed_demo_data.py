@@ -28,7 +28,9 @@ from app.models.procurement import (
     PurchaseExecution,
     PurchaseOperationLog,
     PurchaseRequest,
+    PurchaseRequestItem,
     PurchaseReview,
+    PurchaseReviewItem,
     Supplier,
     SupplierBlacklist,
     WarehouseReceipt,
@@ -95,6 +97,15 @@ async def clean_demo_data(connection) -> None:
         delete(WarehouseReceipt).where(WarehouseReceipt.request_id.in_(cleanup_request_ids))
     )
     await connection.execute(
+        delete(PurchaseReviewItem).where(
+            PurchaseReviewItem.request_item_id.in_(
+                select(PurchaseRequestItem.request_item_id).where(
+                    PurchaseRequestItem.request_id.in_(cleanup_request_ids)
+                )
+            )
+        )
+    )
+    await connection.execute(
         delete(SupplierBlacklist).where(
             SupplierBlacklist.source_request_id.in_(cleanup_request_ids)
         )
@@ -104,6 +115,9 @@ async def clean_demo_data(connection) -> None:
     )
     await connection.execute(
         delete(PurchaseExecution).where(PurchaseExecution.request_id.in_(cleanup_request_ids))
+    )
+    await connection.execute(
+        delete(PurchaseRequestItem).where(PurchaseRequestItem.request_id.in_(cleanup_request_ids))
     )
     await connection.execute(
         delete(PurchaseOperationLog).where(PurchaseOperationLog.request_id.in_(cleanup_request_ids))
@@ -592,9 +606,9 @@ def request_rows() -> list[dict]:
         ),
         (
             91009,
-            "TEST-PR-COMPLETED-MORE",
+            "TEST-PR-COMPLETED-EXACT-2",
             "COMPLETED",
-            "测试超量入库设备",
+            "测试第二组等量入库设备",
             9,
             None,
             T0,
@@ -689,6 +703,59 @@ def review_rows() -> list[dict]:
     return result
 
 
+def request_item_rows() -> list[dict]:
+    return [
+        {
+            "request_item_id": 98000 + (row["request_id"] - 91000),
+            "request_id": row["request_id"],
+            "item_no": 1,
+            "item_kind": "EQUIPMENT",
+            "item_name": row["device_name"],
+            "brand_snapshot": row["brand"],
+            "model_snapshot": row["model"],
+            "quantity": row["quantity"],
+            "unit": row["unit"],
+            "requires_warehouse": True,
+            "item_reason": row["application_reason"],
+            "is_active": True,
+            "remark": row["applicant_remark"],
+        }
+        for row in request_rows()
+        if row["device_name"] and row["quantity"] and row["unit"]
+    ]
+
+
+def review_item_rows() -> list[dict]:
+    requests = {row["request_id"]: row for row in request_item_rows()}
+    return [
+        {
+            "review_item_id": 99000 + (row["review_id"] - 95000),
+            "review_id": row["review_id"],
+            "request_item_id": requests[row["request_id"]]["request_item_id"],
+            "item_kind_snapshot": requests[row["request_id"]]["item_kind"],
+            "item_name_snapshot": requests[row["request_id"]]["item_name"],
+            "quantity_snapshot": requests[row["request_id"]]["quantity"],
+            "unit_snapshot": requests[row["request_id"]]["unit"],
+            "brand_snapshot": requests[row["request_id"]]["brand_snapshot"],
+            "model_snapshot": requests[row["request_id"]]["model_snapshot"],
+            "proposed_supplier_id": row["proposed_supplier_id"],
+            "proposed_supplier_name_snapshot": row["proposed_supplier_name"],
+            "supplier_contact_name": row["supplier_contact_name"],
+            "supplier_contact_info": row["supplier_contact_info"],
+            "supplier_link": row["supplier_link"],
+            "estimated_unit_price": row["estimated_unit_price"],
+            "estimated_total_price": row["estimated_total_price"],
+            "need_contract": row["need_contract"],
+            "contract_type": row["contract_type"],
+            "payment_method": row["payment_method"],
+            "expected_arrival_date": row["expected_arrival_date"],
+            "warranty_info": row["warranty_info"],
+            "item_remark": row["review_remark"],
+        }
+        for row in review_rows()
+    ]
+
+
 def execution_rows() -> list[dict]:
     rows = [
         (96006, 91006, 92001, "TEST-常规供应商A", "TEST-ACCOUNT-92001", 6),
@@ -707,6 +774,7 @@ def execution_rows() -> list[dict]:
         {
             "execution_id": execution_id,
             "request_id": request_id,
+            "request_item_id": 98000 + (request_id - 91000),
             "purchaser_employee_id": 90003,
             "purchaser_platform_type_snapshot": "TEST_PLATFORM",
             "purchaser_platform_user_id_snapshot": "test-user-03",
@@ -720,6 +788,7 @@ def execution_rows() -> list[dict]:
             "supplier_address_snapshot": "TEST-采购时地址快照",
             "contract_contact_info_snapshot": "TEST-采购时联系人快照",
             "actual_unit_price": Decimal("950.00"),
+            "purchased_quantity": Decimal(quantity),
             "actual_total_price": Decimal("950.00") * quantity,
             "tax_rate": Decimal("13.00"),
             "purchased_at": datetime(2026, 7, 6, 14, 0, 0),
@@ -734,6 +803,7 @@ def receipt_rows() -> list[dict]:
         {
             "receipt_id": 97007,
             "request_id": 91007,
+            "execution_id": 96007,
             "warehouse_employee_id": 90004,
             "warehouse_platform_type_snapshot": "TEST_PLATFORM",
             "warehouse_platform_user_id_snapshot": "test-user-04",
@@ -747,6 +817,7 @@ def receipt_rows() -> list[dict]:
         {
             "receipt_id": 97008,
             "request_id": 91008,
+            "execution_id": 96008,
             "warehouse_employee_id": 90004,
             "warehouse_platform_type_snapshot": "TEST_PLATFORM",
             "warehouse_platform_user_id_snapshot": "test-user-04",
@@ -760,14 +831,15 @@ def receipt_rows() -> list[dict]:
         {
             "receipt_id": 97009,
             "request_id": 91009,
+            "execution_id": 96009,
             "warehouse_employee_id": 90004,
             "warehouse_platform_type_snapshot": "TEST_PLATFORM",
             "warehouse_platform_user_id_snapshot": "test-user-04",
             "warehouse_name_snapshot": "测试仓库管理员",
             "warehouse_mobile_snapshot": "13800009004",
             "warehouse_location": "TEST-A区-03",
-            "received_quantity": Decimal("10.000"),
-            "receipt_remark": "申请 9 台，赠送备机 1 台；超量入库场景",
+            "received_quantity": Decimal("9.000"),
+            "receipt_remark": "申请 9 台，等量入库",
             "received_at": datetime(2026, 7, 10, 16, 0, 0),
         },
     ]
@@ -992,7 +1064,9 @@ async def seed_demo_data() -> None:
             ),
         )
         await connection.execute(insert(PurchaseRequest), request_rows())
+        await connection.execute(insert(PurchaseRequestItem), request_item_rows())
         await connection.execute(insert(PurchaseReview), review_rows())
+        await connection.execute(insert(PurchaseReviewItem), review_item_rows())
         await connection.execute(insert(PurchaseExecution), execution_rows())
         await connection.execute(insert(WarehouseReceipt), receipt_rows())
         await connection.execute(insert(SupplierBlacklist), blacklist_rows())
@@ -1188,7 +1262,7 @@ async def validate_demo_data() -> None:
     assert receipt_quantities == {
         91007: Decimal("7.000"),
         91008: Decimal("6.000"),
-        91009: Decimal("10.000"),
+        91009: Decimal("9.000"),
     }
     assert notification_statuses == {"PENDING", "SENT", "FAILED"}
     assert conversation_statuses == {"ACTIVE", "COMPLETED", "CANCELLED", "EXPIRED"}

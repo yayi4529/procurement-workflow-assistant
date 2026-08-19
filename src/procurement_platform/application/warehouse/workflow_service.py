@@ -1,5 +1,11 @@
+# ruff: noqa: RUF001
+
 from uuid import UUID, uuid4
 
+from procurement_platform.application.multi_item_presenter import (
+    request_has_summary,
+    request_is_complete,
+)
 from procurement_platform.application.warehouse.card_factory import WarehouseCardFactory
 from procurement_platform.domain.enums import (
     AllowedRequirementAction,
@@ -14,6 +20,7 @@ from procurement_platform.domain.errors import (
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.interaction import InteractionView
 from procurement_platform.domain.requirement import (
+    AppendReceiptCommand,
     RequirementCompletionResult,
     RequirementDetail,
     WarehouseFieldsPatch,
@@ -81,14 +88,58 @@ class WarehouseWorkflowService:
             notice = "实际入库数量少于申请数量, 入库备注必填。"
         return self._cards.detail(refreshed, notice)
 
+    async def append_receipt(
+        self,
+        identity: PlatformIdentity,
+        requirement_id: int,
+        execution_id: int,
+        expected_version: int,
+        action_token: UUID,
+        warehouse_location: str,
+        received_quantity: str,
+        receipt_remark: str | None,
+    ) -> InteractionView:
+        latest = await self._detail(identity, requirement_id)
+        if latest.version != expected_version:
+            return self._cards.detail(latest, "版本已变化，已刷新最新待入库数量。")
+        try:
+            await self._backend.append_receipt(
+                identity=identity,
+                requirement_id=requirement_id,
+                command=AppendReceiptCommand(
+                    expected_version=latest.version,
+                    action_token=action_token,
+                    execution_id=execution_id,
+                    warehouse_location=warehouse_location,
+                    received_quantity=received_quantity,
+                    receipt_remark=receipt_remark,
+                ),
+            )
+            return self._cards.detail(
+                await self._detail(identity, requirement_id), "本次入库已登记。"
+            )
+        except DuplicateOperationError:
+            return self._cards.detail(
+                await self._detail(identity, requirement_id), "该次入库已登记，无需重复操作。"
+            )
+        except (ConcurrentModificationError, BackendApplicationError) as exc:
+            refreshed = await self._detail(identity, requirement_id)
+            message = (
+                "入库数量超过剩余数量，已刷新最新数据。"
+                if isinstance(exc, BackendApplicationError)
+                and exc.error_code in {"OVER_RECEIPT", "WAREHOUSE_NOT_REQUIRED"}
+                else "数据已变化，已刷新最新待入库数量。"
+            )
+            return self._cards.detail(refreshed, message)
+
     async def prepare_complete(
         self, identity: PlatformIdentity, requirement_id: int
     ) -> InteractionView:
         latest = await self._detail(identity, requirement_id)
         if (
             latest.status is not RequirementStatus.PENDING_WAREHOUSE
-            or not latest.fields_complete
             or AllowedRequirementAction.COMPLETE not in latest.allowed_actions
+            or (request_has_summary(latest) and not request_is_complete(latest))
         ):
             return self._cards.detail(latest, "后端当前字段或状态不允许完成入库。")
         return self._cards.confirmation(latest, str(uuid4()))

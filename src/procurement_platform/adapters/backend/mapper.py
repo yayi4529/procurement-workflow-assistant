@@ -57,14 +57,18 @@ from procurement_platform.domain.requirement import (
     HandlerCandidates,
     ProductRecommendation,
     ProductRecommendations,
+    PurchaseExecutionView,
     PurchaseFields,
     PurchaseHistoryItem,
     PurchaseHistoryRecommendations,
     PurchaseRecord,
     PurchaseRecordPage,
+    PurchaseRequestItem,
+    PurchaseReviewItem,
     RequirementBuilding,
     RequirementCompletionResult,
     RequirementDetail,
+    RequirementFulfillmentSummary,
     RequirementHandler,
     RequirementListItem,
     RequirementPage,
@@ -82,6 +86,7 @@ from procurement_platform.domain.requirement import (
     TimelineContact,
     TimelineItem,
     WarehouseFields,
+    WarehouseReceiptView,
 )
 from procurement_platform.domain.user import CurrentUser, UserBuilding, UserRole
 
@@ -253,6 +258,75 @@ def map_requirement_detail(dto: BackendRequirementDetailDTO) -> RequirementDetai
         ),
         completed_at=(
             receipt.received_at if dto.status.value == "COMPLETED" and receipt is not None else None
+        ),
+        request_type=dto.request_type,
+        source_asset=dto.source_asset,
+        items=tuple(
+            PurchaseRequestItem(
+                request_item_id=item.request_item_id,
+                item_no=item.item_no,
+                item_kind=item.item_kind,
+                equipment_category_id=item.equipment_category_id,
+                equipment_model_id=item.equipment_model_id,
+                item_name=item.item_name,
+                brand_snapshot=item.brand_snapshot,
+                model_snapshot=item.model_snapshot,
+                quantity=str(item.quantity),
+                unit=item.unit,
+                requires_warehouse=item.requires_warehouse,
+                item_reason=item.item_reason,
+                is_active=item.is_active,
+                remark=item.remark,
+                fulfillment_status=item.fulfillment_status,
+            )
+            for item in dto.items
+        ),
+        review_items=tuple(
+            PurchaseReviewItem(
+                review_item_id=item.review_item_id,
+                request_item_id=item.request_item_id,
+                item_kind_snapshot=item.item_kind_snapshot,
+                item_name_snapshot=item.item_name_snapshot,
+                quantity_snapshot=str(item.quantity_snapshot),
+                unit_snapshot=item.unit_snapshot,
+                proposed_supplier_id=item.proposed_supplier_id,
+                proposed_supplier_name=item.proposed_supplier_name,
+                estimated_unit_price=_decimal_string(item.estimated_unit_price),
+                estimated_total_price=_decimal_string(item.estimated_total_price),
+            )
+            for review in dto.review_records
+            for item in review.items
+        ),
+        executions=tuple(
+            PurchaseExecutionView(
+                execution_id=item.execution_id,
+                request_item_id=item.request_item_id,
+                supplier_id=item.supplier_id,
+                supplier_name=item.supplier_name,
+                purchased_quantity=str(item.purchased_quantity),
+                actual_unit_price=str(item.actual_unit_price),
+                actual_total_price=str(item.actual_total_price),
+                tax_rate=_decimal_string(item.tax_rate),
+                purchased_at=item.purchased_at,
+                purchase_remark=item.purchase_remark,
+            )
+            for item in dto.executions
+        ),
+        receipts=tuple(
+            WarehouseReceiptView(
+                receipt_id=item.receipt_id,
+                execution_id=item.execution_id,
+                warehouse_location=item.warehouse_location,
+                received_quantity=str(item.received_quantity),
+                receipt_remark=item.receipt_remark,
+                received_at=item.received_at,
+            )
+            for item in dto.receipts
+        ),
+        request_fulfillment=RequirementFulfillmentSummary(
+            active_item_count=dto.request_fulfillment.active_item_count,
+            fulfilled_item_count=dto.request_fulfillment.fulfilled_item_count,
+            all_active_items_fulfilled=dto.request_fulfillment.all_active_items_fulfilled,
         ),
     )
 

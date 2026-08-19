@@ -39,6 +39,21 @@ class WarehouseActionRouter:
                 _integer(value.get("expected_version"), "expected_version"),
                 WarehouseFieldsPatch.model_validate(raw),
             )
+        if action == "warehouse.append_receipt":
+            execution_id = _integer(value.get("execution_id"), "execution_id")
+            quantity = event.form_values.get(f"receipt_quantity_{execution_id}")
+            location = event.form_values.get("warehouse_location")
+            remark = event.form_values.get("receipt_remark")
+            return await self._workflow.append_receipt(
+                identity,
+                requirement_id,
+                execution_id,
+                _integer(value.get("expected_version"), "expected_version"),
+                UUID(str(value.get("action_token"))),
+                str(location or "默认仓库"),
+                str(quantity),
+                str(remark) if remark not in (None, "") else None,
+            )
         if action == "warehouse.prepare_complete":
             return await self._workflow.prepare_complete(identity, requirement_id)
         if action == "warehouse.confirm_complete":

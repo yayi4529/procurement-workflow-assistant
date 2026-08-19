@@ -120,6 +120,7 @@ const pageNames = {
   records: "历史与时间线",
   agent: "Agent 存储",
   notifications: "通知 Outbox",
+  assets: "设备资产域",
 };
 
 const state = {
@@ -130,6 +131,8 @@ const state = {
   requirement: null,
   requirementDirty: false,
   agentConversationId: null,
+  assetId: null,
+  assetCategoryId: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -327,6 +330,7 @@ async function loadCurrentTab() {
     if (state.tab === "records") await loadRecords();
     if (state.tab === "agent" && state.agentConversationId) await loadAgentMessages();
     if (state.tab === "notifications") await loadNotifications();
+    if (state.tab === "assets") await loadAssetTab();
   } catch (error) {
     showError(error);
   }
@@ -1318,6 +1322,44 @@ async function resendNotification(id) {
   await loadNotifications();
 }
 
+function assetJson(value) {
+  return `<pre class="asset-json">${escapeHtml(JSON.stringify(value ?? {}, null, 2))}</pre>`;
+}
+
+async function loadAssetReferenceData() {
+  const [categories, models] = await Promise.all([
+    api("/api/v1/equipment/categories"),
+    api("/api/v1/equipment/models", { query: { page: 1, page_size: 100 } }),
+  ]);
+  $("#asset-category-count").textContent = categories.items.length;
+  $("#asset-model-count").textContent = models.total;
+  $("#asset-categories").innerHTML = categories.items.map((item) => `<button class="reference-row category-row ${String(state.assetCategoryId) === String(item.category_id) ? "active" : ""}" type="button" data-category-id="${item.category_id}"><strong>${escapeHtml(item.category_name)}</strong><span>${escapeHtml(item.category_code)} · L${item.category_level} · ${item.status}</span></button>`).join("") || '<div class="empty-state">没有分类数据</div>';
+  $("#asset-models").innerHTML = models.items.map((item) => `<div class="reference-row"><strong>${escapeHtml(item.brand ? `${item.brand} · ${item.model}` : item.model)}</strong><span>#${item.model_id} · ${escapeHtml(item.lifecycle_status)}</span></div>`).join("") || '<div class="empty-state">没有型号数据</div>';
+}
+
+async function loadAssets() {
+  const query = { page: 1, page_size: 100, q: $("#asset-keyword").value.trim(), status: $("#asset-status").value };
+  if (state.assetCategoryId) query.category_id = state.assetCategoryId;
+  const building = $("#asset-building").value.trim();
+  if (building) query.building_id = Number(building);
+  const data = await api("/api/v1/assets", { query });
+  $("#asset-total-count").textContent = data.total;
+  $("#asset-list").innerHTML = data.items.length ? data.items.map((item) => `<button class="asset-row ${item.asset_id === state.assetId ? "active" : ""}" type="button" data-asset-id="${item.asset_id}"><span class="asset-row-icon">${escapeHtml(item.asset_name.slice(0, 1))}</span><span class="asset-row-main"><strong>${escapeHtml(item.asset_name)}</strong><small>${escapeHtml(item.asset_code)} · ${escapeHtml(item.building.building_name)} · ${escapeHtml(item.location || "位置未填")}</small></span><span class="asset-row-side"><span class="status-badge" data-status="${item.status}">${item.status}</span><small>${escapeHtml(item.criticality)}</small></span></button>`).join("") : '<div class="empty-state">没有匹配的资产。请确认数据库已执行 Task05 migration 和 seed。</div>';
+}
+
+async function openAsset(id) {
+  const context = await api(`/api/v1/assets/${id}/context`);
+  state.assetId = id;
+  const asset = context.asset;
+  $("#asset-selected-code").textContent = asset.asset_code;
+  const rows = (items, empty) => items.length ? items.map((item) => `<div class="mini-row"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.text)}</span></div>`).join("") : `<div class="empty-state">${empty}</div>`;
+  $("#asset-detail").innerHTML = `<div class="detail-head"><div class="eyebrow">ASSET #${asset.asset_id} · VERSION ${asset.version}</div><h2>${escapeHtml(asset.asset_name)}</h2><div class="detail-sub"><span class="status-badge" data-status="${asset.status}">${asset.status}</span><span>${escapeHtml(asset.asset_code)} · ${escapeHtml(asset.location || "位置未填")}</span></div></div><div class="detail-section"><h3>身份与生命周期</h3><div class="definition-grid">${definition("分类", asset.category.category_name)}${definition("型号", asset.model ? `${asset.model.brand || ""} ${asset.model.model}` : "未关联")}${definition("楼宇", asset.building.building_name)}${definition("序列号", asset.serial_number)}${definition("重要性", asset.criticality)}${definition("保修截止", asset.warranty_end_at)}</div></div><div class="detail-section"><h3>配置 JSON</h3>${assetJson(asset.configuration)}<p class="helper">别名：${escapeHtml((asset.aliases || []).join("、") || "无")} · 冗余组：${escapeHtml(asset.redundancy_group || "无")}</p></div><div class="detail-section"><h3>主要部件 <span class="soft-badge">${context.components.length}</span></h3><div class="mini-table">${rows(context.components.map((item) => ({ title: item.component_name, text: `${item.brand || ""} ${item.model_or_part_no || ""} · ${item.quantity} ${item.unit || ""}` })), "无部件记录")}</div></div><div class="detail-section"><h3>资产关系 <span class="soft-badge">${context.relations.length}</span></h3><div class="mini-table">${rows(context.relations.map((item) => ({ title: `${item.direction} · ${item.relation_type}`, text: `${item.related_asset.asset_code} · ${item.related_asset.asset_name}` })), "无关系记录")}</div></div><div class="detail-section"><h3>冗余同伴 <span class="soft-badge">${context.redundancy_peers.length}</span></h3><div class="mini-table">${rows(context.redundancy_peers.map((item) => ({ title: item.asset_code, text: `${item.asset_name} · ${item.status}` })), "无同冗余组资产")}</div></div>`;
+}
+
+async function loadAssetTab() {
+  await Promise.all([loadAssetReferenceData(), loadAssets()]);
+}
+
 function bind(selector, event, handler) {
   $(selector).addEventListener(event, async (...args) => {
     try {
@@ -1388,6 +1430,22 @@ function initializeEvents() {
   bind("#agent-snapshot", "click", snapshotAgentState);
   bind("#agent-complete", "click", completeAgentSession);
   bind("#load-notifications", "click", loadNotifications);
+  bind("#load-assets", "click", loadAssetTab);
+  bind("#search-assets", "click", loadAssets);
+  bind("#clear-asset-filter", "click", async () => {
+    state.assetCategoryId = null;
+    await loadAssetTab();
+  });
+  $("#asset-categories").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-category-id]");
+    if (!button) return;
+    state.assetCategoryId = Number(button.dataset.categoryId);
+    await loadAssetTab();
+  });
+  $("#asset-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-asset-id]");
+    if (button) openAsset(Number(button.dataset.assetId)).catch(showError);
+  });
   $("#notification-table").addEventListener("click", (event) => {
     const button = event.target.closest("[data-resend]");
     if (button) resendNotification(Number(button.dataset.resend)).catch(showError);

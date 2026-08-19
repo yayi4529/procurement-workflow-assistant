@@ -8,7 +8,7 @@
       content="数据中心采购流程自动化 Agent 后端功能体验台"
     />
     <title>采购流程体验台</title>
-    <link rel="stylesheet" href="/demo/styles.css" />
+    <link rel="stylesheet" href="/demo/styles.css?v=task05-asset-ui-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -49,6 +49,9 @@
           </button>
           <button class="nav-item" data-tab="notifications" type="button">
             <span>05</span>通知 Outbox
+          </button>
+          <button class="nav-item" data-tab="assets" type="button">
+            <span>06</span>设备资产域
           </button>
         </nav>
 
@@ -364,6 +367,30 @@
             <div class="flow-step"><span>3</span><strong>发送网关</strong><small>成功或退避重试</small></div>
           </div>
         </section>
+
+        <section class="tab-page" id="tab-assets">
+          <div class="demo-warning asset-warning"><strong>Task05 只读观察</strong> 当前页面只读取后端资产 API，不提供新增、编辑或删除操作；用于核对分类、型号、资产、部件、关系和冗余组数据。</div>
+          <div class="metric-grid asset-metrics">
+            <article class="metric-card"><span>设备分类</span><strong id="asset-category-count">—</strong><small>五大系统域与设备类型</small></article>
+            <article class="metric-card accent"><span>设备型号</span><strong id="asset-model-count">—</strong><small>后端型号主数据</small></article>
+            <article class="metric-card"><span>现场资产</span><strong id="asset-total-count">—</strong><small>当前筛选结果</small></article>
+            <article class="metric-card"><span>当前选中</span><strong id="asset-selected-code">—</strong><small>点击左侧资产查看上下文</small></article>
+          </div>
+          <div class="workspace-grid asset-layout">
+            <article class="panel">
+              <div class="panel-header"><div><div class="eyebrow">DATA CENTER ASSET INVENTORY</div><h2>现场资产清单</h2></div><button class="button secondary" id="load-assets" type="button">刷新数据</button></div>
+              <div class="toolbar asset-toolbar">
+                <label><span>关键词</span><input id="asset-keyword" placeholder="资产编码、名称、序列号" /></label>
+                <label><span>状态</span><select id="asset-status"><option value="">全部状态</option><option>ACTIVE</option><option>INACTIVE</option><option>RETIRED</option></select></label>
+                <label><span>楼宇</span><input id="asset-building" placeholder="building_id" /></label>
+                <button class="button secondary" id="search-assets" type="button">查询</button>
+              </div>
+              <div class="asset-list" id="asset-list"><div class="empty-state">正在加载资产…</div></div>
+            </article>
+            <article class="panel detail-panel asset-detail" id="asset-detail"><div class="empty-detail"><div class="empty-symbol">⌂</div><h3>选择一项设备资产</h3><p>这里会展示后端聚合返回的型号、配置、部件、关系和冗余同伴。</p></div></article>
+          </div>
+          <article class="panel asset-reference-panel"><div class="panel-header compact"><div><div class="eyebrow">MASTER DATA</div><h2>分类与型号概览</h2></div><button class="button secondary" id="clear-asset-filter" type="button">清除分类筛选</button></div><div class="asset-reference-grid"><div><h3>分类树 <small class="helper">点击分类筛选资产</small></h3><div id="asset-categories" class="reference-list"></div></div><div><h3>型号主数据</h3><div id="asset-models" class="reference-list"></div></div></div></article>
+        </section>
       </main>
     </div>
 
@@ -381,6 +408,6 @@
       </div>
     </div>
 
-    <script src="/demo/app.js" defer></script>
+    <script src="/demo/app.js?v=task05-asset-ui-2" defer></script>
   </body>
 </html>

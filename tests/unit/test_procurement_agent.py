@@ -152,6 +152,7 @@ async def test_multi_role_union_is_not_cut_by_focused_role() -> None:
             "get_purchase_timeline",
             "recommend_products",
             "update_applicant_draft",
+            "update_multi_item_draft",
             "get_supplier_profile",
             "recommend_suppliers",
             "update_review_draft",

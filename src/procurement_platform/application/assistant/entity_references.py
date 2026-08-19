@@ -22,6 +22,19 @@ def parse_asset_reference(reference: str) -> int:
     return int(raw_id)
 
 
+def requirement_reference(requirement_id: int) -> str:
+    if requirement_id <= 0:
+        raise ValueError("requirement_id must be positive")
+    return f"requirement:{requirement_id}"
+
+
+def parse_requirement_reference(reference: str) -> int:
+    prefix, separator, raw_id = reference.partition(":")
+    if prefix != "requirement" or not separator or not raw_id.isdecimal() or int(raw_id) <= 0:
+        raise ValueError("invalid requirement reference")
+    return int(raw_id)
+
+
 def product_reference(
     *,
     product_id: int | None,

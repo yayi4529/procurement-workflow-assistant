@@ -122,3 +122,22 @@ nullable model, aliases, stable refs, and one-round-trip context; FakeBackend pa
 deterministic resolver tests for exact code/name/alias, building filtering, ambiguity and missing
 matches; and grounding tests proving missing model/components/relations are not invented. Existing
 formal procurement regression and the 80% source coverage gate remain unchanged.
+
+## Task06 multi-item tests
+
+Task06 covers the two-stage migration and historical backfill, strict model constraints, item
+snapshot stability, one-execution-per-item, partial and exact receipts, over-receipt rejection,
+service-item warehouse bypass, derived fulfillment, seven-state workflow compatibility, legacy
+single-item bridges, strict Root DTO/Mapper/HTTP contracts, and FakeBackend parity. Receipt service
+tests exercise transaction locking and cumulative quantity validation; full procurement E2E now
+requires a final appended receipt before completion.
+
+## Task06-B workflow and Agent tests
+
+Task06-B adds strict draft-operation tests for replace/add/update/remove and stable draft/persisted
+item identity; card and workflow tests for whole-request review, per-item purchase, service-only
+completion, partial receipts, stale versions, duplicate actions and over-receipt refresh; HTTP
+contract tests for request metadata, purchase-item action tokens and nullable warehouse handlers;
+and architecture regression proving formal actions remain outside the text Agent. Database-backed
+backend tests require the local MySQL service; absence of Docker must be reported rather than
+treated as a passing result.
