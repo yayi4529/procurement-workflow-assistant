@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -486,6 +487,161 @@ class ProductRecommendation(RequirementModel):
 
 class ProductRecommendations(RequirementModel):
     items: tuple[ProductRecommendation, ...]
+
+
+class ProductRecommendationStatus(StrEnum):
+    OK = "OK"
+    PRODUCT_ALREADY_SPECIFIED = "PRODUCT_ALREADY_SPECIFIED"
+    NO_HISTORICAL_CANDIDATES = "NO_HISTORICAL_CANDIDATES"
+
+
+class RecommendationQueryContext(RequirementModel):
+    request_id: int
+    request_item_id: int
+    item_name: str
+    equipment_category_id: int | None
+    equipment_model_id: int | None
+    brand: str | None
+    model: str | None
+    quantity: Decimal
+    unit: str
+
+
+class RecommendationReason(RequirementModel):
+    code: str
+    message: str
+
+
+class RecommendationWarning(RequirementModel):
+    code: str
+    message: str
+
+
+class ProductPriceSummary(RequirementModel):
+    median_unit_price: Decimal
+    min_unit_price: Decimal
+    max_unit_price: Decimal
+    latest_unit_price: Decimal
+    sample_count: int
+    currency: str
+
+
+class ProductScoreBreakdown(RequirementModel):
+    relevance_score: Decimal
+    frequency_score: Decimal
+    recency_score: Decimal
+    supplier_coverage_score: Decimal
+    relevance_weight: Decimal
+    frequency_weight: Decimal
+    recency_weight: Decimal
+    supplier_coverage_weight: Decimal
+
+
+class ItemProductRecommendation(RequirementModel):
+    rank: int
+    product_key: str
+    equipment_model_id: int | None
+    item_name: str
+    brand: str | None
+    model: str | None
+    candidate_type: str
+    match_level: str
+    overall_score: Decimal
+    historical_purchase_count: int
+    last_purchased_at: datetime
+    active_supplier_count: int
+    price_summary: ProductPriceSummary | None
+    score_breakdown: ProductScoreBreakdown
+    reasons: tuple[RecommendationReason, ...]
+    warnings: tuple[RecommendationWarning, ...]
+
+
+class ItemProductRecommendations(RequirementModel):
+    request_item_id: int
+    query_context: RecommendationQueryContext
+    status: ProductRecommendationStatus
+    candidate_count: int
+    returned_count: int
+    recommendations: tuple[ItemProductRecommendation, ...]
+    warnings: tuple[RecommendationWarning, ...]
+    policy_version: str
+
+
+class SelectedProduct(RequirementModel):
+    product_key: str
+    equipment_model_id: int | None = None
+    equipment_category_id: int | None = None
+    item_name: str
+    brand: str | None = None
+    model: str | None = None
+
+
+class SupplierPriceSummary(RequirementModel):
+    median_unit_price: Decimal | None
+    min_unit_price: Decimal | None
+    max_unit_price: Decimal | None
+    latest_unit_price: Decimal | None
+    sample_count: int
+    currency: str
+
+
+class SupplierDeliverySummary(RequirementModel):
+    median_delivery_days: Decimal | None
+    sample_count: int
+
+
+class SupplierConfidenceSummary(RequirementModel):
+    evidence_count: int
+    confidence_score: Decimal
+
+
+class SupplierScoreBreakdown(RequirementModel):
+    relevance_score: Decimal
+    price_score: Decimal | None
+    delivery_score: Decimal | None
+    confidence_score: Decimal
+    relevance_weight: Decimal
+    price_weight: Decimal
+    delivery_weight: Decimal
+    confidence_weight: Decimal
+    effective_weight_sum: Decimal
+
+
+class ItemSupplierRecommendation(RequirementModel):
+    rank: int
+    supplier_id: int
+    supplier_name: str
+    overall_score: Decimal
+    match_level: str
+    history_purchase_count: int
+    last_purchase_at: datetime
+    price_summary: SupplierPriceSummary
+    delivery_summary: SupplierDeliverySummary
+    confidence_summary: SupplierConfidenceSummary
+    score_breakdown: SupplierScoreBreakdown
+    reasons: tuple[RecommendationReason, ...]
+    warnings: tuple[RecommendationWarning, ...]
+
+
+class ExcludedSupplier(RequirementModel):
+    supplier_id: int
+    supplier_name: str
+    match_level: str
+    exclusion_code: str
+    exclusion_reason: str
+
+
+class ItemSupplierRecommendations(RequirementModel):
+    request_item_id: int
+    query_context: RecommendationQueryContext
+    selected_product: SelectedProduct
+    candidate_count: int
+    eligible_candidate_count: int
+    returned_count: int
+    recommendations: tuple[ItemSupplierRecommendation, ...]
+    excluded_candidates: tuple[ExcludedSupplier, ...]
+    warnings: tuple[RecommendationWarning, ...]
+    policy_version: str
 
 
 class PurchaseHistoryItem(RequirementModel):

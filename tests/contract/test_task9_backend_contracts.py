@@ -97,7 +97,9 @@ async def test_task9_read_endpoint_contracts_and_explicit_mapping() -> None:
         page_size=20,
     )
     timeline = await client.get_requirement_timeline(identity=identity(), requirement_id=1)
-    products = await client.recommend_products(identity=identity(), device_name="服务器", limit=30)
+    products = await client.recommend_products_legacy(
+        identity=identity(), device_name="服务器", limit=30
+    )
     history = await client.recommend_purchase_history(
         identity=identity(), requirement_id=1, limit=10
     )

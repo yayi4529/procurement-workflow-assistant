@@ -53,6 +53,8 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsSaveResult,
     FieldsSaveResult,
     HandlerCandidates,
+    ItemProductRecommendations,
+    ItemSupplierRecommendations,
     ProductRecommendations,
     PurchaseExecutionView,
     PurchaseFields,
@@ -78,6 +80,7 @@ from procurement_platform.domain.requirement import (
     ReviewFieldsSaveResult,
     ReviewItemDraft,
     ReviewRecordSummary,
+    SelectedProduct,
     SupplierDetail,
     SupplierPage,
     SupplierRecommendation,
@@ -128,6 +131,8 @@ class FakeBackendClient:
         self._next_requirement_id = 1
         self._suppliers: dict[int, SupplierDetail] = {}
         self._next_supplier_id = 1
+        self.item_product_recommendations: dict[int, ItemProductRecommendations] = {}
+        self.item_supplier_recommendations: dict[int, ItemSupplierRecommendations] = {}
         self.purchase_records: list[PurchaseRecord] = []
         self.timelines: dict[int, RequirementTimeline] = {}
         self.timeline_contacts: dict[tuple[int, int, str], TimelineContact] = {}
@@ -746,6 +751,28 @@ class FakeBackendClient:
         self,
         *,
         identity: PlatformIdentity,
+        request_item_id: int,
+        top_k: int = 10,
+    ) -> ItemProductRecommendations:
+        self._record("recommend_products")
+        self._user(identity)
+        if not 1 <= top_k <= 10:
+            raise ValueError("top_k must be between 1 and 10")
+        try:
+            response = self.item_product_recommendations[request_item_id]
+        except KeyError as exc:
+            raise RequirementNotFoundError("REQUEST_ITEM_NOT_FOUND", "采购项不存在") from exc
+        return response.model_copy(
+            update={
+                "recommendations": response.recommendations[:top_k],
+                "returned_count": min(response.returned_count, top_k),
+            }
+        )
+
+    async def recommend_products_legacy(
+        self,
+        *,
+        identity: PlatformIdentity,
         device_name: str,
         device_profession: str | None = None,
         keyword: str | None = None,
@@ -1150,6 +1177,30 @@ class FakeBackendClient:
             raise BackendApplicationError("SUPPLIER_NOT_FOUND", "供应商不存在") from exc
 
     async def recommend_suppliers(
+        self,
+        *,
+        identity: PlatformIdentity,
+        request_item_id: int,
+        selected_product: SelectedProduct | None,
+        top_k: int = 5,
+    ) -> ItemSupplierRecommendations:
+        self._record("recommend_suppliers")
+        self._user(identity)
+        del selected_product
+        if not 1 <= top_k <= 5:
+            raise ValueError("top_k must be between 1 and 5")
+        try:
+            response = self.item_supplier_recommendations[request_item_id]
+        except KeyError as exc:
+            raise RequirementNotFoundError("REQUEST_ITEM_NOT_FOUND", "采购项不存在") from exc
+        return response.model_copy(
+            update={
+                "recommendations": response.recommendations[:top_k],
+                "returned_count": min(response.returned_count, top_k),
+            }
+        )
+
+    async def recommend_suppliers_legacy(
         self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 3
     ) -> SupplierRecommendations:
         self._record("recommend_suppliers")

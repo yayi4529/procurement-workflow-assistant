@@ -1,0 +1,81 @@
+---
+schema_version: 1
+knowledge_id: CATEGORY-TOPIC-001
+title: 示例标题
+equipment_category: UPS
+knowledge_type: FAULT_GUIDE
+aliases:
+  # Fault Search Alias，不能机械复制 Procurement Vocabulary 的 item aliases。
+  - EXAMPLE FAULT
+  - 示例故障
+risk_level: MEDIUM
+status: ACTIVE
+version: 1
+---
+
+# 示例标题
+
+## 场景说明
+
+说明该 Knowledge 处理什么设备故障场景。不要直接把报警写成故障原因。
+
+## 典型现象
+
+用户可能报告：
+
+- 示例现象；
+- 示例报警。
+
+## 需要关注的信息
+
+为了判断是否能够形成采购需求，需要关注：
+
+- 是否已经完成必要检测；
+- 是否已经确认具体部件本体异常。
+
+## 判断采购需求前建议确认的信息
+
+在提出采购 Candidate 前，至少确认：
+
+- 具体部件故障已经确认；
+- 已经确认需要更换；
+- 采购数量已经确认。
+
+## 采购相关知识
+
+### Candidate A
+
+只有在具体部件故障、需要更换以及数量均已确认时，才可以形成以下候选采购对象：
+
+- canonical_item: `UPS_FAN`
+- display_name: `UPS 风扇`
+- procurement_category: `UPS`
+
+如果条件未满足，应继续询问，而不是直接生成采购项。多 Candidate Knowledge 必须为每个
+Candidate 分别说明成立条件，并使用相同的三行标准格式。
+
+## 数量规则
+
+采购数量必须来自：
+
+- 用户明确确认；
+- 用户明确采购要求；
+- Backend 已确认事实。
+
+不得默认数量为 1，不得根据设备通常安装数量或知识经验推断数量。
+
+## 不应直接推断的内容
+
+没有可靠事实支持时，不得推断：
+
+- 品牌；
+- 型号；
+- Part Number；
+- 技术规格和参数；
+- 与当前资产的兼容性；
+- 采购数量。
+
+## 安全与人工介入
+
+涉及专业维修、拆卸、带电、高压、旋转机械、制冷剂或其他风险操作时，应由具备相应能力的
+专业人员处理。

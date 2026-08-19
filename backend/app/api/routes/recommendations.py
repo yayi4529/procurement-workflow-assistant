@@ -7,9 +7,59 @@ from app.schemas.recommendations import (
     PurchaseHistoryRecommendationData,
     SupplierRecommendationData,
 )
+from app.schemas.recommendations_v2 import (
+    ProductRecommendationResponse,
+    SupplierRecommendationRequest,
+    SupplierRecommendationResponse,
+)
+from app.services.recommendation.api_service import RecommendationApiService
 from app.services.recommendations import RecommendationService
 
 router = APIRouter(prefix="/api/v1/recommendations", tags=["recommendations"])
+
+
+@router.get(
+    "/items/{request_item_id}/products",
+    response_model=ApiResponse[ProductRecommendationResponse],
+    responses={404: {"description": "REQUEST_ITEM_NOT_FOUND"}},
+)
+async def recommend_item_products(
+    current_user: CurrentUserDependency,
+    session: DbSession,
+    request_item_id: int,
+    top_k: int = Query(default=10, ge=1, le=10),
+) -> ApiResponse[ProductRecommendationResponse]:
+    data = await RecommendationApiService().products(
+        session,
+        current_user,
+        request_item_id,
+        top_k=top_k,
+    )
+    return ApiResponse(data=data)
+
+
+@router.post(
+    "/items/{request_item_id}/suppliers",
+    response_model=ApiResponse[SupplierRecommendationResponse],
+    responses={
+        404: {"description": "REQUEST_ITEM_NOT_FOUND"},
+        422: {"description": "Validation error or selected product required/mismatch"},
+    },
+)
+async def recommend_item_suppliers(
+    current_user: CurrentUserDependency,
+    session: DbSession,
+    request_item_id: int,
+    payload: SupplierRecommendationRequest,
+) -> ApiResponse[SupplierRecommendationResponse]:
+    data = await RecommendationApiService().suppliers(
+        session,
+        current_user,
+        request_item_id,
+        selected_product=payload.selected_product,
+        top_k=payload.top_k,
+    )
+    return ApiResponse(data=data)
 
 
 @router.get("/products", response_model=ApiResponse[ProductRecommendationData])

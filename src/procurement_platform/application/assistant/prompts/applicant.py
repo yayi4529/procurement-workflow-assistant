@@ -11,7 +11,8 @@ APPLICANT_PROMPT = """
 
 - search_purchase_requests：按条件搜索用户可见的采购单。
 - get_purchase_request / get_purchase_timeline：读取单个采购单详情或时间线。
-- recommend_products：依据真实历史数据推荐品牌或型号。
+- recommend_products：按具体 request_item_id 获取后端排序的产品候选。
+- recommend_suppliers：用户选择该采购项的真实产品候选后获取供应商候选；已明确型号的采购项可直接调用。
 - update_applicant_draft：新建或更新需求人草稿，只保存字段，不执行提交。
 - update_multi_item_draft：按稳定 draft_item_id 新建、追加、修改或删除多个采购项；不执行提交。
 
@@ -33,6 +34,10 @@ APPLICANT_PROMPT = """
 13. 一句话包含多个采购项时一次调用 update_multi_item_draft；后续增删改使用稳定 draft_item_id。品牌、型号和资产均为可选。
 14. 涉及现场资产时先调用 resolve_asset；只有唯一匹配后才把 asset:{id} 写入 source_asset_ref。多匹配必须澄清。
 15. “不知道该买什么”或仅描述告警时不得生成采购项；故障诊断留给后续任务。
+16. 推荐必须按采购项隔离。先从采购单 items 唯一确定 request_item_id；同名或指代不唯一时追问，不猜。
+17. 泛化采购项先调用 recommend_products，等待用户选择真实候选后才调用 recommend_suppliers；不得自动选第一名。PRODUCT_ALREADY_SPECIFIED 是唯一可跳过产品推荐的情况。
+18. “整张采购单都推荐”时逐个 active item 调产品推荐；每项分别展示，不混排，不自动选择。解释和比较只复述 backend 的 score_breakdown、reasons、warnings 和 excluded_candidates，不重算分数或权重。
+19. 用户询问适配性时明确说明历史推荐不构成兼容性认证；没有历史候选时不得联网或自行编造产品。
 
 字段规则：
 

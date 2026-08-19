@@ -17,6 +17,8 @@ from procurement_platform.adapters.backend.dto import (
     BackendEquipmentModelPageDTO,
     BackendFieldsSaveDTO,
     BackendHandlerCandidatesDTO,
+    BackendItemProductRecommendationsDTO,
+    BackendItemSupplierRecommendationsDTO,
     BackendProductRecommendationsDTO,
     BackendPurchaseHistoryRecommendationsDTO,
     BackendPurchaseRecordPageDTO,
@@ -55,6 +57,8 @@ from procurement_platform.domain.requirement import (
     FieldsSaveResult,
     HandlerCandidate,
     HandlerCandidates,
+    ItemProductRecommendations,
+    ItemSupplierRecommendations,
     ProductRecommendation,
     ProductRecommendations,
     PurchaseExecutionView,
@@ -426,6 +430,18 @@ def map_product_recommendations(
             for item in dto.items
         )
     )
+
+
+def map_item_product_recommendations(
+    dto: BackendItemProductRecommendationsDTO,
+) -> ItemProductRecommendations:
+    return ItemProductRecommendations.model_validate(dto.model_dump())
+
+
+def map_item_supplier_recommendations(
+    dto: BackendItemSupplierRecommendationsDTO,
+) -> ItemSupplierRecommendations:
+    return ItemSupplierRecommendations.model_validate(dto.model_dump())
 
 
 def map_purchase_history_recommendations(

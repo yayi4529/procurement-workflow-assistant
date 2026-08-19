@@ -25,7 +25,11 @@ from procurement_platform.domain.errors import (
     SessionNotFoundError,
 )
 from procurement_platform.domain.identity import PlatformIdentity
-from procurement_platform.domain.requirement import PurchaseRecord
+from procurement_platform.domain.requirement import (
+    ItemProductRecommendations,
+    ItemSupplierRecommendations,
+    PurchaseRecord,
+)
 from procurement_platform.ports.backend_client import BackendClient
 
 
@@ -88,7 +92,7 @@ class DiagnoseProcurementNeedCapability:
         try:
             await self._backend.get_current_user(identity=identity)
             device_name = args.device_hint or symptom
-            recommendations = await self._backend.recommend_products(
+            recommendations = await self._backend.recommend_products_legacy(
                 identity=identity,
                 device_name=device_name,
                 device_profession=args.profession_hint,
@@ -396,6 +400,9 @@ class CompareProductsCapability:
                 user_message="产品候选引用不存在或已过期",
                 invalid_refs=args.candidate_refs,
             )
+        item_result = self._compare_item_candidates(state.collected_data, args.candidate_refs)
+        if item_result is not None:
+            return item_result
         refs = {
             item.reference_id
             for item in state.last_recommendations
@@ -432,6 +439,66 @@ class CompareProductsCapability:
             else (),
             insufficient_data=("质量、故障率、交期和实时价格均无 authoritative 数据",),
             invalid_refs=invalid,
+        )
+
+    @staticmethod
+    def _compare_item_candidates(
+        data: dict[str, JsonValue], refs: tuple[str, ...]
+    ) -> CompareProductsResult | None:
+        if not all(ref.startswith("item-product:") for ref in refs):
+            return None
+        item_ids = {ref.split(":", 2)[1] for ref in refs}
+        if len(item_ids) != 1:
+            return CompareProductsResult(
+                status="INVALID_ARGUMENTS",
+                user_message="只能比较同一采购项的产品候选",
+                invalid_refs=refs,
+            )
+        raw = data.get(f"recommendation:item:{next(iter(item_ids))}:products")
+        if not isinstance(raw, str):
+            return CompareProductsResult(
+                status="INVALID_ARGUMENTS", invalid_refs=refs, user_message="产品候选已过期"
+            )
+        response = ItemProductRecommendations.model_validate_json(raw)
+        by_rank = {item.rank: item for item in response.recommendations}
+        items: list[ProductComparisonItem] = []
+        invalid: list[str] = []
+        ranks: list[tuple[int, str]] = []
+        for ref in refs:
+            try:
+                rank = int(ref.rsplit(":", 1)[1])
+                candidate = by_rank[rank]
+            except (KeyError, ValueError):
+                invalid.append(ref)
+                continue
+            ranks.append((rank, ref))
+            breakdown = candidate.score_breakdown
+            items.append(
+                ProductComparisonItem(
+                    candidate_ref=ref,
+                    strengths=tuple(reason.message for reason in candidate.reasons),
+                    weaknesses=tuple(warning.message for warning in candidate.warnings),
+                    evidence=(
+                        f"Backend overall_score: {candidate.overall_score}",
+                        f"relevance={breakdown.relevance_score}, "
+                        f"frequency={breakdown.frequency_score}, "
+                        f"recency={breakdown.recency_score}, "
+                        f"supplier_coverage={breakdown.supplier_coverage_score}",
+                    ),
+                    fit_score=float(candidate.overall_score),
+                )
+            )
+        recommended = min(ranks)[1] if ranks else None
+        return CompareProductsResult(
+            status="SUCCESS" if items else "INVALID_ARGUMENTS",
+            items=tuple(items),
+            recommended_ref=recommended,
+            recommendation_reason=("沿用 Backend 返回的原始排名, 未重新评分",)
+            if recommended
+            else (),
+            insufficient_data=("历史推荐不构成兼容性认证",),
+            invalid_refs=tuple(invalid),
+            ranking_version=response.policy_version,
         )
 
 
@@ -485,6 +552,9 @@ class CompareSuppliersCapability:
                 user_message="供应商候选引用不存在或已过期",
                 invalid_refs=args.supplier_refs,
             )
+        item_result = self._compare_item_candidates(state.collected_data, args.supplier_refs)
+        if item_result is not None:
+            return item_result
         if state.purchase_request_id is None:
             return CompareSuppliersResult(
                 status="INVALID_ARGUMENTS",
@@ -497,7 +567,7 @@ class CompareSuppliersCapability:
             if item.kind == "SUPPLIER_RECOMMENDATION"
         }
         invalid = tuple(ref for ref in args.supplier_refs if ref not in valid)
-        snapshots = await self._backend.recommend_suppliers(
+        snapshots = await self._backend.recommend_suppliers_legacy(
             identity=identity,
             requirement_id=state.purchase_request_id,
             limit=30,
@@ -553,4 +623,64 @@ class CompareSuppliersCapability:
             blocked_refs=blocked_refs,
             insufficient_data=("系统没有交期、服务质量和实时报价数据",),
             invalid_refs=invalid,
+        )
+
+    @staticmethod
+    def _compare_item_candidates(
+        data: dict[str, JsonValue], refs: tuple[str, ...]
+    ) -> CompareSuppliersResult | None:
+        if not all(ref.startswith("item-supplier:") for ref in refs):
+            return None
+        item_ids = {ref.split(":", 2)[1] for ref in refs}
+        if len(item_ids) != 1:
+            return CompareSuppliersResult(
+                status="INVALID_ARGUMENTS",
+                user_message="只能比较同一采购项的供应商候选",
+                invalid_refs=refs,
+            )
+        raw = data.get(f"recommendation:item:{next(iter(item_ids))}:suppliers")
+        if not isinstance(raw, str):
+            return CompareSuppliersResult(
+                status="INVALID_ARGUMENTS", invalid_refs=refs, user_message="供应商候选已过期"
+            )
+        response = ItemSupplierRecommendations.model_validate_json(raw)
+        by_rank = {item.rank: item for item in response.recommendations}
+        items: list[SupplierComparisonItem] = []
+        invalid: list[str] = []
+        ranks: list[tuple[int, str]] = []
+        for ref in refs:
+            try:
+                rank = int(ref.rsplit(":", 1)[1])
+                candidate = by_rank[rank]
+            except (KeyError, ValueError):
+                invalid.append(ref)
+                continue
+            ranks.append((rank, ref))
+            breakdown = candidate.score_breakdown
+            items.append(
+                SupplierComparisonItem(
+                    supplier_ref=ref,
+                    strengths=tuple(reason.message for reason in candidate.reasons),
+                    risks=tuple(warning.message for warning in candidate.warnings),
+                    evidence=(
+                        f"Backend overall_score: {candidate.overall_score}",
+                        f"relevance={breakdown.relevance_score}, "
+                        f"price={breakdown.price_score}, "
+                        f"delivery={breakdown.delivery_score}, "
+                        f"confidence={breakdown.confidence_score}",
+                    ),
+                    fit_score=float(candidate.overall_score),
+                    blocked=False,
+                )
+            )
+        recommended = min(ranks)[1] if ranks else None
+        return CompareSuppliersResult(
+            status="SUCCESS" if items else "INVALID_ARGUMENTS",
+            items=tuple(items),
+            recommended_ref=recommended,
+            recommendation_reason=("沿用 Backend 返回的原始排名, 未重新评分",)
+            if recommended
+            else (),
+            invalid_refs=tuple(invalid),
+            ranking_version=response.policy_version,
         )

@@ -21,6 +21,8 @@ from procurement_platform.adapters.backend.dto import (
     BackendEquipmentModelPageDTO,
     BackendFieldsSaveDTO,
     BackendHandlerCandidatesDTO,
+    BackendItemProductRecommendationsDTO,
+    BackendItemSupplierRecommendationsDTO,
     BackendProductRecommendationsDTO,
     BackendPurchaseHistoryRecommendationsDTO,
     BackendPurchaseRecordPageDTO,
@@ -50,6 +52,8 @@ from procurement_platform.adapters.backend.mapper import (
     map_equipment_model_page,
     map_fields_save,
     map_handler_candidates,
+    map_item_product_recommendations,
+    map_item_supplier_recommendations,
     map_product_recommendations,
     map_purchase_history_recommendations,
     map_purchase_record_page,
@@ -98,6 +102,8 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsSaveResult,
     FieldsSaveResult,
     HandlerCandidates,
+    ItemProductRecommendations,
+    ItemSupplierRecommendations,
     ProductRecommendations,
     PurchaseFieldsPatch,
     PurchaseHistoryRecommendations,
@@ -111,6 +117,7 @@ from procurement_platform.domain.requirement import (
     RequirementTransitionResult,
     ReviewFieldsPatch,
     ReviewItemDraft,
+    SelectedProduct,
     SupplierDetail,
     SupplierPage,
     SupplierRecommendations,
@@ -498,6 +505,24 @@ class HttpBackendClient:
         self,
         *,
         identity: PlatformIdentity,
+        request_item_id: int,
+        top_k: int = 10,
+    ) -> ItemProductRecommendations:
+        if request_item_id < 1 or not 1 <= top_k <= 10:
+            raise ValueError("invalid item product recommendation query")
+        dto = await self._request_model(
+            BackendItemProductRecommendationsDTO,
+            method="GET",
+            path=f"/api/v1/recommendations/items/{request_item_id}/products",
+            identity=identity,
+            query={"top_k": top_k},
+        )
+        return map_item_product_recommendations(dto)
+
+    async def recommend_products_legacy(
+        self,
+        *,
+        identity: PlatformIdentity,
         device_name: str,
         device_profession: str | None = None,
         keyword: str | None = None,
@@ -731,6 +756,30 @@ class HttpBackendClient:
         return map_supplier_detail(dto)
 
     async def recommend_suppliers(
+        self,
+        *,
+        identity: PlatformIdentity,
+        request_item_id: int,
+        selected_product: SelectedProduct | None,
+        top_k: int = 5,
+    ) -> ItemSupplierRecommendations:
+        if request_item_id < 1 or not 1 <= top_k <= 5:
+            raise ValueError("invalid item supplier recommendation query")
+        dto = await self._request_model(
+            BackendItemSupplierRecommendationsDTO,
+            method="POST",
+            path=f"/api/v1/recommendations/items/{request_item_id}/suppliers",
+            identity=identity,
+            json_body={
+                "selected_product": selected_product.model_dump(mode="json")
+                if selected_product
+                else None,
+                "top_k": top_k,
+            },
+        )
+        return map_item_supplier_recommendations(dto)
+
+    async def recommend_suppliers_legacy(
         self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 3
     ) -> SupplierRecommendations:
         if requirement_id < 1:

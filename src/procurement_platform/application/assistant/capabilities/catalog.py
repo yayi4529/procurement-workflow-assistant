@@ -82,10 +82,16 @@ DEFAULT_CAPABILITY_METADATA: tuple[CapabilityMetadata, ...] = (
     _metadata(SearchPurchaseRequestsCapability, ALL_WORKFLOW_ROLES),
     _metadata(GetPurchaseRequestCapability, ALL_WORKFLOW_ROLES),
     _metadata(GetPurchaseTimelineCapability, ALL_WORKFLOW_ROLES),
-    _metadata(RecommendProductsCapability, frozenset({RoleCode.APPLICANT})),
+    _metadata(
+        RecommendProductsCapability,
+        frozenset({RoleCode.APPLICANT, RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}),
+    ),
     _metadata(UpdateApplicantDraftCapability, frozenset({RoleCode.APPLICANT})),
     _metadata(UpdateMultiItemDraftCapability, frozenset({RoleCode.APPLICANT})),
-    _metadata(RecommendSuppliersCapability, frozenset({RoleCode.BUILDING_MANAGER})),
+    _metadata(
+        RecommendSuppliersCapability,
+        frozenset({RoleCode.APPLICANT, RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}),
+    ),
     _metadata(UpdateReviewDraftCapability, frozenset({RoleCode.BUILDING_MANAGER})),
     _metadata(
         GetSupplierProfileCapability,

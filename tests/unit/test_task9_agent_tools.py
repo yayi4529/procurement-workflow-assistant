@@ -246,6 +246,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
             "get_purchase_request",
             "get_purchase_timeline",
             "recommend_products",
+            "recommend_suppliers",
             "update_applicant_draft",
             "update_multi_item_draft",
             "diagnose_procurement_need",
@@ -265,7 +266,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 active_role=RoleCode.BUILDING_MANAGER,
             )
         )
-        == 14
+        == 15
     )
     assert (
         len(
@@ -273,7 +274,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 current_user=user(RoleCode.PURCHASER), active_role=RoleCode.PURCHASER
             )
         )
-        == 15
+        == 17
     )
     assert (
         len(
@@ -309,6 +310,7 @@ def test_tool_policy_does_not_merge_tools_for_multi_role_user() -> None:
             "get_purchase_request",
             "get_purchase_timeline",
             "recommend_products",
+            "recommend_suppliers",
             "update_applicant_draft",
             "update_multi_item_draft",
             "diagnose_procurement_need",
