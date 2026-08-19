@@ -92,6 +92,9 @@ class Settings:
     conversation_lock_ttl_seconds: int = 60
     conversation_lock_acquire_timeout_seconds: float = 5.0
     notification_delivery_ttl_seconds: int = 604800
+    fault_knowledge_path: str = "knowledge/fault-guidance"
+    fault_state_ttl_seconds: int = 86400
+    fault_guidance_enabled: bool = False
     debug_identity_probe_enabled: bool = False
     development_notification_renderer_enabled: bool = False
     log_level: str = "INFO"
@@ -123,11 +126,16 @@ class Settings:
             raise ValueError("unsupported conversation lock backend")
         if self.redis_timeout_seconds <= 0:
             raise ValueError("redis timeout must be greater than zero")
+        if not self.fault_knowledge_path.strip():
+            raise ValueError("fault knowledge path must not be empty")
+        if self.fault_guidance_enabled and not self.llm_enabled:
+            raise ValueError("fault guidance requires the LLM to be enabled")
         if (
             min(
                 self.event_dedup_ttl_seconds,
                 self.conversation_lock_ttl_seconds,
                 self.notification_delivery_ttl_seconds,
+                self.fault_state_ttl_seconds,
             )
             < 1
         ):
@@ -158,6 +166,7 @@ class Settings:
             self.event_dedup_store_backend == "redis"
             or self.conversation_lock_backend == "redis"
             or self.notification_gateway.delivery_store_backend == "redis"
+            or self.fault_guidance_enabled
         )
         if redis_required and (self.redis_url is None or not self.redis_url.get_secret_value()):
             raise ValueError("Redis-backed stores require PROCUREMENT_REDIS_URL")
@@ -239,6 +248,13 @@ class Settings:
             ),
             notification_delivery_ttl_seconds=int(
                 values.get("PROCUREMENT_NOTIFICATION_DELIVERY_TTL_SECONDS", "604800")
+            ),
+            fault_knowledge_path=values.get(
+                "FAULT_KNOWLEDGE_PATH", "knowledge/fault-guidance"
+            ).strip(),
+            fault_state_ttl_seconds=int(values.get("FAULT_STATE_TTL_SECONDS", "86400")),
+            fault_guidance_enabled=_parse_bool(
+                values.get("PROCUREMENT_FAULT_GUIDANCE_ENABLED", "false")
             ),
             debug_identity_probe_enabled=_parse_bool(
                 values.get("PROCUREMENT_DEBUG_IDENTITY_PROBE_ENABLED", "false")

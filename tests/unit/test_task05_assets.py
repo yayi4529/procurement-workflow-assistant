@@ -18,6 +18,8 @@ from procurement_platform.application.assistant.entity_references import (
     asset_reference,
     model_reference,
     parse_asset_reference,
+    parse_requirement_reference,
+    requirement_reference,
 )
 from procurement_platform.domain.assets import (
     AssetComponent,
@@ -175,6 +177,10 @@ def test_stable_asset_and_model_references_use_backend_ids() -> None:
     assert parse_asset_reference("asset:108") == 108
     with pytest.raises(ValueError):
         parse_asset_reference("asset:guess")
+    assert requirement_reference(91121) == "requirement:91121"
+    assert parse_requirement_reference("requirement:91121") == 91121
+    with pytest.raises(ValueError):
+        parse_requirement_reference("requirement:guess")
 
 
 @pytest.mark.asyncio

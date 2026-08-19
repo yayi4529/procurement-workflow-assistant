@@ -10,7 +10,11 @@ from procurement_platform.adapters.feishu.channel_client import FeishuChannelCli
 from procurement_platform.adapters.feishu.interaction_renderer import FeishuInteractionRenderer
 from procurement_platform.adapters.feishu.sdk_client import LarkOapiTransport
 from procurement_platform.adapters.feishu.webhook_parser import FeishuWebhookParser
+from procurement_platform.adapters.knowledge import MarkdownKnowledgeLoader
 from procurement_platform.adapters.llm.openai_compatible_llm_client import OpenAICompatibleLlmClient
+from procurement_platform.adapters.persistence.fault_state_repository import (
+    FaultStateRepository,
+)
 from procurement_platform.adapters.persistence.local_conversation_lock import (
     LocalConversationLockManager,
 )
@@ -85,6 +89,15 @@ from procurement_platform.application.building_manager.action_router import (
 from procurement_platform.application.building_manager.workflow_service import (
     BuildingManagerWorkflowService,
 )
+from procurement_platform.application.fault_guidance import (
+    BackendAssetContextProvider,
+    BackendConversationHistoryProvider,
+    FaultDraftValidator,
+    FaultGuidanceOrchestrator,
+    FaultGuidanceService,
+    MarkdownKnowledgeSearch,
+    ProcurementDraftService,
+)
 from procurement_platform.application.inbound.card_interaction_handler import (
     BaseCardInteractionHandler,
 )
@@ -138,6 +151,7 @@ class ApplicationContainer:
     capability_registry: CapabilityRegistry | None = None
     capability_policy: CapabilityPolicy | None = None
     llm_client: LlmClient | None = None
+    fault_guidance_service: FaultGuidanceService | None = None
 
     @classmethod
     def build(cls, settings: Settings) -> "ApplicationContainer":
@@ -217,6 +231,25 @@ class ApplicationContainer:
                 )
                 container.llm_client = llm_client
                 session_service = AssistantSessionService(container.backend_client)
+                if settings.fault_guidance_enabled:
+                    knowledge_repository = MarkdownKnowledgeLoader(
+                        settings.fault_knowledge_path
+                    ).load()
+                    container.fault_guidance_service = FaultGuidanceService(
+                        state_repository=FaultStateRepository(
+                            redis_client,
+                            ttl_seconds=settings.fault_state_ttl_seconds,
+                        ),
+                        asset_provider=BackendAssetContextProvider(container.backend_client),
+                        knowledge_search=MarkdownKnowledgeSearch(knowledge_repository),
+                        orchestrator=FaultGuidanceOrchestrator(llm_client),
+                        validator=FaultDraftValidator(),
+                        procurement_draft_service=ProcurementDraftService(container.backend_client),
+                        history_provider=BackendConversationHistoryProvider(
+                            container.backend_client,
+                            page_size=settings.llm_max_history_messages,
+                        ),
+                    )
                 tool_executor = ToolExecutor(
                     tool_registry, max_result_chars=settings.llm_max_tool_result_chars
                 )
@@ -243,6 +276,7 @@ class ApplicationContainer:
                     context_builder=AssistantContextBuilder(),
                     procurement_agent=procurement_agent,
                     max_history_messages=settings.llm_max_history_messages,
+                    fault_guidance_service=container.fault_guidance_service,
                 )
                 container.procurement_assistant = ProcurementAssistant(container.assistant_service)
             container.message_handler = BaseMessageHandler(
@@ -315,6 +349,7 @@ def _build_redis_client(settings: Settings) -> RedisClient:
         settings.event_dedup_store_backend == "redis"
         or settings.conversation_lock_backend == "redis"
         or settings.notification_gateway.delivery_store_backend == "redis"
+        or settings.fault_guidance_enabled
     ):
         return _UnusedRedisClient()
     from redis.asyncio import Redis
@@ -334,6 +369,22 @@ def _build_redis_client(settings: Settings) -> RedisClient:
 class _UnusedRedisClient:
     async def eval(self, script: str, numkeys: int, *keys_and_args: object) -> object:
         del script, numkeys, keys_and_args
+        raise RuntimeError("Redis is not configured")
+
+    async def get(self, key: str) -> object:
+        del key
+        raise RuntimeError("Redis is not configured")
+
+    async def set(self, key: str, value: str, *, ex: int) -> object:
+        del key, value, ex
+        raise RuntimeError("Redis is not configured")
+
+    async def delete(self, key: str) -> object:
+        del key
+        raise RuntimeError("Redis is not configured")
+
+    async def expire(self, key: str, seconds: int) -> object:
+        del key, seconds
         raise RuntimeError("Redis is not configured")
 
 

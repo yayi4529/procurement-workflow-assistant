@@ -5,7 +5,8 @@ param(
     [int]$Port = 8002,
     [string]$PythonPath = "",
     [switch]$AllowTestPlatform,
-    [switch]$EnableLlm
+    [switch]$EnableLlm,
+    [switch]$EnableFaultGuidance
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +29,13 @@ if (Test-Path -LiteralPath $envPath) {
 
 if (-not $env:PROCUREMENT_IDENTITY_GATEWAY_SECRET) {
     throw "PROCUREMENT_IDENTITY_GATEWAY_SECRET must be set in the current process or $EnvFile before starting HTTP integration."
+}
+
+if ($EnableFaultGuidance.IsPresent -and -not $EnableLlm.IsPresent) {
+    throw "Fault Guidance requires -EnableLlm."
+}
+if ($EnableFaultGuidance.IsPresent -and -not $env:PROCUREMENT_REDIS_URL) {
+    throw "Fault Guidance requires PROCUREMENT_REDIS_URL in the current process or $EnvFile."
 }
 
 $backendUrl = $BackendBaseUrl.TrimEnd("/")
@@ -60,12 +68,14 @@ $env:PROCUREMENT_BACKEND_MODE = "http"
 $env:PROCUREMENT_BACKEND_BASE_URL = $backendUrl
 $env:PROCUREMENT_BACKEND_REQUEST_TIMEOUT_SECONDS = "10"
 $env:PROCUREMENT_LLM_ENABLED = $EnableLlm.IsPresent.ToString().ToLowerInvariant()
+$env:PROCUREMENT_FAULT_GUIDANCE_ENABLED = $EnableFaultGuidance.IsPresent.ToString().ToLowerInvariant()
 $env:PROCUREMENT_ALLOW_TEST_PLATFORM = $AllowTestPlatform.IsPresent.ToString().ToLowerInvariant()
 $env:PYTHONPATH = Join-Path $repoRoot "src"
 
 Write-Host "Procurement backend: $backendUrl"
 Write-Host "Agent readiness: http://$HostAddress`:$Port/health/ready"
 Write-Host "LLM enabled: $($env:PROCUREMENT_LLM_ENABLED)"
+Write-Host "Fault Guidance enabled: $($env:PROCUREMENT_FAULT_GUIDANCE_ENABLED)"
 Write-Host "The gateway secret is read only from the current process and is never printed."
 
 Set-Location $repoRoot

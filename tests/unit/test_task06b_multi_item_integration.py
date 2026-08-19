@@ -7,6 +7,7 @@ import pytest
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
 from procurement_platform.adapters.llm.fake_llm_client import FakeLlmClient
 from procurement_platform.application.assistant.agents.applicant import ApplicantAgent
+from procurement_platform.application.assistant.presentation import LegacyToolResultPresenter
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.task_context_service import AgentTaskStateService
 from procurement_platform.application.assistant.tooling.multi_item import (
@@ -171,6 +172,48 @@ async def test_complete_multi_item_result_returns_formal_confirmation_card() -> 
     assert response.view.title == "采购申请确认"
     assert not any(isinstance(item, TextInput) for item in response.view.elements)
     assert "服务器" in str(response.view)
+
+
+@pytest.mark.asyncio
+async def test_single_agent_presenter_returns_new_multi_item_confirmation_card() -> None:
+    backend = FakeBackendClient(_user())
+    identity = PlatformIdentity.create("TEST_PLATFORM", "ou_task06b_presenter")
+    conversation = await backend.get_or_create_agent_conversation(
+        identity=identity, current_action="ASSISTANT_CHAT"
+    )
+    context = _context(conversation.conversation_id)
+    result = await UpdateMultiItemDraftTool(backend).execute(
+        args=UpdateMultiItemDraftArgs(
+            operation="REPLACE",
+            start_new=True,
+            request_type=RequestType.MAINTENANCE,
+            application_reason="2号UPS电池故障更换",
+            items=(
+                DraftItemChange(
+                    item_kind=PurchaseItemKind.COMPONENT,
+                    item_name="南都蓄电池",
+                    model="2V 100Ah",
+                    quantity="3",
+                    unit="块",
+                ),
+            ),
+        ),
+        context=context,
+    )
+    response = await LegacyToolResultPresenter(
+        backend_client=backend,
+        session_service=AssistantSessionService(backend),
+    ).present(
+        result=result,
+        context=context,
+        external_message_id=context.external_message_id,
+    )
+
+    assert isinstance(response, AssistantInteractionResponse)
+    assert response.view.title == "采购申请确认"
+    assert "南都蓄电池" in str(response.view)
+    assert "服务器" not in str(response.view)
+    assert not any(isinstance(item, TextInput) for item in response.view.elements)
 
 
 def test_multi_item_args_reject_non_positive_quantity() -> None:

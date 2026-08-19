@@ -14,14 +14,27 @@ from procurement_platform.application.assistant.capabilities import (
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
 from procurement_platform.application.assistant.presentation import LegacyToolResultPresenter
 from procurement_platform.application.assistant.runtime import AssistantRuntime
-from procurement_platform.application.assistant.service import AssistantService
+from procurement_platform.application.assistant.service import (
+    AssistantService,
+    FaultGuidanceHandler,
+)
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
-from procurement_platform.domain.assistant import AssistantTextResponse, AssistantTurn
-from procurement_platform.domain.enums import AgentMessageSender, PlatformType, RoleCode
+from procurement_platform.domain.assistant import (
+    AssistantInteractionResponse,
+    AssistantTextResponse,
+    AssistantTurn,
+)
+from procurement_platform.domain.enums import (
+    AgentMessageSender,
+    FaultAction,
+    PlatformType,
+    RoleCode,
+)
+from procurement_platform.domain.fault_guidance import FaultGuidanceResponse
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
-from procurement_platform.domain.user import CurrentUser, UserRole
+from procurement_platform.domain.user import CurrentUser, UserBuilding, UserRole
 
 
 def _backend(*roles: RoleCode) -> FakeBackendClient:
@@ -32,7 +45,7 @@ def _backend(*roles: RoleCode) -> FakeBackendClient:
             mobile=None,
             status="ACTIVE",
             roles=tuple(UserRole(role_code=role) for role in roles),
-            buildings=(),
+            buildings=(UserBuilding(building_id=1, building_name="一号楼", is_primary=True),),
         )
     )
 
@@ -42,6 +55,7 @@ def _service(
     *,
     turns: tuple[AssistantTurn, ...] = (),
     llm: FakeLlmClient | None = None,
+    fault_guidance_service: FaultGuidanceHandler | None = None,
 ) -> AssistantService:
     sessions = AssistantSessionService(backend)
     registry = ToolRegistry()
@@ -68,6 +82,7 @@ def _service(
         context_builder=AssistantContextBuilder(),
         procurement_agent=agent,
         max_history_messages=20,
+        fault_guidance_service=fault_guidance_service,
     )
 
 
@@ -191,3 +206,97 @@ async def test_concurrent_duplicate_executes_llm_at_most_once() -> None:
     assert len(llm.calls) == 1
     assert AssistantTextResponse(text="完成") in responses
     assert all(item.text in {"完成", "该消息正在处理中，请稍候。"} for item in responses)
+
+
+class StubFaultGuidance:
+    def __init__(self, *responses: FaultGuidanceResponse, active: bool = False) -> None:
+        self.responses = list(responses)
+        self.active = active
+        self.messages: list[str] = []
+
+    async def start(self, conversation_id: int | str) -> None:
+        del conversation_id
+        self.active = True
+
+    async def is_active(self, conversation_id: int | str) -> bool:
+        del conversation_id
+        return self.active
+
+    async def handle_message(
+        self,
+        *,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        user_message: str,
+    ) -> FaultGuidanceResponse:
+        del identity, conversation_id
+        self.messages.append(user_message)
+        return self.responses.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_fault_guidance_explicit_entry_and_active_follow_up() -> None:
+    fault = StubFaultGuidance(
+        FaultGuidanceResponse(
+            reply="具体是什么告警？",
+            action=FaultAction.ASK,
+        )
+    )
+    assistant = _service(
+        _backend(RoleCode.APPLICANT),
+        turns=(),
+        fault_guidance_service=fault,
+    )
+
+    started = await assistant.handle(_event("fault-start", "故障引导"))
+    response = await assistant.handle(_event("fault-next", "2号UPS最近老报警"))
+
+    assert started == AssistantTextResponse(
+        text="故障采购引导已开始，请描述资产和故障现象。例如：2号UPS最近老报警。"
+    )
+    assert response == AssistantTextResponse(text="具体是什么告警？")
+    assert fault.messages == ["2号UPS最近老报警"]
+
+
+@pytest.mark.asyncio
+async def test_fault_guidance_prefix_routes_only_the_payload() -> None:
+    fault = StubFaultGuidance(
+        FaultGuidanceResponse(reply="之前是否检测过？", action=FaultAction.ASK)
+    )
+    assistant = _service(
+        _backend(RoleCode.APPLICANT),
+        turns=(),
+        fault_guidance_service=fault,
+    )
+
+    response = await assistant.handle(_event("fault-prefix", "故障引导：2号UPS报BATTERY FAULT"))
+
+    assert response == AssistantTextResponse(text="之前是否检测过？")
+    assert fault.messages == ["2号UPS报BATTERY FAULT"]
+
+
+@pytest.mark.asyncio
+async def test_fault_draft_success_returns_existing_confirmation_card() -> None:
+    backend = _backend(RoleCode.APPLICANT)
+    identity = PlatformIdentity.create(PlatformType.FEISHU, "ou_multi")
+    summary = await backend.create_requirement(identity=identity, building_id=1)
+    fault = StubFaultGuidance(
+        FaultGuidanceResponse(
+            reply="采购草稿已创建。",
+            action=FaultAction.DIRECT_TO_PROCUREMENT,
+            procurement_draft_ref=f"requirement:{summary.requirement_id}",
+        )
+    )
+    assistant = _service(backend, turns=(), fault_guidance_service=fault)
+
+    response = await assistant.handle(_event("fault-confirm", "故障引导：确认"))
+
+    assert isinstance(response, AssistantInteractionResponse)
+    assert response.view.title == "采购申请确认"
+    conversation = await backend.get_or_create_agent_conversation(
+        identity=identity, current_action="ASSISTANT_CHAT"
+    )
+    state = await backend.get_agent_state(
+        identity=identity, conversation_id=conversation.conversation_id
+    )
+    assert state.purchase_request_id == summary.requirement_id

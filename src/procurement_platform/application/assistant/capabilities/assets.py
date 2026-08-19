@@ -129,8 +129,13 @@ class AssetResolver:
     async def resolve(
         self, *, args: ResolveAssetArgs, context: AssistantToolContext
     ) -> ResolveAssetResult:
+        return await self.resolve_for_identity(identity=_identity(context), args=args)
+
+    async def resolve_for_identity(
+        self, *, identity: PlatformIdentity, args: ResolveAssetArgs
+    ) -> ResolveAssetResult:
         page = await self._backend.search_assets(
-            identity=_identity(context),
+            identity=identity,
             building_id=args.building_id,
             category_code=args.category_code,
             status=None,

@@ -1,8 +1,13 @@
 # ruff: noqa: RUF001
 
+from typing import Protocol
+
 from procurement_platform.application.applicant.card_factory import ApplicantCardFactory
 from procurement_platform.application.assistant.agent import ProcurementAgent
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
+from procurement_platform.application.assistant.entity_references import (
+    parse_requirement_reference,
+)
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.task_context_service import (
     AgentTaskStateService,
@@ -17,7 +22,8 @@ from procurement_platform.domain.assistant import (
 )
 from procurement_platform.domain.assistant_session import AgentSessionState, AgentSessionStateUpdate
 from procurement_platform.domain.enums import AgentMessageSender, PlatformType, RoleCode
-from procurement_platform.domain.errors import SessionNotFoundError
+from procurement_platform.domain.errors import BackendApplicationError, SessionNotFoundError
+from procurement_platform.domain.fault_guidance import FaultGuidanceResponse
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
 from procurement_platform.domain.user import CurrentUser
@@ -31,6 +37,20 @@ ROLE_LABELS: dict[RoleCode, str] = {
 }
 
 
+class FaultGuidanceHandler(Protocol):
+    async def start(self, conversation_id: int | str) -> None: ...
+
+    async def is_active(self, conversation_id: int | str) -> bool: ...
+
+    async def handle_message(
+        self,
+        *,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        user_message: str,
+    ) -> FaultGuidanceResponse: ...
+
+
 class AssistantService:
     def __init__(
         self,
@@ -40,12 +60,14 @@ class AssistantService:
         context_builder: AssistantContextBuilder,
         procurement_agent: ProcurementAgent,
         max_history_messages: int,
+        fault_guidance_service: FaultGuidanceHandler | None = None,
     ) -> None:
         self._backend_client = backend_client
         self._session_service = session_service
         self._context_builder = context_builder
         self._procurement_agent = procurement_agent
         self._max_history_messages = max_history_messages
+        self._fault_guidance_service = fault_guidance_service
 
     async def handle(self, event: TextMessageEvent) -> AssistantResponse:
         if event.external_message_id is None:
@@ -84,6 +106,63 @@ class AssistantService:
                 event.external_message_id,
                 "当前身份没有可用的采购助手角色。",
             )
+        fault_message = self._fault_message(event.text)
+        fault_active = (
+            self._fault_guidance_service is not None
+            and await self._fault_guidance_service.is_active(conversation.conversation_id)
+        )
+        if self._fault_guidance_service is not None and (fault_message is not None or fault_active):
+            if RoleCode.APPLICANT not in supported_roles:
+                return await self._text_reply(
+                    identity,
+                    conversation.conversation_id,
+                    event.external_message_id,
+                    "故障采购引导仅对需求人角色开放。",
+                )
+            if fault_message == "":
+                await self._fault_guidance_service.start(conversation.conversation_id)
+                return await self._text_reply(
+                    identity,
+                    conversation.conversation_id,
+                    event.external_message_id,
+                    "故障采购引导已开始，请描述资产和故障现象。例如：2号UPS最近老报警。",
+                )
+            try:
+                fault_response = await self._fault_guidance_service.handle_message(
+                    identity=identity,
+                    conversation_id=conversation.conversation_id,
+                    user_message=fault_message if fault_message is not None else event.text,
+                )
+            except BackendApplicationError:
+                return await self._text_reply(
+                    identity,
+                    conversation.conversation_id,
+                    event.external_message_id,
+                    "采购草稿创建失败，已保留故障上下文，请稍后发送“确认”重试。",
+                )
+            await self._session_service.append(
+                identity=identity,
+                conversation_id=conversation.conversation_id,
+                external_message_id=f"assistant:{event.external_message_id}",
+                sender=AgentMessageSender.AGENT,
+                content=fault_response.reply,
+            )
+            if fault_response.procurement_draft_ref is not None:
+                requirement_id = parse_requirement_reference(fault_response.procurement_draft_ref)
+                await self._save_purchase_request(
+                    identity, conversation.conversation_id, state, requirement_id
+                )
+                detail = await self._backend_client.get_requirement(
+                    identity=identity, requirement_id=requirement_id
+                )
+                return AssistantInteractionResponse(
+                    view=ApplicantCardFactory().detail(
+                        detail,
+                        notice=fault_response.reply,
+                        confirmation_mode=True,
+                    )
+                )
+            return AssistantTextResponse(text=fault_response.reply)
         if event.text.strip().startswith(("切换角色", "切换到")):
             selected = self._selected_role(event.text, supported_roles)
             if selected is None:
@@ -153,9 +232,7 @@ class AssistantService:
                 content=notice,
             )
             return AssistantInteractionResponse(
-                view=ApplicantCardFactory().detail(
-                    detail, notice=notice, confirmation_mode=True
-                )
+                view=ApplicantCardFactory().detail(detail, notice=notice, confirmation_mode=True)
             )
         return await self._procurement_agent.run(
             external_message_id=event.external_message_id,
@@ -217,6 +294,28 @@ class AssistantService:
             state=update.model_copy(update={"focused_role": role}),
         )
 
+    async def _save_purchase_request(
+        self,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        state: AgentSessionState | None,
+        requirement_id: int,
+    ) -> None:
+        update = (
+            AgentSessionStateUpdate.model_validate(
+                state.model_dump(
+                    exclude={"conversation_id", "expires_in_seconds", "restored_from_snapshot"}
+                )
+            )
+            if state is not None
+            else AgentSessionStateUpdate()
+        )
+        await self._session_service.save_state(
+            identity=identity,
+            conversation_id=conversation_id,
+            state=update.model_copy(update={"purchase_request_id": requirement_id}),
+        )
+
     async def _text_reply(
         self,
         identity: PlatformIdentity,
@@ -252,7 +351,16 @@ class AssistantService:
     @staticmethod
     def _is_confirmation_card_request(text: str) -> bool:
         normalized = text.strip().lower()
-        return (
-            "确认" in normalized
-            and ("卡" in normalized or "提交" in normalized or "草稿" in normalized)
+        return "确认" in normalized and (
+            "卡" in normalized or "提交" in normalized or "草稿" in normalized
         )
+
+    @staticmethod
+    def _fault_message(text: str) -> str | None:
+        normalized = text.strip()
+        if normalized == "故障引导":
+            return ""
+        for prefix in ("故障引导：", "故障引导:"):
+            if normalized.startswith(prefix):
+                return normalized[len(prefix) :].strip()
+        return None

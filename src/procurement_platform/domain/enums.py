@@ -60,6 +60,19 @@ class PurchaseItemKind(StrEnum):
     TOOL = "TOOL"
 
 
+class FaultAction(StrEnum):
+    ANSWER = "ANSWER"
+    ASK = "ASK"
+    PROPOSE_ITEM = "PROPOSE_ITEM"
+    DIRECT_TO_PROCUREMENT = "DIRECT_TO_PROCUREMENT"
+
+
+class ValidationStatus(StrEnum):
+    VALID = "VALID"
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
+    INVALID = "INVALID"
+
+
 class ItemFulfillmentStatus(StrEnum):
     INACTIVE = "INACTIVE"
     PENDING_PURCHASE = "PENDING_PURCHASE"

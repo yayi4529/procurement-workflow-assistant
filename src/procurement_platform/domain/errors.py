@@ -1,3 +1,6 @@
+from procurement_platform.domain.assistant_errors import AssistantError
+
+
 class BackendApplicationError(Exception):
     def __init__(
         self,
@@ -149,3 +152,7 @@ class NotificationInProgressError(NotificationError):
 
 class NotificationDeliveryError(NotificationError):
     pass
+
+
+class FaultStateRepositoryError(AssistantError):
+    """Raised when fault guidance state cannot be persisted in Redis."""
