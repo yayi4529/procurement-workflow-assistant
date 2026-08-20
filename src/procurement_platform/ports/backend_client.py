@@ -34,6 +34,8 @@ from procurement_platform.domain.requirement import (
     ApplicantFieldsSaveResult,
     FieldsSaveResult,
     HandlerCandidates,
+    ItemProductRecommendations,
+    ItemSupplierRecommendations,
     ProductRecommendations,
     PurchaseFieldsPatch,
     PurchaseHistoryRecommendations,
@@ -47,6 +49,7 @@ from procurement_platform.domain.requirement import (
     RequirementTransitionResult,
     ReviewFieldsPatch,
     ReviewItemDraft,
+    SelectedProduct,
     SupplierDetail,
     SupplierPage,
     SupplierRecommendations,
@@ -202,6 +205,14 @@ class BackendClient(Protocol):
         self,
         *,
         identity: PlatformIdentity,
+        request_item_id: int,
+        top_k: int = 10,
+    ) -> ItemProductRecommendations: ...
+
+    async def recommend_products_legacy(
+        self,
+        *,
+        identity: PlatformIdentity,
         device_name: str,
         device_profession: str | None = None,
         keyword: str | None = None,
@@ -288,6 +299,15 @@ class BackendClient(Protocol):
     ) -> SupplierPage: ...
 
     async def recommend_suppliers(
+        self,
+        *,
+        identity: PlatformIdentity,
+        request_item_id: int,
+        selected_product: SelectedProduct | None,
+        top_k: int = 5,
+    ) -> ItemSupplierRecommendations: ...
+
+    async def recommend_suppliers_legacy(
         self, *, identity: PlatformIdentity, requirement_id: int, limit: int = 3
     ) -> SupplierRecommendations: ...
 

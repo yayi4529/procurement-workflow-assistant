@@ -449,6 +449,99 @@ class BackendProductRecommendationsDTO(BackendDTO):
     items: tuple[BackendProductRecommendationDTO, ...]
 
 
+class BackendRecommendationQueryContextDTO(BackendDTO):
+    request_id: int
+    request_item_id: int
+    item_name: str
+    equipment_category_id: int | None
+    equipment_model_id: int | None
+    brand: str | None
+    model: str | None
+    quantity: Decimal
+    unit: str
+
+
+class BackendRecommendationMessageDTO(BackendDTO):
+    code: str
+    message: str
+
+
+class BackendItemProductRecommendationDTO(BackendDTO):
+    rank: int
+    product_key: str
+    equipment_model_id: int | None
+    item_name: str
+    brand: str | None
+    model: str | None
+    candidate_type: str
+    match_level: str
+    overall_score: Decimal
+    historical_purchase_count: int
+    last_purchased_at: datetime
+    active_supplier_count: int
+    price_summary: dict[str, object] | None
+    score_breakdown: dict[str, Decimal]
+    reasons: tuple[BackendRecommendationMessageDTO, ...]
+    warnings: tuple[BackendRecommendationMessageDTO, ...]
+
+
+class BackendItemProductRecommendationsDTO(BackendDTO):
+    request_item_id: int
+    query_context: BackendRecommendationQueryContextDTO
+    status: str
+    candidate_count: int
+    returned_count: int
+    recommendations: tuple[BackendItemProductRecommendationDTO, ...]
+    warnings: tuple[BackendRecommendationMessageDTO, ...]
+    policy_version: str
+
+
+class BackendSelectedProductDTO(BackendDTO):
+    product_key: str
+    equipment_model_id: int | None
+    equipment_category_id: int | None
+    item_name: str
+    brand: str | None
+    model: str | None
+
+
+class BackendItemSupplierRecommendationDTO(BackendDTO):
+    rank: int
+    supplier_id: int
+    supplier_name: str
+    overall_score: Decimal
+    match_level: str
+    history_purchase_count: int
+    last_purchase_at: datetime
+    price_summary: dict[str, object]
+    delivery_summary: dict[str, object]
+    confidence_summary: dict[str, object]
+    score_breakdown: dict[str, object]
+    reasons: tuple[BackendRecommendationMessageDTO, ...]
+    warnings: tuple[BackendRecommendationMessageDTO, ...]
+
+
+class BackendExcludedSupplierDTO(BackendDTO):
+    supplier_id: int
+    supplier_name: str
+    match_level: str
+    exclusion_code: str
+    exclusion_reason: str
+
+
+class BackendItemSupplierRecommendationsDTO(BackendDTO):
+    request_item_id: int
+    query_context: BackendRecommendationQueryContextDTO
+    selected_product: BackendSelectedProductDTO
+    candidate_count: int
+    eligible_candidate_count: int
+    returned_count: int
+    recommendations: tuple[BackendItemSupplierRecommendationDTO, ...]
+    excluded_candidates: tuple[BackendExcludedSupplierDTO, ...]
+    warnings: tuple[BackendRecommendationMessageDTO, ...]
+    policy_version: str
+
+
 class BackendPurchaseHistoryDTO(BackendDTO):
     requirement_id: int
     device_name: str

@@ -143,7 +143,7 @@ async def test_supplier_recommendation_contract_uses_openapi_query_and_strict_dt
         )
 
     client, raw = make_client(handler)
-    result = await client.recommend_suppliers(identity=identity(), requirement_id=8, limit=3)
+    result = await client.recommend_suppliers_legacy(identity=identity(), requirement_id=8, limit=3)
 
     assert result.items[0].supplier_id == 3
     assert [(item.method, item.url.path) for item in requests] == [

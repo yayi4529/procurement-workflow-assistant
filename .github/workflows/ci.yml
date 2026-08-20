@@ -23,6 +23,8 @@ jobs:
       - run: ruff format --check .
       - run: ruff check .
       - run: mypy src
+      - name: Validate Fault Knowledge catalogs and Markdown
+        run: python scripts/validate_fault_knowledge.py
       - name: Unit tests
         run: pytest -q tests/unit --cov=procurement_platform --cov-fail-under=80 --cov-report=term
 

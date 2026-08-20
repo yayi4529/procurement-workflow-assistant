@@ -105,7 +105,7 @@ class RecommendProductOptionsTool:
                 return RecommendProductOptionsResult(
                     status="NEED_MORE_INFORMATION", user_message="请先提供设备名称"
                 )
-            values = await self._backend.recommend_products(
+            values = await self._backend.recommend_products_legacy(
                 identity=identity,
                 device_name=device_name,
                 device_profession=profession,
