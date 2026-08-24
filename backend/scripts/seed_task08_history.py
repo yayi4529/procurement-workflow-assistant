@@ -37,6 +37,26 @@ REQUEST_PREFIX = "TEST-T08SYN-"
 CREDIT_PREFIX = "T08SYN-CREDIT-"
 MANIFEST_PATH = Path(__file__).resolve().parents[1] / ".local" / "task08_seed_manifest.json"
 
+DEVICE_PROFESSION_BY_CATEGORY = {
+    "HV_SWITCHGEAR_10KV": "电气",
+    "TRANSFORMER": "电气",
+    "LV_SWITCHGEAR_400V": "电气",
+    "UPS": "电气",
+    "HVDC": "电气",
+    "BATTERY": "电气",
+    "CHILLER": "暖通",
+    "SHU": "暖通",
+    "COOLING_TOWER": "暖通",
+    "COOLING_PUMP": "暖通",
+    "WATER_SYSTEM": "暖通",
+    "ROW_AC": "暖通",
+    "MONITORING": "弱电",
+    "ROOM_ENVIRONMENT": "机房环境",
+    "TRANSMISSION": "IDC网络",
+    "SERVER": "算力服务器",
+    "MAINTENANCE_TOOL": "工器具",
+}
+
 HIGH_FREQUENCY = {
     "UPS_BATTERY",
     "SERVER_SSD",
@@ -293,6 +313,8 @@ def _supplier_rows() -> list[Supplier]:
             Supplier(
                 supplier_name=name,
                 unified_social_credit_code=f"{CREDIT_PREFIX}{index + 1:04d}",
+                bank_name=f"合成测试银行{index % 6 + 1}支行",
+                bank_account=f"TESTBANK{index + 1:04d}000000",
                 registered_address=f"{regions[index % 6]}市合成数据园区{index + 1}号",
                 contract_contact_info=f"synthetic-contact-{index + 1:02d}",
                 status=index >= 3,
@@ -305,6 +327,158 @@ def _model_code(category: VocabularyCategory, item: VocabularyItem, product_inde
     stem = "".join(part[0] for part in item.canonical_item.split("_") if part)[:6]
     family = ("A", "E", "M", "X")[product_index]
     return f"{stem}-{family}{120 + product_index * 80}-{24 + product_index}"
+
+
+def _device_profession(category_code: str) -> str:
+    try:
+        return DEVICE_PROFESSION_BY_CATEGORY[category_code]
+    except KeyError as exc:
+        raise RuntimeError(f"未配置设备专业映射: {category_code}") from exc
+
+
+def _profession_by_database_category() -> dict[str, str]:
+    result: dict[str, str] = {}
+    for category in VOCABULARY:
+        profession = _device_profession(category.category_code)
+        existing = result.get(category.database_category_code)
+        if existing is not None and existing != profession:
+            raise RuntimeError(
+                "数据库设备类别跨专业冲突: "
+                f"{category.database_category_code} -> {existing}/{profession}"
+            )
+        result[category.database_category_code] = profession
+    return result
+
+
+async def repair_professions(*, dry_run: bool = False) -> dict[str, int]:
+    _safe_database()
+    if not dry_run:
+        _require_write_permission()
+    profession_by_category = _profession_by_database_category()
+    async with async_session_factory() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(PurchaseRequest, EquipmentCategory.category_code)
+                    .join(
+                        PurchaseRequestItem,
+                        PurchaseRequestItem.request_id == PurchaseRequest.request_id,
+                    )
+                    .join(
+                        EquipmentCategory,
+                        EquipmentCategory.category_id == PurchaseRequestItem.equipment_category_id,
+                    )
+                    .where(
+                        PurchaseRequest.request_no.like(f"{REQUEST_PREFIX}%"),
+                        PurchaseRequestItem.item_no == 1,
+                    )
+                )
+            ).all()
+        )
+        unknown = sorted(
+            {
+                category_code
+                for _, category_code in rows
+                if category_code not in profession_by_category
+            }
+        )
+        if unknown:
+            raise RuntimeError(f"无法映射设备专业的数据库类别: {unknown}")
+        changed = [
+            (request, profession_by_category[category_code])
+            for request, category_code in rows
+            if request.device_profession != profession_by_category[category_code]
+        ]
+        counts = {"requests": len(rows), "changed": len(changed)}
+        if not dry_run:
+            for request, profession in changed:
+                request.device_profession = profession
+            await session.commit()
+        print(json.dumps(counts, ensure_ascii=False, indent=2))
+        return counts
+
+
+async def repair_catalog_and_suppliers(*, dry_run: bool = False) -> dict[str, int]:
+    _safe_database()
+    if not dry_run:
+        _require_write_permission()
+    async with async_session_factory() as session:
+        items = list(
+            (
+                await session.scalars(
+                    select(PurchaseRequestItem)
+                    .join(PurchaseRequest)
+                    .where(PurchaseRequest.request_no.like(f"{REQUEST_PREFIX}%"))
+                )
+            ).all()
+        )
+        models = {
+            row.model_id: row
+            for row in (
+                await session.scalars(
+                    select(EquipmentModel).where(EquipmentModel.remark == BATCH_MARKER)
+                )
+            ).all()
+        }
+        changed_items = []
+        for item in items:
+            model = models.get(item.equipment_model_id)
+            if model is None:
+                candidates = [
+                    row
+                    for row in models.values()
+                    if row.category_id == item.equipment_category_id
+                    and (
+                        item.item_name in row.model_name
+                        or (
+                            item.remark
+                            and row.specifications.get("canonical_item")
+                            == item.remark.split("canonical_item=", 1)[-1]
+                        )
+                    )
+                ]
+                if not candidates:
+                    raise RuntimeError(f"无法为合成采购项匹配产品目录: {item.request_item_id}")
+                model = candidates[0]
+            if (
+                item.equipment_model_id != model.model_id
+                or item.brand_snapshot != model.brand
+                or item.model_snapshot != model.model
+            ):
+                item.equipment_model_id = model.model_id
+                item.brand_snapshot = model.brand
+                item.model_snapshot = model.model
+                changed_items.append(item)
+
+        suppliers = list(
+            (
+                await session.scalars(
+                    select(Supplier).where(
+                        Supplier.unified_social_credit_code.like(f"{CREDIT_PREFIX}%")
+                    )
+                )
+            ).all()
+        )
+        changed_suppliers = []
+        for index, supplier in enumerate(
+            sorted(suppliers, key=lambda row: row.unified_social_credit_code)
+        ):
+            expected_name = f"合成测试银行{index % 6 + 1}支行"
+            expected_account = f"TESTBANK{index + 1:04d}000000"
+            if supplier.bank_name != expected_name or supplier.bank_account != expected_account:
+                supplier.bank_name = expected_name
+                supplier.bank_account = expected_account
+                changed_suppliers.append(supplier)
+        counts = {
+            "items": len(items),
+            "changed_items": len(changed_items),
+            "suppliers": len(suppliers),
+            "changed_suppliers": len(changed_suppliers),
+        }
+        if not dry_run:
+            await session.commit()
+        print(json.dumps(counts, ensure_ascii=False, indent=2))
+        return counts
 
 
 async def _existing_master_data(session):
@@ -463,7 +637,7 @@ async def seed(count: int, seed_value: int) -> dict[str, object]:
                 applicant_platform_type_snapshot="SYNTHETIC",
                 applicant_platform_user_id_snapshot="task08-seeder",
                 applicant_name_snapshot=applicant.name,
-                device_profession="Task08 synthetic history",
+                device_profession=_device_profession(chunk[0].category_code),
                 device_name=chunk[0].item_name,
                 quantity=Decimal(str(sum(row.quantity for row in chunk))),
                 unit="项",
@@ -485,8 +659,8 @@ async def seed(count: int, seed_value: int) -> dict[str, object]:
                     value for value in category.items if value.canonical_item == row.canonical_item
                 )
                 model = models[(row.category_code, row.canonical_item, row.product_index)]
-                use_model_id = row.identity_mode == "MODEL"
-                use_snapshot = row.identity_mode != "GENERIC"
+                use_model_id = True
+                use_snapshot = True
                 request_item = PurchaseRequestItem(
                     request_id=request.request_id,
                     item_no=item_no,
@@ -637,10 +811,16 @@ async def main() -> None:
     parser.add_argument("--seed", type=int, default=RANDOM_SEED)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--cleanup", action="store_true")
+    parser.add_argument("--repair-professions", action="store_true")
+    parser.add_argument("--repair-catalog-and-suppliers", action="store_true")
     args = parser.parse_args()
     try:
         if args.cleanup:
             await cleanup(dry_run=args.dry_run)
+        elif args.repair_professions:
+            await repair_professions(dry_run=args.dry_run)
+        elif args.repair_catalog_and_suppliers:
+            await repair_catalog_and_suppliers(dry_run=args.dry_run)
         elif args.dry_run:
             dry_run(args.count, args.seed)
         else:

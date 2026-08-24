@@ -110,8 +110,9 @@ class RuntimeAgent:
         context: AssistantToolContext,
         history: tuple[AssistantMessage, ...],
         working_context: str | None = None,
+        active_role: RoleCode | None = None,
     ) -> tuple[AssistantMessage, ...]:
-        del context, working_context
+        del context, working_context, active_role
         return history
 
     async def before_run(
@@ -503,6 +504,64 @@ def test_tool_observation_never_exceeds_max_result_chars() -> None:
     assert observation is not None
     assert len(observation) <= 64
     assert isinstance(json.loads(observation), dict)
+
+
+def test_tool_observation_preserves_complete_lists_when_within_limit() -> None:
+    executor = ToolExecutor(ToolRegistry(), max_result_chars=10_000)
+    fields = [f"field_{index}" for index in range(20)] + ["supplier_name"]
+    result = LargeResult(
+        status="SUCCESS",
+        updated_fields={"fields": fields},
+        missing_fields=[],
+    )
+
+    observation = executor.observation(
+        name="catalog", tool_call_id="catalog-call", result=result
+    ).content
+
+    payload = json.loads(observation)
+    assert payload["updated_fields"]["fields"] == fields
+    assert payload["updated_fields"]["fields"][-1] == "supplier_name"
+
+
+@pytest.mark.asyncio
+async def test_workflow_can_continue_after_analytics_for_supplier_verification() -> None:
+    calls: list[str] = []
+    schema_name = "describe_analytics_schema"
+    sql_name = "run_readonly_analytics_sql"
+    supplier_name = "get_supplier_profile"
+    registry = ToolRegistry()
+    registry.register(ReadTool(schema_name, calls))
+    registry.register(ReadTool(sql_name, calls))
+    registry.register(ReadTool(supplier_name, calls))
+    llm = FakeLlmClient(
+        turns=(
+            AssistantTurn(tool_calls=(read_call("schema", schema_name, "schema"),)),
+            AssistantTurn(tool_calls=(read_call("sql", sql_name, "rows"),)),
+            AssistantTurn(tool_calls=(read_call("supplier", supplier_name, "eligible"),)),
+            AssistantTurn(content="verified recommendation"),
+        )
+    )
+    engine = AssistantRuntime(
+        llm_client=llm,
+        tool_registry=registry,
+        tool_executor=ToolExecutor(registry, max_result_chars=1000),
+        max_tool_steps=4,
+    )
+    agent = RuntimeAgent(response_to_tool=None, tool_names=registry.registered_names)
+
+    response = await engine.run(
+        agent=agent,
+        allowed_names=registry.registered_names,
+        turn_context=turn_context(),
+        user_text="recommend supplier",
+        external_message_id="message",
+        stop_after_successful_tools=frozenset(),
+    )
+
+    assert response == AssistantTextResponse(text="verified recommendation")
+    assert calls == ["schema", "rows", "eligible"]
+    assert llm.tool_choices == [None, None, None, None]
 
 
 @pytest.mark.asyncio

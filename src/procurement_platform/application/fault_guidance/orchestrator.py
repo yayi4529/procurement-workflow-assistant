@@ -1,4 +1,4 @@
-# ruff: noqa: RUF001
+# ruff: noqa: E501, RUF001
 
 import json
 from decimal import Decimal
@@ -19,8 +19,14 @@ from procurement_platform.ports.llm_client import LlmClient
 FAULT_GUIDANCE_SYSTEM_PROMPT = """你是故障采购引导助手，帮助用户从设备异常逐步形成可靠采购需求。
 你不是故障诊断系统。不得猜测品牌、型号、数量或规格，也不得把知识内容当作现场事实。
 每轮只能选择 ANSWER、ASK、PROPOSE_ITEM、DIRECT_TO_PROCUREMENT。
+状态转换规则：
+- fault_state.candidate_items 为空时，不得因“是/确认”等简短回复选择 DIRECT_TO_PROCUREMENT。
+- 只有新整理出候选项或用户修改了候选项时才选择 PROPOSE_ITEM，并要求用户确认。
+- workflow_stage=AWAITING_CANDIDATE_CONFIRMATION 且用户明确回复“是、是的、确认、对、可以、继续、按这个”时，必须选择 DIRECT_TO_PROCUREMENT；不得再次返回相同的 PROPOSE_ITEM。
+- 上述确认场景不得修改、重复生成或猜测 candidate_items；candidate_items 返回空数组，服务会使用 fault_state 中已确认的候选项。
+- 用户否定或修改数量或物品时，不得选择 DIRECT_TO_PROCUREMENT，应更新候选并选择 PROPOSE_ITEM。用户无需提供计量单位；候选项缺少 unit 时由服务使用默认单位“个”。
 已确认的信息不要重复询问；信息不足时只问一个最关键问题。
-数量只能来自 USER_CONFIRMED、USER_EXPLICIT_REQUEST 或 BACKEND_FACT。
+数量只能来自 USER_CONFIRMED、USER_EXPLICIT_REQUEST 或 BACKEND_FACT。用户明确说“一个/1个”时，quantity 必须输出为 1。
 CandidateItem 只是候选，不代表正式采购，也不得创建采购单。
 只返回符合给定 JSON 结构的对象，不要返回额外字段或 Markdown。"""
 
@@ -41,7 +47,12 @@ class _CandidateItemOutput(BaseModel):
 class _FaultDecisionOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: FaultAction
+    action: FaultAction = Field(
+        description=(
+            "Use PROPOSE_ITEM only for a new or changed candidate. Use DIRECT_TO_PROCUREMENT "
+            "when workflow_stage is AWAITING_CANDIDATE_CONFIRMATION and the user affirms it."
+        )
+    )
     reply: str = Field(min_length=1)
     issue_summary: str | None = None
     confirmed_facts_updates: dict[str, Any] = Field(default_factory=dict)
@@ -64,7 +75,7 @@ class FaultGuidanceOrchestrator:
                 "fault guidance LLM must return one structured JSON object"
             )
         try:
-            output = _FaultDecisionOutput.model_validate_json(turn.content)
+            output = _FaultDecisionOutput.model_validate_json(self._strip_json_fence(turn.content))
         except ValidationError as exc:
             raise LlmInvalidResponseError("invalid fault guidance structured output") from exc
         self._validate_grounding(context, output)
@@ -92,6 +103,16 @@ class FaultGuidanceOrchestrator:
     @staticmethod
     def structured_output_schema() -> dict[str, Any]:
         return _FaultDecisionOutput.model_json_schema()
+
+    @staticmethod
+    def _strip_json_fence(content: str) -> str:
+        stripped = content.strip()
+        if not stripped.startswith("```") or not stripped.endswith("```"):
+            return stripped
+        lines = stripped.splitlines()
+        if len(lines) < 3 or lines[0].strip().casefold() not in {"```", "```json"}:
+            return stripped
+        return "\n".join(lines[1:-1]).strip()
 
     @staticmethod
     def _validate_grounding(context: FaultContext, output: _FaultDecisionOutput) -> None:
@@ -131,6 +152,11 @@ class FaultGuidanceOrchestrator:
     def _messages(context: FaultContext) -> tuple[AssistantMessage, ...]:
         runtime_context = {
             "user_message": context.user_message,
+            "workflow_stage": (
+                "AWAITING_CANDIDATE_CONFIRMATION"
+                if context.fault_state.candidate_items
+                else "COLLECTING_FAULT_FACTS"
+            ),
             "source_asset": (
                 {
                     "asset_ref": f"asset:{context.source_asset.asset_id}",

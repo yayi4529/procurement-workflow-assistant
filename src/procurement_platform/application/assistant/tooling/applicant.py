@@ -1,5 +1,7 @@
 """Applicant tools for the optional conversational assistant."""
 
+# ruff: noqa: RUF001
+
 from datetime import datetime
 from typing import Literal
 
@@ -13,6 +15,7 @@ from procurement_platform.application.assistant.tooling.common import (
     StrictArgs,
     _active_user,
 )
+from procurement_platform.application.assistant.unit_defaults import default_procurement_unit
 from procurement_platform.domain.assistant import AssistantToolContext, AssistantToolResult
 from procurement_platform.domain.assistant_session import (
     JsonValue,
@@ -240,7 +243,11 @@ class UpdatePurchaseDraftArgs(StrictArgs):
     brand: str | None = Field(default=None, max_length=100)
     model: str | None = Field(default=None, max_length=150)
     quantity: str | None = None
-    unit: str | None = Field(default=None, max_length=30)
+    unit: str | None = Field(
+        default=None,
+        max_length=30,
+        description="根据物品名称和语境自动选择，不得向需求人追问",
+    )
     application_reason: str | None = None
     applicant_remark: str | None = None
 
@@ -280,6 +287,13 @@ class UpdatePurchaseDraftTool:
                 exclude={"requirement_id", "start_new", "product_ref", "selection_index"},
                 exclude_unset=True,
             )
+            profession = raw.get("device_profession")
+            if profession is not None and profession not in DEVICE_PROFESSION_OPTIONS:
+                return UpdatePurchaseDraftResult(
+                    status="INVALID_ARGUMENTS",
+                    user_message="设备专业不在允许范围内，请从标准专业中选择",
+                    device_profession_recommendations=DEVICE_PROFESSION_OPTIONS,
+                )
             has_candidate_selection = (
                 args.selection_index is not None or args.product_ref is not None
             )
@@ -297,9 +311,12 @@ class UpdatePurchaseDraftTool:
                     identity=identity, requirement_id=requirement_id
                 )
                 if detail.status not in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}:
-                    return UpdatePurchaseDraftResult(
-                        status="INVALID_STATUS", user_message="当前状态不可修改需求草稿"
-                    )
+                    if args.requirement_id is not None:
+                        return UpdatePurchaseDraftResult(
+                            status="INVALID_STATUS", user_message="当前状态不可修改需求草稿"
+                        )
+                    requirement_id = None
+                    detail = None
             if requirement_id is None:
                 primary = [item for item in user.buildings if item.is_primary]
                 building = (
@@ -365,6 +382,10 @@ class UpdatePurchaseDraftTool:
                         status="INVALID_ARGUMENTS", user_message="候选不包含当前所需字段"
                     )
                 raw[state.pending_field] = value
+            if not raw.get("unit") and not detail.applicant_fields.unit:
+                raw["unit"] = default_procurement_unit(
+                    raw.get("device_name") or detail.applicant_fields.device_name
+                )
             if not raw:
                 return UpdatePurchaseDraftResult(
                     status="NEED_MORE_INFORMATION", user_message="请提供需要保存的采购字段"
@@ -480,4 +501,4 @@ class UpdatePurchaseDraftTool:
                 reverse=True,
             )
         )
-        return (ranked[0], ranked) if len(ranked) == 1 else (None, ranked)
+        return (ranked[0], ranked) if ranked else (None, ())

@@ -20,6 +20,7 @@ class RoleAgent(Protocol):
         context: AssistantToolContext,
         history: tuple[AssistantMessage, ...],
         working_context: str | None = None,
+        active_role: RoleCode | None = None,
     ) -> tuple[AssistantMessage, ...]: ...
 
     async def handle_content(

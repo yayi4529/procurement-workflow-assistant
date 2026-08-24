@@ -139,3 +139,9 @@ Assistant Orchestrator 构造路径，四角色卡片 Application Service 仅依
 
 永久测试保护四角色 card/application 不导入 LLM 或 Agent Session、正式动作不直接发
 跨角色通知，以及 `NotificationGatewayService` 不依赖业务流转接口。
+## Governed intelligent analytics
+
+Text-to-SQL is a read-only Agent capability. The root Agent calls signed backend analytics APIs;
+only the backend `AnalyticsQueryService` owns a separate read-only database connection and it may
+query only migration-managed, desensitized analytics views. Formal workflow writes remain solely
+behind existing BackendClient business methods and never execute generated SQL.

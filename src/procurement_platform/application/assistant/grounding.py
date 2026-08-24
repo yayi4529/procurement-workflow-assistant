@@ -27,10 +27,20 @@ _RELEVANT_TOOLS: dict[GroundingRequirement, frozenset[str]] = {
         {"search_purchase_requests", "get_purchase_request", "get_purchase_timeline"}
     ),
     GroundingRequirement.SUPPLIER_RECOMMENDATION: frozenset(
-        {"recommend_suppliers", "get_supplier_profile", "find_similar_purchases"}
+        {
+            "recommend_suppliers",
+            "recommend_suppliers_with_evidence",
+            "get_supplier_profile",
+            "find_similar_purchases",
+        }
     ),
     GroundingRequirement.PRODUCT_RECOMMENDATION: frozenset(
-        {"recommend_products", "diagnose_procurement_need", "find_similar_purchases"}
+        {
+            "recommend_products",
+            "recommend_products_by_name",
+            "diagnose_procurement_need",
+            "find_similar_purchases",
+        }
     ),
     GroundingRequirement.SUPPLIER_COMPARISON: frozenset(
         {"compare_suppliers", "get_supplier_profile", "recommend_suppliers"}

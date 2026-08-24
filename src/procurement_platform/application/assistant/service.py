@@ -14,6 +14,7 @@ from procurement_platform.application.assistant.task_context_service import (
     BusinessFactsBuilder,
 )
 from procurement_platform.application.assistant.turn_context import AgentTurnContext
+from procurement_platform.application.fault_guidance.intent_router import FaultIntentRouter
 from procurement_platform.domain.assistant import (
     AssistantInteractionResponse,
     AssistantMessage,
@@ -21,7 +22,12 @@ from procurement_platform.domain.assistant import (
     AssistantTextResponse,
 )
 from procurement_platform.domain.assistant_session import AgentSessionState, AgentSessionStateUpdate
-from procurement_platform.domain.enums import AgentMessageSender, PlatformType, RoleCode
+from procurement_platform.domain.enums import (
+    AgentMessageSender,
+    PlatformType,
+    RequirementStatus,
+    RoleCode,
+)
 from procurement_platform.domain.errors import BackendApplicationError, SessionNotFoundError
 from procurement_platform.domain.fault_guidance import FaultGuidanceResponse
 from procurement_platform.domain.identity import PlatformIdentity
@@ -61,6 +67,7 @@ class AssistantService:
         procurement_agent: ProcurementAgent,
         max_history_messages: int,
         fault_guidance_service: FaultGuidanceHandler | None = None,
+        fault_intent_router: FaultIntentRouter | None = None,
     ) -> None:
         self._backend_client = backend_client
         self._session_service = session_service
@@ -68,6 +75,7 @@ class AssistantService:
         self._procurement_agent = procurement_agent
         self._max_history_messages = max_history_messages
         self._fault_guidance_service = fault_guidance_service
+        self._fault_intent_router = fault_intent_router
 
     async def handle(self, event: TextMessageEvent) -> AssistantResponse:
         if event.external_message_id is None:
@@ -75,6 +83,25 @@ class AssistantService:
         identity = PlatformIdentity.create(PlatformType.FEISHU, event.external_user_id)
         current_user = await self._backend_client.get_current_user(identity=identity)
         conversation = await self._session_service.active(identity=identity)
+        if self._is_reset_request(event.text):
+            await self._session_service.complete(
+                identity=identity,
+                conversation_id=conversation.conversation_id,
+            )
+            conversation = await self._session_service.active(identity=identity)
+            await self._session_service.append(
+                identity=identity,
+                conversation_id=conversation.conversation_id,
+                external_message_id=event.external_message_id,
+                sender=AgentMessageSender.USER,
+                content=event.text,
+            )
+            return await self._text_reply(
+                identity,
+                conversation.conversation_id,
+                event.external_message_id,
+                "已清空上一段采购上下文，可以重新描述需求。",
+            )
         write = await self._session_service.append(
             identity=identity,
             conversation_id=conversation.conversation_id,
@@ -111,6 +138,13 @@ class AssistantService:
             self._fault_guidance_service is not None
             and await self._fault_guidance_service.is_active(conversation.conversation_id)
         )
+        if (
+            fault_message is None
+            and not fault_active
+            and self._fault_intent_router is not None
+            and await self._fault_intent_router.is_fault_intent(event.text)
+        ):
+            fault_message = event.text.strip()
         if self._fault_guidance_service is not None and (fault_message is not None or fault_active):
             if RoleCode.APPLICANT not in supported_roles:
                 return await self._text_reply(
@@ -180,13 +214,14 @@ class AssistantService:
                 f"已将默认展示角色切换为{ROLE_LABELS[selected]}；可用能力仍包含您的全部采购角色。",
             )
 
+        effective_state = state
         context = self._context_builder.build(
             identity=identity,
             conversation_id=conversation.conversation_id,
             external_message_id=event.external_message_id,
             external_conversation_id=event.chat_id,
             current_user=current_user,
-            state=state,
+            state=effective_state,
         )
         history = await self._history(
             identity=identity,
@@ -198,21 +233,42 @@ class AssistantService:
             active_requirement = await self._session_service.requirement(
                 identity=identity, requirement_id=state.purchase_request_id
             )
+        if (
+            state is not None
+            and (
+                state.focused_role if state.focused_role in supported_roles else supported_roles[0]
+            )
+            is RoleCode.APPLICANT
+            and self._is_new_purchase_intent(event.text)
+            and active_requirement is not None
+            and active_requirement.status
+            not in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}
+        ):
+            effective_state = state.model_copy(update={"purchase_request_id": None})
+            active_requirement = None
+            context = self._context_builder.build(
+                identity=identity,
+                conversation_id=conversation.conversation_id,
+                external_message_id=event.external_message_id,
+                external_conversation_id=event.chat_id,
+                current_user=current_user,
+                state=effective_state,
+            )
         context_role = (
-            state.focused_role
-            if state is not None and state.focused_role in supported_roles
+            effective_state.focused_role
+            if effective_state is not None and effective_state.focused_role in supported_roles
             else supported_roles[0]
         )
         turn_context = AgentTurnContext(
             current_user=current_user,
             active_role=context_role,
-            session_state=state,
+            session_state=effective_state,
             active_requirement=active_requirement,
             recent_history=history,
             current_recommendations=state.last_recommendations if state is not None else (),
             tool_context=context,
             business_facts=BusinessFactsBuilder.build(current_user, active_requirement),
-            task_state=AgentTaskStateService.from_session(state),
+            task_state=AgentTaskStateService.from_session(effective_state),
         )
         if (
             context_role is RoleCode.APPLICANT
@@ -354,6 +410,22 @@ class AssistantService:
         return "确认" in normalized and (
             "卡" in normalized or "提交" in normalized or "草稿" in normalized
         )
+
+    @staticmethod
+    def _is_reset_request(text: str) -> bool:
+        return text.strip().rstrip("。.!！") in {
+            "重新开始",
+            "清空上下文",
+            "新会话",
+            "开始新需求",
+        }
+
+    @staticmethod
+    def _is_new_purchase_intent(text: str) -> bool:
+        normalized = "".join(text.strip().split())
+        return normalized.startswith(
+            ("我要买", "我要采购", "我要购买", "帮我买", "帮我采购")
+        ) or normalized.startswith(("买", "采购", "购买"))
 
     @staticmethod
     def _fault_message(text: str) -> str | None:

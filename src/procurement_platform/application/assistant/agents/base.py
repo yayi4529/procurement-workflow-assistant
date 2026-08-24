@@ -34,7 +34,9 @@ class BasicRoleAgent:
         context: AssistantToolContext,
         history: tuple[AssistantMessage, ...],
         working_context: str | None = None,
+        active_role: RoleCode | None = None,
     ) -> tuple[AssistantMessage, ...]:
+        del active_role
         system = AssistantMessage(
             role="system",
             content=(

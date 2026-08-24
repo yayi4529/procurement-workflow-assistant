@@ -19,7 +19,9 @@ from app.models.procurement import (
     PurchaseExecution,
     PurchaseOperationLog,
     PurchaseRequest,
+    PurchaseRequestItem,
     PurchaseReview,
+    PurchaseReviewItem,
     SupplierBlacklist,
     WarehouseReceipt,
 )
@@ -81,6 +83,14 @@ async def cleanup(requirement_ids: tuple[int, ...]) -> None:
                 SupplierBlacklist.source_request_id.in_(requirement_ids)
             )
         )
+        request_item_ids = select(PurchaseRequestItem.request_item_id).where(
+            PurchaseRequestItem.request_id.in_(requirement_ids)
+        )
+        await connection.execute(
+            delete(PurchaseReviewItem).where(
+                PurchaseReviewItem.request_item_id.in_(request_item_ids)
+            )
+        )
         await connection.execute(
             delete(PurchaseReview).where(PurchaseReview.request_id.in_(requirement_ids))
         )
@@ -89,6 +99,9 @@ async def cleanup(requirement_ids: tuple[int, ...]) -> None:
         )
         await connection.execute(
             delete(PurchaseOperationLog).where(PurchaseOperationLog.request_id.in_(requirement_ids))
+        )
+        await connection.execute(
+            delete(PurchaseRequestItem).where(PurchaseRequestItem.request_id.in_(requirement_ids))
         )
         await connection.execute(
             delete(PurchaseRequest).where(PurchaseRequest.request_id.in_(requirement_ids))

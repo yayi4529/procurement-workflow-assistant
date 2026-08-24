@@ -127,11 +127,18 @@ async def test_permanent_errors_do_not_retry(error: Exception, expected: type[Ex
 
 
 @pytest.mark.asyncio
-async def test_exact_tool_choice_falls_back_once_when_provider_rejects_it() -> None:
+@pytest.mark.parametrize(
+    "message",
+    (
+        "Thinking mode does not support this tool_choice",
+        "Invalid parameter: tool_choice",
+    ),
+)
+async def test_tool_choice_bad_request_falls_back_once(message: str) -> None:
     unsupported = _error(
         "BadRequestError",
         status_code=400,
-        message="Thinking mode does not support this tool_choice",
+        message=message,
     )
     client, sdk, _ = _client((unsupported, _response()))
     result = await client.complete(messages=(), tools=(), tool_choice="required")
@@ -141,8 +148,30 @@ async def test_exact_tool_choice_falls_back_once_when_provider_rejects_it() -> N
 
 
 @pytest.mark.asyncio
+async def test_tool_choice_fallback_is_available_with_one_normal_attempt() -> None:
+    unsupported = _error("BadRequestError", status_code=400)
+    client, sdk, _ = _client((unsupported, _response()))
+    client._max_attempts = 1
+
+    result = await client.complete(messages=(), tools=(), tool_choice="required")
+
+    assert result.content == "ok"
+    assert len(sdk.chat.completions.requests) == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("response", [_response(choices=False), _response(content=None)])
 async def test_invalid_provider_responses_are_rejected(response: SimpleNamespace) -> None:
-    client, _, _ = _client((response,))
+    client, _, _ = _client((response, response, response))
     with pytest.raises(LlmInvalidResponseError):
         await client.complete(messages=(), tools=())
+
+
+@pytest.mark.asyncio
+async def test_empty_provider_response_retries_then_recovers() -> None:
+    client, sdk, _ = _client((_response(content=None), _response("recovered")))
+
+    result = await client.complete(messages=(), tools=())
+
+    assert result.content == "recovered"
+    assert len(sdk.chat.completions.requests) == 2

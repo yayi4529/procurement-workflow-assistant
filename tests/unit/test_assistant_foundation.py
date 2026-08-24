@@ -269,7 +269,7 @@ async def test_llm_draft_tool_call_asks_only_next_field() -> None:
     assert "待补充字段" not in response.text
     assert backend.call_counts["update_applicant_fields"] == 1
     assert len(llm.calls) == 2
-    assert llm.tool_choices == [None, None]
+    assert llm.tool_choices == ["required", None]
 
 
 @pytest.mark.asyncio
@@ -304,12 +304,11 @@ async def test_llm_query_tool_call_never_writes_a_draft() -> None:
         )
     )
 
-    assert isinstance(response, AssistantInteractionResponse)
-    assert "共 **0** 条采购申请" in response.view.elements[0].markdown
+    assert response == AssistantTextResponse(text="查询完成。")
     assert backend.call_counts["create_requirement"] == 0
     assert backend.call_counts["update_applicant_fields"] == 0
     assert backend.call_counts["list_purchase_records"] == 1
-    assert llm.tool_choices == [None]
+    assert llm.tool_choices == [None, None]
 
 
 @pytest.mark.asyncio
@@ -339,6 +338,7 @@ async def test_tool_backend_rejects_empty_unexpected_draft_write() -> None:
                     ),
                 )
             ),
+            AssistantTurn(content="已根据查询结果说明采购申请详情。"),
         )
     )
     assistant = _assistant(backend, registry, llm)
@@ -359,7 +359,7 @@ async def test_tool_backend_rejects_empty_unexpected_draft_write() -> None:
 
 
 @pytest.mark.asyncio
-async def test_applicant_history_query_returns_a_clickable_card_with_backend_total() -> None:
+async def test_applicant_history_query_returns_observation_to_llm_for_summary() -> None:
     backend = FakeBackendClient(user())
     backend.purchase_records.extend(
         (
@@ -393,6 +393,7 @@ async def test_applicant_history_query_returns_a_clickable_card_with_backend_tot
                     ),
                 )
             ),
+            AssistantTurn(content="您可见的采购申请共有2条。"),
         )
     )
     assistant = _assistant(backend, registry, llm)
@@ -407,14 +408,7 @@ async def test_applicant_history_query_returns_a_clickable_card_with_backend_tot
         )
     )
 
-    assert isinstance(response, AssistantInteractionResponse)
-    assert response.view.title == "我的采购申请"
-    assert "已查询到您可见的采购申请共 2 条" in response.view.elements[0].markdown
-    assert "共 **2** 条采购申请" in response.view.elements[0].markdown
-    assert [action.action_id for action in response.view.actions] == [
-        "applicant.open",
-        "applicant.open",
-    ]
+    assert response == AssistantTextResponse(text="您可见的采购申请共有2条。")
     assert backend.call_counts["create_requirement"] == 0
     assert backend.call_counts["update_applicant_fields"] == 0
 

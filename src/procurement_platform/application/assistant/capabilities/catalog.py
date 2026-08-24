@@ -1,5 +1,9 @@
 from typing import Protocol
 
+from procurement_platform.application.assistant.capabilities.analytics import (
+    DescribeAnalyticsSchemaCapability,
+    RunReadonlyAnalyticsSqlCapability,
+)
 from procurement_platform.application.assistant.capabilities.assets import (
     GetAssetCapability,
     GetAssetComponentsCapability,
@@ -18,8 +22,15 @@ from procurement_platform.application.assistant.capabilities.intelligence import
     FindSimilarPurchasesCapability,
 )
 from procurement_platform.application.assistant.capabilities.metadata import CapabilityMetadata
+from procurement_platform.application.assistant.capabilities.products.recommend import (
+    RecommendProductsByNameCapability,
+)
 from procurement_platform.application.assistant.capabilities.purchases import (
     PreparePurchasePrefillCapability,
+)
+from procurement_platform.application.assistant.capabilities.skill_handlers import (
+    ProcurementAnalyticsHandler,
+    SupplierRecommendationHandler,
 )
 from procurement_platform.application.assistant.capabilities.v2 import (
     ApplySupplierProfileCapability,
@@ -64,6 +75,22 @@ def _metadata(
 
 
 DEFAULT_CAPABILITY_METADATA: tuple[CapabilityMetadata, ...] = (
+    _metadata(
+        ProcurementAnalyticsHandler,
+        frozenset({RoleCode.PURCHASER, RoleCode.ADMIN}),
+    ),
+    _metadata(
+        SupplierRecommendationHandler,
+        frozenset({RoleCode.PURCHASER, RoleCode.ADMIN}),
+    ),
+    _metadata(
+        DescribeAnalyticsSchemaCapability,
+        frozenset({RoleCode.PURCHASER, RoleCode.ADMIN}),
+    ),
+    _metadata(
+        RunReadonlyAnalyticsSqlCapability,
+        frozenset({RoleCode.PURCHASER, RoleCode.ADMIN}),
+    ),
     _metadata(SearchAssetsCapability, ALL_WORKFLOW_ROLES),
     _metadata(ResolveAssetCapability, ALL_WORKFLOW_ROLES),
     _metadata(GetAssetCapability, ALL_WORKFLOW_ROLES),
@@ -71,6 +98,7 @@ DEFAULT_CAPABILITY_METADATA: tuple[CapabilityMetadata, ...] = (
     _metadata(GetAssetRelationsCapability, ALL_WORKFLOW_ROLES),
     _metadata(DiagnoseProcurementNeedCapability, frozenset({RoleCode.APPLICANT})),
     _metadata(FindSimilarPurchasesCapability, ALL_WORKFLOW_ROLES),
+    _metadata(RecommendProductsByNameCapability, ALL_WORKFLOW_ROLES),
     _metadata(
         CompareProductsCapability,
         frozenset({RoleCode.APPLICANT, RoleCode.BUILDING_MANAGER, RoleCode.PURCHASER}),

@@ -82,20 +82,28 @@ class OpenAICompatibleLlmClient:
         }
         if tool_choice is not None:
             request["tool_choice"] = tool_choice
-        response = await self._create_with_retry(request)
-        if not response.choices:
-            raise LlmInvalidResponseError("LLM returned no choices")
-        message = response.choices[0].message
-        calls = tuple(
-            AssistantToolCall(
-                id=call.id, name=call.function.name, arguments_json=call.function.arguments
-            )
-            for call in message.tool_calls or ()
-            if hasattr(call, "function")
-        )
-        if not (message.content and message.content.strip()) and not calls:
-            raise LlmInvalidResponseError("LLM returned empty response")
-        return AssistantTurn(content=message.content, tool_calls=calls)
+        invalid_reason = "LLM returned invalid response"
+        for attempt in range(1, self._max_attempts + 1):
+            response = await self._create_with_retry(request)
+            if not response.choices:
+                invalid_reason = "LLM returned no choices"
+            else:
+                message = response.choices[0].message
+                calls = tuple(
+                    AssistantToolCall(
+                        id=call.id,
+                        name=call.function.name,
+                        arguments_json=call.function.arguments,
+                    )
+                    for call in message.tool_calls or ()
+                    if hasattr(call, "function")
+                )
+                if (message.content and message.content.strip()) or calls:
+                    return AssistantTurn(content=message.content, tool_calls=calls)
+                invalid_reason = "LLM returned empty response"
+            if attempt < self._max_attempts:
+                logger.warning("assistant.llm.empty_response_retry", extra={"attempt": attempt})
+        raise LlmInvalidResponseError(invalid_reason)
 
     async def _create_with_retry(self, request: dict[str, object]) -> Any:
         fallback_used = False
@@ -108,11 +116,12 @@ class OpenAICompatibleLlmClient:
                 if (
                     not fallback_used
                     and "tool_choice" in request
-                    and self._tool_choice_is_unsupported(exc)
+                    and self._tool_choice_may_be_unsupported(exc)
                 ):
                     fallback_used = True
                     request = dict(request)
                     request.pop("tool_choice", None)
+                    attempt -= 1
                     logger.info("assistant.llm.tool_choice_fallback", extra={"attempt": attempt})
                     continue
                 mapped, transient = self._classify(exc)
@@ -168,5 +177,6 @@ class OpenAICompatibleLlmClient:
         return payload
 
     @staticmethod
-    def _tool_choice_is_unsupported(exc: Exception) -> bool:
-        return "thinking mode does not support this tool_choice" in str(exc).lower()
+    def _tool_choice_may_be_unsupported(exc: Exception) -> bool:
+        status = getattr(exc, "status_code", None)
+        return exc.__class__.__name__ == "BadRequestError" or status in {400, 422}

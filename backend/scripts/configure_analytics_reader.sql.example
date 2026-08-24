@@ -1,0 +1,8 @@
+-- Run as a MySQL administrator after replacing placeholders outside source control.
+CREATE USER IF NOT EXISTS 'procurement_analytics_ro'@'%' IDENTIFIED BY '<STRONG_PASSWORD>';
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'procurement_analytics_ro'@'%';
+GRANT SELECT ON procurement_agent.analytics_purchase_request_fact TO 'procurement_analytics_ro'@'%';
+GRANT SELECT ON procurement_agent.analytics_purchase_item_fact TO 'procurement_analytics_ro'@'%';
+GRANT SELECT ON procurement_agent.analytics_purchase_request_fact_real TO 'procurement_analytics_ro'@'%';
+GRANT SELECT ON procurement_agent.analytics_purchase_item_fact_real TO 'procurement_analytics_ro'@'%';
+FLUSH PRIVILEGES;

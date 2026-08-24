@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -137,6 +138,10 @@ def test_adapter_reuses_existing_tool_contract() -> None:
         (
             RoleCode.PURCHASER,
             {
+                "analyze_procurement",
+                "recommend_suppliers_with_evidence",
+                "describe_analytics_schema",
+                "run_readonly_analytics_sql",
                 "search_purchase_requests",
                 "get_purchase_request",
                 "get_purchase_timeline",
@@ -174,6 +179,7 @@ def test_single_role_permissions_remain_compatible(role: RoleCode, expected: set
             "get_asset",
             "get_asset_components",
             "get_asset_relations",
+            "recommend_products_by_name",
         }
     )
     assert policy.allowed_names_for(user) == frozenset(expected)
@@ -207,6 +213,7 @@ def test_policy_unions_capabilities_for_multi_role_user() -> None:
             "get_asset",
             "get_asset_components",
             "get_asset_relations",
+            "recommend_products_by_name",
         }
     )
 
@@ -250,7 +257,11 @@ async def test_role_policy_registry_existing_tool_fake_backend_chain() -> None:
 
     assert "search_purchase_requests" in policy.allowed_names_for(user)
     assert result.status == "NOT_FOUND"
-    assert registry.names() == tuple(item.name for item in DEFAULT_CAPABILITY_METADATA)
+    assert registry.names() == tuple(
+        item.name
+        for item in DEFAULT_CAPABILITY_METADATA
+        if item.name not in {"analyze_procurement", "recommend_suppliers_with_evidence"}
+    )
 
 
 def test_requirement_v2_schemas_have_no_operation_router() -> None:
@@ -300,3 +311,19 @@ async def test_requirement_v2_returns_action_specific_typed_results() -> None:
     assert isinstance(search, SearchPurchaseRequestsResult)
     assert isinstance(detail, GetPurchaseRequestResult)
     assert isinstance(timeline, GetPurchaseTimelineResult)
+
+
+def test_runtime_does_not_branch_on_procurement_analytics_tool_names() -> None:
+    runtime_path = (
+        Path(__file__).parents[2]
+        / "src"
+        / "procurement_platform"
+        / "application"
+        / "assistant"
+        / "runtime.py"
+    )
+    source = runtime_path.read_text(encoding="utf-8")
+
+    assert "describe_analytics_schema" not in source
+    assert "run_readonly_analytics_sql" not in source
+    assert "analytics_sql_attempts" not in source

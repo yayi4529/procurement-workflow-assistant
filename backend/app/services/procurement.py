@@ -1050,9 +1050,16 @@ class ProcurementService:
                             "model_snapshot": value.model_snapshot,
                             "proposed_supplier_id": value.proposed_supplier_id,
                             "proposed_supplier_name": value.proposed_supplier_name_snapshot,
+                            "supplier_contact_name": value.supplier_contact_name,
+                            "supplier_contact_info": value.supplier_contact_info,
+                            "supplier_link": value.supplier_link,
                             "estimated_unit_price": value.estimated_unit_price,
                             "estimated_total_price": value.estimated_total_price,
+                            "need_contract": value.need_contract,
+                            "contract_type": value.contract_type,
+                            "payment_method": value.payment_method,
                             "expected_arrival_date": value.expected_arrival_date,
+                            "warranty_info": value.warranty_info,
                             "item_remark": value.item_remark,
                         }
                         for value in review_item_map.get(review.review_id, [])

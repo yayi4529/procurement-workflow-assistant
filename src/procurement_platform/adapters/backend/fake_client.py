@@ -4,6 +4,10 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
+from procurement_platform.domain.analytics import (
+    AnalyticsCatalog,
+    AnalyticsQueryResult,
+)
 from procurement_platform.domain.assets import (
     AssetContext,
     AssetPage,
@@ -142,6 +146,41 @@ class FakeBackendClient:
         self.equipment_models: list[EquipmentModelSummary] = []
         self.assets: dict[int, AssetSummary] = {}
         self.asset_contexts: dict[int, AssetContext] = {}
+        self.analytics_catalog = AnalyticsCatalog(
+            version="1.0",
+            dialect="mysql",
+            synthetic_default_included=True,
+            views=(),
+            metrics=(),
+        )
+        self.analytics_query_result = AnalyticsQueryResult(
+            query_id="fake-query",
+            columns=(),
+            rows=(),
+            row_count=0,
+            truncated=False,
+            duration_ms=0,
+            normalized_sql="SELECT 1",
+            synthetic_included=True,
+        )
+
+    async def get_analytics_catalog(self, *, identity: PlatformIdentity) -> AnalyticsCatalog:
+        self._record("get_analytics_catalog")
+        self._user(identity)
+        return self.analytics_catalog
+
+    async def run_analytics_query(
+        self,
+        *,
+        identity: PlatformIdentity,
+        question: str,
+        sql: str,
+        include_synthetic: bool | None = None,
+    ) -> AnalyticsQueryResult:
+        self._record("run_analytics_query")
+        self._user(identity)
+        del question, sql, include_synthetic
+        return self.analytics_query_result
 
     def seed_asset_context(self, context: AssetContext) -> None:
         self.assets[context.asset.asset_id] = context.asset
@@ -494,8 +533,22 @@ class FakeBackendClient:
                 quantity_snapshot=request_items[value.request_item_id].quantity,
                 unit_snapshot=request_items[value.request_item_id].unit,
                 proposed_supplier_id=value.proposed_supplier_id,
+                proposed_supplier_name=(
+                    self._suppliers[value.proposed_supplier_id].supplier_name
+                    if value.proposed_supplier_id in self._suppliers
+                    else None
+                ),
+                supplier_contact_name=value.supplier_contact_name,
+                supplier_contact_info=value.supplier_contact_info,
+                supplier_link=value.supplier_link,
                 estimated_unit_price=value.estimated_unit_price,
                 estimated_total_price=value.estimated_total_price,
+                need_contract=value.need_contract,
+                contract_type=value.contract_type,
+                payment_method=value.payment_method,
+                expected_arrival_date=value.expected_arrival_date,
+                warranty_info=value.warranty_info,
+                item_remark=value.item_remark,
             )
             for index, value in enumerate(items, start=1)
         )

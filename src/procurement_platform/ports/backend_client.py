@@ -2,6 +2,7 @@ from datetime import date
 from typing import Protocol
 from uuid import UUID
 
+from procurement_platform.domain.analytics import AnalyticsCatalog, AnalyticsQueryResult
 from procurement_platform.domain.assets import (
     AssetContext,
     AssetPage,
@@ -62,6 +63,17 @@ from procurement_platform.domain.user import CurrentUser
 
 
 class BackendClient(Protocol):
+    async def get_analytics_catalog(self, *, identity: PlatformIdentity) -> AnalyticsCatalog: ...
+
+    async def run_analytics_query(
+        self,
+        *,
+        identity: PlatformIdentity,
+        question: str,
+        sql: str,
+        include_synthetic: bool | None = None,
+    ) -> AnalyticsQueryResult: ...
+
     async def replace_request_items(
         self,
         *,

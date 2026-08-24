@@ -109,6 +109,7 @@ async def test_two_multi_role_turns_use_one_agent_without_role_switching() -> No
             "get_purchase_request",
             "get_purchase_timeline",
             "recommend_products",
+            "recommend_products_by_name",
             "update_applicant_draft",
             "update_multi_item_draft",
             "get_supplier_profile",

@@ -16,6 +16,16 @@ async_session_factory = async_sessionmaker(
     expire_on_commit=False,
 )
 
+analytics_engine = (
+    create_async_engine(
+        settings.analytics_database_url,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
+    if settings.analytics_enabled and settings.analytics_database_url
+    else None
+)
+
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
     async with async_session_factory() as session:

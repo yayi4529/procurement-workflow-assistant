@@ -172,6 +172,9 @@ class ToolExecutor:
 
 def _serialize_observation(payload: object, max_chars: int) -> str:
     """Serialize an observation as valid JSON within the configured hard limit."""
+    serialized = _json_dumps(payload)
+    if len(serialized) <= max_chars:
+        return serialized
     compact = _compact_value(payload, list_limit=12, string_limit=400)
     serialized = _json_dumps(compact)
     if len(serialized) <= max_chars:

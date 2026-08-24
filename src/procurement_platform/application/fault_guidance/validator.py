@@ -21,7 +21,9 @@ class FaultDraftValidator:
         elif item.quantity <= 0:
             errors.append("quantity_must_be_positive")
         elif item.quantity_evidence not in _ALLOWED_QUANTITY_EVIDENCE:
-            errors.append("quantity_evidence_not_allowed")
+            # An ungrounded model-suggested quantity must never be accepted, but it is
+            # recoverable through one user clarification rather than a generic hard error.
+            missing_fields.append("quantity")
         if item.unit is None or not item.unit.strip():
             missing_fields.append("unit")
 

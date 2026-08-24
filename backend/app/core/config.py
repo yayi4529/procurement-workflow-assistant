@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     notification_retry_max_seconds: int = 86400
     notification_worker_batch_size: int = 50
 
+    analytics_enabled: bool = False
+    analytics_database_url: str | None = Field(default=None, repr=False)
+    analytics_max_rows: int = Field(default=200, ge=1, le=1000)
+    analytics_query_timeout_seconds: float = Field(default=8.0, gt=0, le=60)
+    analytics_include_synthetic_default: bool = True
+    analytics_max_explain_rows: int = Field(default=1_000_000, ge=1)
+
     @property
     def database_url(self) -> str:
         password = quote_plus(self.mysql_password)

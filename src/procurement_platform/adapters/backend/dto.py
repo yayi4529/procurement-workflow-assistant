@@ -25,6 +25,44 @@ class BackendDTO(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class BackendAnalyticsFieldDTO(BackendDTO):
+    name: str
+    description: str
+    data_type: str
+
+
+class BackendAnalyticsViewDTO(BackendDTO):
+    name: str
+    description: str
+    grain: str
+    fields: tuple[BackendAnalyticsFieldDTO, ...]
+
+
+class BackendAnalyticsMetricDTO(BackendDTO):
+    name: str
+    description: str
+    expression: str
+
+
+class BackendAnalyticsCatalogDTO(BackendDTO):
+    version: str
+    dialect: str
+    synthetic_default_included: bool
+    views: tuple[BackendAnalyticsViewDTO, ...]
+    metrics: tuple[BackendAnalyticsMetricDTO, ...]
+
+
+class BackendAnalyticsQueryDTO(BackendDTO):
+    query_id: str
+    columns: tuple[str, ...]
+    rows: tuple[dict[str, str | int | float | bool | None], ...]
+    row_count: int
+    truncated: bool
+    duration_ms: int
+    normalized_sql: str
+    synthetic_included: bool
+
+
 class BackendEquipmentCategoryDTO(BackendDTO):
     category_id: int
     parent_category_id: int | None
@@ -264,9 +302,16 @@ class BackendReviewItemDTO(BackendDTO):
     model_snapshot: str | None
     proposed_supplier_id: int | None
     proposed_supplier_name: str | None
+    supplier_contact_name: str | None = None
+    supplier_contact_info: str | None = None
+    supplier_link: str | None = None
     estimated_unit_price: Decimal | None
     estimated_total_price: Decimal | None
+    need_contract: bool = False
+    contract_type: str | None = None
+    payment_method: str | None = None
     expected_arrival_date: date | None
+    warranty_info: str | None = None
     item_remark: str | None
 
 

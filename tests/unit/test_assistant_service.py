@@ -20,6 +20,7 @@ from procurement_platform.application.assistant.service import (
 )
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tools import ToolExecutor, ToolRegistry
+from procurement_platform.application.fault_guidance.intent_router import FaultIntentRouter
 from procurement_platform.domain.assistant import (
     AssistantInteractionResponse,
     AssistantTextResponse,
@@ -56,6 +57,7 @@ def _service(
     turns: tuple[AssistantTurn, ...] = (),
     llm: FakeLlmClient | None = None,
     fault_guidance_service: FaultGuidanceHandler | None = None,
+    fault_intent_router: FaultIntentRouter | None = None,
 ) -> AssistantService:
     sessions = AssistantSessionService(backend)
     registry = ToolRegistry()
@@ -83,6 +85,7 @@ def _service(
         procurement_agent=agent,
         max_history_messages=20,
         fault_guidance_service=fault_guidance_service,
+        fault_intent_router=fault_intent_router,
     )
 
 
@@ -193,6 +196,25 @@ async def test_duplicate_after_more_than_50_messages_uses_direct_lookup() -> Non
 
 
 @pytest.mark.asyncio
+async def test_restart_command_completes_old_conversation_and_starts_clean_one() -> None:
+    backend = _backend(RoleCode.APPLICANT)
+    assistant = _service(backend)
+    identity = PlatformIdentity.create(PlatformType.FEISHU, "ou_multi")
+    old = await backend.get_or_create_agent_conversation(
+        identity=identity, current_action="ASSISTANT_CHAT"
+    )
+
+    response = await assistant.handle(_event("restart", "重新开始"))
+    new = await backend.get_or_create_agent_conversation(
+        identity=identity, current_action="ASSISTANT_CHAT"
+    )
+
+    assert response == AssistantTextResponse(text="已清空上一段采购上下文，可以重新描述需求。")
+    assert new.conversation_id != old.conversation_id
+    assert backend.call_counts["complete_agent_conversation"] == 1
+
+
+@pytest.mark.asyncio
 async def test_concurrent_duplicate_executes_llm_at_most_once() -> None:
     backend = _backend(RoleCode.APPLICANT)
     llm = FakeLlmClient(turns=(AssistantTurn(content="完成"),))
@@ -273,6 +295,44 @@ async def test_fault_guidance_prefix_routes_only_the_payload() -> None:
 
     assert response == AssistantTextResponse(text="之前是否检测过？")
     assert fault.messages == ["2号UPS报BATTERY FAULT"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    ("机房高温报警", "2号UPS风扇报警，风扇不转", "空调不制冷】"),
+)
+async def test_obvious_fault_language_enters_guidance_without_prefix(text: str) -> None:
+    fault = StubFaultGuidance(
+        FaultGuidanceResponse(reply="请补充现场检测结果。", action=FaultAction.ASK)
+    )
+    assistant = _service(
+        _backend(RoleCode.APPLICANT),
+        fault_guidance_service=fault,
+        fault_intent_router=FaultIntentRouter(),
+    )
+
+    response = await assistant.handle(_event(f"auto-fault-{len(text)}", text))
+
+    assert response == AssistantTextResponse(text="请补充现场检测结果。")
+    assert fault.messages == [text]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ("采购一个声光报警器", "查询UPS历史报警"))
+async def test_purchase_and_history_language_do_not_enter_fault_guidance(text: str) -> None:
+    fault = StubFaultGuidance()
+    assistant = _service(
+        _backend(RoleCode.APPLICANT),
+        turns=(AssistantTurn(content="普通助手处理"),),
+        fault_guidance_service=fault,
+        fault_intent_router=FaultIntentRouter(),
+    )
+
+    response = await assistant.handle(_event(f"not-fault-{len(text)}", text))
+
+    assert response == AssistantTextResponse(text="普通助手处理")
+    assert fault.messages == []
 
 
 @pytest.mark.asyncio

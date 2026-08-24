@@ -5,9 +5,41 @@ from uuid import UUID
 import httpx
 import pytest
 
+from procurement_platform.adapters.backend.dto import BackendReviewItemDTO
 from procurement_platform.domain.enums import PurchaseItemKind, RequestType
 from procurement_platform.domain.requirement import PurchaseFieldsPatch, RequestItemDraft
 from tests.contract.test_http_backend_client import envelope, identity, make_client
+
+
+def test_review_item_detail_contract_preserves_fields_needed_for_safe_item_edit() -> None:
+    item = BackendReviewItemDTO.model_validate(
+        {
+            "review_item_id": 801,
+            "request_item_id": 81,
+            "item_kind_snapshot": "COMPONENT",
+            "item_name_snapshot": "UPS蓄电池",
+            "quantity_snapshot": "32",
+            "unit_snapshot": "块",
+            "brand_snapshot": "Panasonic",
+            "model_snapshot": "LC-P12100",
+            "proposed_supplier_id": 60,
+            "proposed_supplier_name": "供应商A",
+            "supplier_contact_name": "王工",
+            "supplier_contact_info": "13800000000",
+            "supplier_link": "https://supplier.example/a",
+            "estimated_unit_price": "100.00",
+            "estimated_total_price": "3200.00",
+            "need_contract": True,
+            "contract_type": "采购合同",
+            "payment_method": "对公转账",
+            "expected_arrival_date": "2026-08-30",
+            "warranty_info": "一年",
+            "item_remark": "优先交付",
+        }
+    )
+    assert item.supplier_contact_name == "王工"
+    assert item.need_contract is True
+    assert item.warranty_info == "一年"
 
 
 @pytest.mark.asyncio

@@ -327,6 +327,7 @@ class FaultGuidanceService:
         state: FaultState,
         decision: FaultDecision,
     ) -> FaultGuidanceResponse:
+        self._apply_default_units(decision.candidate_items)
         status, missing, errors = self._validate_items(decision.candidate_items)
         logger.info("fault candidate validation status=%s", status)
         if status is not ValidationStatus.VALID:
@@ -348,6 +349,7 @@ class FaultGuidanceService:
         decision: FaultDecision,
     ) -> FaultGuidanceResponse:
         if not state.candidate_items:
+            self._apply_default_units(decision.candidate_items)
             status, missing, errors = self._validate_items(decision.candidate_items)
             if status is not ValidationStatus.VALID:
                 await self._state_repository.save(conversation_id, state)
@@ -359,6 +361,7 @@ class FaultGuidanceService:
                 action=FaultAction.PROPOSE_ITEM,
             )
 
+        self._apply_default_units(state.candidate_items)
         status, missing, errors = self._validate_items(state.candidate_items)
         if status is not ValidationStatus.VALID:
             await self._state_repository.save(conversation_id, state)
@@ -407,6 +410,13 @@ class FaultGuidanceService:
         return status, missing, errors
 
     @staticmethod
+    def _apply_default_units(items: list[CandidateItem]) -> None:
+        """Units are backend-required, but users only need to provide quantity."""
+        for item in items:
+            if item.unit is None or not item.unit.strip():
+                item.unit = "个"
+
+    @staticmethod
     def _apply_updates(state: FaultState, decision: FaultDecision) -> None:
         if decision.issue_summary is not None:
             state.issue_summary = decision.issue_summary
@@ -420,11 +430,14 @@ class FaultGuidanceService:
         status: ValidationStatus, missing: list[str], errors: list[str]
     ) -> FaultGuidanceResponse:
         if status is ValidationStatus.NEEDS_CLARIFICATION:
-            detail = "、".join(missing)
+            labels = {
+                "quantity": "采购数量（quantity）",
+            }
+            detail = "、".join(labels.get(field, field) for field in missing)
             reply = f"候选采购项还缺少必要信息：{detail}。请补充后再确认。"
         else:
             logger.warning("invalid fault candidate errors=%s", errors)
-            reply = "候选采购项未通过安全校验，请重新说明物品、数量和单位。"
+            reply = "候选采购项未通过安全校验，请重新说明物品和数量。"
         return FaultGuidanceResponse(reply=reply, action=FaultAction.ASK)
 
     @staticmethod

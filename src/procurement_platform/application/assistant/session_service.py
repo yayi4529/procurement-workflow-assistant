@@ -86,3 +86,16 @@ class AssistantSessionService:
         await self._backend_client.update_agent_state(
             identity=identity, conversation_id=conversation_id, state=state
         )
+
+    async def complete(
+        self,
+        *,
+        identity: PlatformIdentity,
+        conversation_id: int,
+        purchase_request_id: int | None = None,
+    ) -> None:
+        await self._backend_client.complete_agent_conversation(
+            identity=identity,
+            conversation_id=conversation_id,
+            purchase_request_id=purchase_request_id,
+        )

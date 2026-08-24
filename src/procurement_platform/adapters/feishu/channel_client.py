@@ -23,18 +23,10 @@ class FeishuChannelClient:
     async def begin_streaming_reply(
         self, *, reply_to_message_id: str
     ) -> StreamingCardHandle | None:
-        try:
-            card_id = await self._transport.create_streaming_card(content="正在理解你的需求…")
-            result = await self._transport.reply(
-                message_id=reply_to_message_id,
-                message_type="interactive",
-                content=json.dumps({"type": "card", "data": {"card_id": card_id}}),
-            )
-            if result.message_id is None:
-                return None
-            return StreamingCardHandle(card_id=card_id, message_id=result.message_id)
-        except Exception:
-            return None
+        # Do not send a transient "正在理解你的需求…" card.  The handler
+        # sends the final text or business card once processing completes.
+        del reply_to_message_id
+        return None
 
     async def update_streaming_reply(
         self, *, handle: StreamingCardHandle, text: str, finish: bool = False

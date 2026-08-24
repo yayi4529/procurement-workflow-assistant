@@ -63,10 +63,11 @@ def test_non_positive_quantity_is_invalid(quantity: Decimal) -> None:
     assert result.errors == ["quantity_must_be_positive"]
 
 
-def test_inferred_quantity_evidence_is_invalid() -> None:
+def test_inferred_quantity_evidence_requires_user_clarification() -> None:
     result = FaultDraftValidator().validate(_candidate(quantity_evidence="LLM_INFERRED"))
-    assert result.status is ValidationStatus.INVALID
-    assert result.errors == ["quantity_evidence_not_allowed"]
+    assert result.status is ValidationStatus.NEEDS_CLARIFICATION
+    assert result.missing_fields == ["quantity"]
+    assert result.errors == []
 
 
 @pytest.mark.parametrize(

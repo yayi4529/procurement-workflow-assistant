@@ -227,7 +227,9 @@ async def test_agent_timeout_is_returned_as_failure_card() -> None:
     assert len(channel.reply_interaction_calls) == 1
     view = channel.reply_interaction_calls[0][1]
     assert view.title == "处理失败"
-    assert "响应超时" in str(view)
+    assert "大语言模型请求超时" in str(view)
+    assert "LlmTimeoutError" in str(view)
+    assert "timeout" in str(view)
 
 
 def test_development_notification_is_strict_and_marked() -> None:

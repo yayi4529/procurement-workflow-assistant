@@ -9,7 +9,11 @@ from procurement_platform.domain.assistant_session import JsonValue, Recommendat
 from procurement_platform.domain.enums import PlatformType
 from procurement_platform.domain.errors import BackendApplicationError
 from procurement_platform.domain.identity import PlatformIdentity
-from procurement_platform.domain.requirement import ItemProductRecommendations, SelectedProduct
+from procurement_platform.domain.requirement import (
+    ItemProductRecommendations,
+    ProductRecommendations,
+    SelectedProduct,
+)
 from procurement_platform.ports.backend_client import BackendClient
 
 
@@ -20,6 +24,82 @@ class RecommendProductsArgs(StrictArgs):
 
 class RecommendProductsResult(AssistantToolResult):
     response: ItemProductRecommendations | None = None
+
+
+class RecommendProductsByNameArgs(StrictArgs):
+    device_name: str = Field(min_length=1, max_length=200)
+    device_profession: str | None = Field(default=None, max_length=100)
+    top_k: int = Field(default=5, ge=1, le=10)
+
+
+class RecommendProductsByNameResult(AssistantToolResult):
+    response: ProductRecommendations | None = None
+
+
+class RecommendProductsByNameCapability:
+    name = "recommend_products_by_name"
+    side_effect = "READ"
+    description = (
+        "Recommend historical brand/model candidates directly from an exact device name. "
+        "Use this when the user asks for brand or model recommendations without requiring "
+        "an existing draft item. Read-only."
+    )
+    args_model = RecommendProductsByNameArgs
+
+    def __init__(self, backend: BackendClient) -> None:
+        self._backend = backend
+        self._session = SessionReferenceStore(backend)
+
+    async def execute(
+        self, *, args: RecommendProductsByNameArgs, context: AssistantToolContext
+    ) -> RecommendProductsByNameResult:
+        identity = PlatformIdentity.create(
+            PlatformType(context.platform_type), context.platform_user_id
+        )
+        try:
+            response = await self._backend.recommend_products_legacy(
+                identity=identity,
+                device_name=args.device_name,
+                device_profession=args.device_profession,
+                limit=args.top_k,
+            )
+            refs = tuple(
+                RecommendationReference(
+                    reference_id=f"legacy-product:{item.product_id or rank}",
+                    kind="PRODUCT_RECOMMENDATION",
+                    label=f"{item.brand or ''} {item.model or args.device_name}".strip(),
+                )
+                for rank, item in enumerate(response.items, start=1)
+            )
+            if refs:
+                data: dict[str, JsonValue] = {
+                    "recommendation:product-name": args.device_name,
+                    "recommendation:products": response.model_dump_json(),
+                }
+                for item, ref in zip(response.items, refs, strict=True):
+                    selected = SelectedProduct(
+                        product_key=ref.reference_id,
+                        item_name=args.device_name,
+                        brand=item.brand,
+                        model=item.model,
+                    )
+                    data[f"recommendation:product:{ref.reference_id}"] = selected.model_dump_json()
+                await self._session.save(
+                    identity=identity,
+                    context=context,
+                    references=refs,
+                    collected_data=data,
+                    awaiting_confirmation=True,
+                )
+            return RecommendProductsByNameResult(
+                status="SUCCESS" if response.items else "NOT_FOUND",
+                response=response,
+                user_message=None if response.items else "没有匹配的历史品牌型号",
+            )
+        except BackendApplicationError:
+            return RecommendProductsByNameResult(
+                status="BACKEND_UNAVAILABLE", user_message="采购后端暂时不可用"
+            )
 
 
 class RecommendProductsCapability:

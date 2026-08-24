@@ -1,8 +1,10 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
+from procurement_platform.adapters.skills import MarkdownRoleSkillLoader
 from procurement_platform.application.assistant.agent import ProcurementAgent
 from procurement_platform.application.assistant.capabilities import CapabilityPolicy
 from procurement_platform.application.assistant.presentation import LegacyToolResultPresenter
@@ -17,6 +19,10 @@ from procurement_platform.domain.assistant import (
     AssistantToolContext,
     AssistantToolDefinition,
     AssistantTurn,
+)
+from procurement_platform.domain.assistant_errors import (
+    LlmInvalidResponseError,
+    LlmUnavailableError,
 )
 from procurement_platform.domain.enums import PlatformType, RoleCode
 from procurement_platform.domain.identity import PlatformIdentity
@@ -39,7 +45,10 @@ class RecordingLlmClient:
         del tool_choice
         self.messages.append(messages)
         self.tool_names.append(frozenset(tool.name for tool in tools))
-        return next(self._turns)
+        try:
+            return next(self._turns)
+        except StopIteration as exc:
+            raise LlmUnavailableError("recording responses exhausted") from exc
 
 
 def _user(*roles: RoleCode) -> CurrentUser:
@@ -77,7 +86,11 @@ def _turn_context(user: CurrentUser, *, focused_role: RoleCode) -> AgentTurnCont
 
 
 async def _agent(
-    user: CurrentUser, llm: RecordingLlmClient
+    user: CurrentUser,
+    llm: RecordingLlmClient,
+    *,
+    context_knowledge: str | None = None,
+    use_role_skills: bool = False,
 ) -> tuple[ProcurementAgent, CapabilityPolicy]:
     backend = FakeBackendClient(user)
     await backend.get_or_create_agent_conversation(
@@ -85,7 +98,7 @@ async def _agent(
         current_action="ASSISTANT_CHAT",
     )
     sessions = AssistantSessionService(backend)
-    registry = _build_capability_registry(backend)
+    registry = _build_capability_registry(backend, llm if use_role_skills else None)
     policy = CapabilityPolicy(registry)
     runtime = AssistantRuntime(
         llm_client=llm,
@@ -102,9 +115,37 @@ async def _agent(
                 backend_client=backend,
                 session_service=sessions,
             ),
+            context_knowledge=context_knowledge,
+            role_skill_registry=(
+                MarkdownRoleSkillLoader(Path(__file__).parents[2] / "skills")
+                .load()
+                .validate_capabilities(registry.tool_registry.registered_names)
+                if use_role_skills
+                else None
+            ),
         ),
         policy,
     )
+
+
+@pytest.mark.asyncio
+async def test_role_skill_restricts_tools_and_injects_selected_workflow() -> None:
+    user = _user(RoleCode.PURCHASER, RoleCode.APPLICANT)
+    llm = RecordingLlmClient(AssistantTurn(content="完成"))
+    agent, _ = await _agent(user, llm, use_role_skills=True)
+
+    response = await agent.run(
+        turn_context=_turn_context(user, focused_role=RoleCode.PURCHASER),
+        user_text="\u4f9b\u5e94\u5546\u6392\u540d",
+        external_message_id="skill-1",
+    )
+
+    assert isinstance(response, AssistantTextResponse)
+    assert llm.tool_names[0] == frozenset({"recommend_suppliers_with_evidence"})
+    system_messages = [
+        message.content or "" for message in llm.messages[0] if message.role == "system"
+    ]
+    assert any('<workflow name="supplier-recommendation">' in item for item in system_messages)
 
 
 @pytest.mark.asyncio
@@ -151,6 +192,7 @@ async def test_multi_role_union_is_not_cut_by_focused_role() -> None:
             "get_purchase_request",
             "get_purchase_timeline",
             "recommend_products",
+            "recommend_products_by_name",
             "update_applicant_draft",
             "update_multi_item_draft",
             "get_supplier_profile",
@@ -167,6 +209,60 @@ async def test_multi_role_union_is_not_cut_by_focused_role() -> None:
             "get_asset_relations",
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_explicit_purchase_intent_exposes_only_multi_item_draft_capability() -> None:
+    user = _user(RoleCode.APPLICANT)
+    llm = RecordingLlmClient(AssistantTurn(content=""))
+    agent, _ = await _agent(user, llm)
+
+    with pytest.raises(LlmInvalidResponseError):
+        await agent.run(
+            turn_context=_turn_context(user, focused_role=RoleCode.APPLICANT),
+            user_text="我需要采购3块UPS蓄电池, 不指定品牌和型号",
+            external_message_id="m1",
+        )
+
+    assert llm.tool_names[0] == frozenset({"update_multi_item_draft"})
+
+
+@pytest.mark.asyncio
+async def test_applicant_role_prompt_does_not_force_inject_fault_knowledge() -> None:
+    user = _user(RoleCode.APPLICANT)
+    llm = RecordingLlmClient(AssistantTurn(content="请确认故障部件和数量"))
+    agent, _ = await _agent(
+        user,
+        llm,
+        context_knowledge="UPS 高温可能涉及风扇和电容。",
+    )
+
+    await agent.run(
+        turn_context=_turn_context(user, focused_role=RoleCode.APPLICANT),
+        user_text="2号 UPS 高温报警",
+        external_message_id="m1",
+    )
+
+    contents = [message.content or "" for message in llm.messages[0] if message.role == "system"]
+    assert any("你是需求人采购助手" in content for content in contents)
+    assert not any("<procurement_knowledge>" in content for content in contents)
+    assert not any("UPS 高温可能涉及风扇和电容" in content for content in contents)
+
+
+@pytest.mark.asyncio
+async def test_fault_or_history_purchase_request_keeps_read_tools_available() -> None:
+    user = _user(RoleCode.APPLICANT)
+    llm = RecordingLlmClient(AssistantTurn(content="需要先查询历史"))
+    agent, policy = await _agent(user, llm)
+
+    await agent.run(
+        turn_context=_turn_context(user, focused_role=RoleCode.APPLICANT),
+        user_text="我要处理UPS故障, 不确定买什么",
+        external_message_id="m1",
+    )
+
+    assert llm.tool_names[0] == policy.allowed_names_for(user)
+    assert "find_similar_purchases" in llm.tool_names[0]
 
 
 @pytest.mark.asyncio

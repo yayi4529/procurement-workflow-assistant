@@ -33,3 +33,6 @@ class CapabilityPolicy:
     def available_for(self, user: CurrentUser) -> tuple[CapabilityMetadata, ...]:
         allowed = self.allowed_names_for(user)
         return tuple(item for item in self._metadata if item.name in allowed)
+
+    def side_effect_for(self, name: str) -> str | None:
+        return next((item.side_effect for item in self._metadata if item.name == name), None)

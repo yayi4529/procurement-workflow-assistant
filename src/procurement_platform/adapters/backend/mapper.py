@@ -7,6 +7,8 @@ from procurement_platform.adapters.backend.dto import (
     BackendAgentSessionStateDTO,
     BackendAgentStateSaveDTO,
     BackendAllowedRequirementAction,
+    BackendAnalyticsCatalogDTO,
+    BackendAnalyticsQueryDTO,
     BackendAssetContextDTO,
     BackendAssetDTO,
     BackendAssetPageDTO,
@@ -32,6 +34,7 @@ from procurement_platform.adapters.backend.dto import (
     BackendTimelineContactDTO,
     BackendTimelineDTO,
 )
+from procurement_platform.domain.analytics import AnalyticsCatalog, AnalyticsQueryResult
 from procurement_platform.domain.assets import (
     AssetComponent,
     AssetContext,
@@ -113,6 +116,14 @@ def map_current_user(dto: BackendCurrentUserDTO) -> CurrentUser:
             for building in dto.buildings
         ),
     )
+
+
+def map_analytics_catalog(dto: BackendAnalyticsCatalogDTO) -> AnalyticsCatalog:
+    return AnalyticsCatalog.model_validate(dto.model_dump())
+
+
+def map_analytics_query(dto: BackendAnalyticsQueryDTO) -> AnalyticsQueryResult:
+    return AnalyticsQueryResult.model_validate(dto.model_dump())
 
 
 def map_agent_conversation(
@@ -295,8 +306,17 @@ def map_requirement_detail(dto: BackendRequirementDetailDTO) -> RequirementDetai
                 unit_snapshot=item.unit_snapshot,
                 proposed_supplier_id=item.proposed_supplier_id,
                 proposed_supplier_name=item.proposed_supplier_name,
+                supplier_contact_name=item.supplier_contact_name,
+                supplier_contact_info=item.supplier_contact_info,
+                supplier_link=item.supplier_link,
                 estimated_unit_price=_decimal_string(item.estimated_unit_price),
                 estimated_total_price=_decimal_string(item.estimated_total_price),
+                need_contract=item.need_contract,
+                contract_type=item.contract_type,
+                payment_method=item.payment_method,
+                expected_arrival_date=item.expected_arrival_date,
+                warranty_info=item.warranty_info,
+                item_remark=item.item_remark,
             )
             for review in dto.review_records
             for item in review.items

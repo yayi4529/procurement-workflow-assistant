@@ -42,6 +42,7 @@ SUPPLIER_IDS = list(range(92001, 92006))
 CONVERSATION_IDS = list(range(93001, 93005))
 ASSET_IDS = list(range(95101, 95106))
 MODEL_IDS = list(range(95201, 95205))
+DEMO_PLATFORM_TYPE = "TEST_PLATFORM"
 
 T0 = datetime(2026, 7, 1, 9, 0, 0)
 
@@ -131,7 +132,8 @@ async def clean_demo_data(connection) -> None:
     )
     await connection.execute(
         delete(EmployeeExternalIdentity).where(
-            EmployeeExternalIdentity.employee_id.in_(EMPLOYEE_IDS)
+            EmployeeExternalIdentity.employee_id.in_(EMPLOYEE_IDS),
+            EmployeeExternalIdentity.platform_type == DEMO_PLATFORM_TYPE,
         )
     )
 
@@ -423,7 +425,7 @@ def identity_rows() -> list[dict]:
         {
             "identity_id": 94000 + index,
             "employee_id": employee_id,
-            "platform_type": "TEST_PLATFORM",
+            "platform_type": DEMO_PLATFORM_TYPE,
             "platform_user_id": f"test-user-{index:02d}",
             "status": employee_id != 90006,
             "last_synced_at": T0,

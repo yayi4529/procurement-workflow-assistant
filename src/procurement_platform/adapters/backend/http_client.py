@@ -11,6 +11,8 @@ from procurement_platform.adapters.backend.dto import (
     BackendAgentMessagePageDTO,
     BackendAgentSessionStateDTO,
     BackendAgentStateSaveDTO,
+    BackendAnalyticsCatalogDTO,
+    BackendAnalyticsQueryDTO,
     BackendAssetContextDTO,
     BackendAssetDTO,
     BackendAssetPageDTO,
@@ -43,6 +45,8 @@ from procurement_platform.adapters.backend.mapper import (
     map_agent_message_page,
     map_agent_session_state,
     map_agent_state_save,
+    map_analytics_catalog,
+    map_analytics_query,
     map_asset,
     map_asset_context,
     map_asset_page,
@@ -69,6 +73,7 @@ from procurement_platform.adapters.backend.mapper import (
     map_timeline_contact,
 )
 from procurement_platform.adapters.backend.transport import SignedBackendTransport
+from procurement_platform.domain.analytics import AnalyticsCatalog, AnalyticsQueryResult
 from procurement_platform.domain.assets import (
     AssetContext,
     AssetPage,
@@ -135,6 +140,36 @@ class HttpBackendClient:
     def __init__(self, transport: SignedBackendTransport) -> None:
         self._transport = transport
 
+    async def get_analytics_catalog(self, *, identity: PlatformIdentity) -> AnalyticsCatalog:
+        dto = await self._request_model(
+            BackendAnalyticsCatalogDTO,
+            method="GET",
+            path="/api/v1/analytics/catalog",
+            identity=identity,
+        )
+        return map_analytics_catalog(dto)
+
+    async def run_analytics_query(
+        self,
+        *,
+        identity: PlatformIdentity,
+        question: str,
+        sql: str,
+        include_synthetic: bool | None = None,
+    ) -> AnalyticsQueryResult:
+        dto = await self._request_model(
+            BackendAnalyticsQueryDTO,
+            method="POST",
+            path="/api/v1/analytics/query",
+            identity=identity,
+            json_body={
+                "question": question,
+                "sql": sql,
+                "include_synthetic": include_synthetic,
+            },
+        )
+        return map_analytics_query(dto)
+
     async def replace_request_items(
         self,
         *,
@@ -174,7 +209,14 @@ class HttpBackendClient:
             identity=identity,
             json_body={
                 "expected_version": expected_version,
-                "items": [item.model_dump(mode="json", exclude_none=True) for item in items],
+                "items": [
+                    item.model_dump(
+                        mode="json",
+                        exclude_none=True,
+                        exclude={"proposed_supplier_name"},
+                    )
+                    for item in items
+                ],
             },
         )
         return map_fields_save(dto)

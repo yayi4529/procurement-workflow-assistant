@@ -335,8 +335,17 @@ class PurchaseReviewItem(RequirementModel):
     unit_snapshot: str
     proposed_supplier_id: int | None = None
     proposed_supplier_name: str | None = None
+    supplier_contact_name: str | None = None
+    supplier_contact_info: str | None = None
+    supplier_link: str | None = None
     estimated_unit_price: str | None = None
     estimated_total_price: str | None = None
+    need_contract: bool = False
+    contract_type: str | None = None
+    payment_method: str | None = None
+    expected_arrival_date: date | None = None
+    warranty_info: str | None = None
+    item_remark: str | None = None
 
 
 class PurchaseExecutionView(RequirementModel):
@@ -390,6 +399,10 @@ class ReviewItemDraft(BaseModel):
 
     request_item_id: int
     proposed_supplier_id: int | None = None
+    proposed_supplier_name: str | None = None
+    supplier_contact_name: str | None = None
+    supplier_contact_info: str | None = None
+    supplier_link: str | None = None
     estimated_unit_price: str | None = None
     estimated_total_price: str | None = None
     need_contract: bool = False

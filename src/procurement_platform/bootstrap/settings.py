@@ -83,6 +83,9 @@ class Settings:
     llm_max_total_tool_calls: int = 24
     llm_max_history_messages: int = 20
     llm_max_tool_result_chars: int = 20000
+    llm_context_knowledge_path: str | None = None
+    llm_role_skills_path: str | None = "skills"
+    llm_skill_routing_mode: str = "strict"
     allow_test_platform: bool = False
     event_dedup_store_backend: str = "memory"
     conversation_lock_backend: str = "local"
@@ -118,6 +121,8 @@ class Settings:
             raise ValueError("invalid LLM timeout or tool step limit")
         if self.llm_max_history_messages < 1 or self.llm_max_tool_result_chars < 2:
             raise ValueError("invalid LLM history or tool result limit")
+        if self.llm_skill_routing_mode not in {"off", "hybrid", "strict"}:
+            raise ValueError("LLM skill routing mode must be off, hybrid, or strict")
         if not self.identity_gateway_secret.get_secret_value():
             raise ValueError("identity gateway secret is required")
         if self.event_dedup_store_backend not in {"memory", "redis"}:
@@ -224,6 +229,15 @@ class Settings:
             llm_max_tool_result_chars=int(
                 values.get("PROCUREMENT_LLM_MAX_TOOL_RESULT_CHARS", "20000")
             ),
+            llm_context_knowledge_path=(
+                values.get("LLM_CONTEXT_KNOWLEDGE_PATH", "").strip() or None
+            ),
+            llm_role_skills_path=(
+                values.get("PROCUREMENT_LLM_ROLE_SKILLS_PATH", "skills").strip() or None
+            ),
+            llm_skill_routing_mode=values.get("PROCUREMENT_LLM_SKILL_ROUTING_MODE", "strict")
+            .strip()
+            .lower(),
             allow_test_platform=_parse_bool(values.get("PROCUREMENT_ALLOW_TEST_PLATFORM", "false")),
             event_dedup_store_backend=values.get(
                 "PROCUREMENT_EVENT_DEDUP_STORE_BACKEND", "memory"

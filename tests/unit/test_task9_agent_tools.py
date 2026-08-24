@@ -6,6 +6,7 @@ from pydantic import BaseModel, ValidationError
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
 from procurement_platform.adapters.llm.fake_llm_client import FakeLlmClient
+from procurement_platform.application.applicant.options import DEVICE_PROFESSION_OPTIONS
 from procurement_platform.application.assistant.agent_tools import (
     FillSelectedSupplierProfileArgs,
     FillSelectedSupplierProfileTool,
@@ -246,6 +247,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
             "get_purchase_request",
             "get_purchase_timeline",
             "recommend_products",
+            "recommend_products_by_name",
             "recommend_suppliers",
             "update_applicant_draft",
             "update_multi_item_draft",
@@ -266,7 +268,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 active_role=RoleCode.BUILDING_MANAGER,
             )
         )
-        == 15
+        == 16
     )
     assert (
         len(
@@ -274,7 +276,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 current_user=user(RoleCode.PURCHASER), active_role=RoleCode.PURCHASER
             )
         )
-        == 17
+        == 22
     )
     assert (
         len(
@@ -283,7 +285,7 @@ def test_tool_policy_matches_task9_role_matrix() -> None:
                 active_role=RoleCode.WAREHOUSE_MANAGER,
             )
         )
-        == 10
+        == 11
     )
 
 
@@ -310,6 +312,7 @@ def test_tool_policy_does_not_merge_tools_for_multi_role_user() -> None:
             "get_purchase_request",
             "get_purchase_timeline",
             "recommend_products",
+            "recommend_products_by_name",
             "recommend_suppliers",
             "update_applicant_draft",
             "update_multi_item_draft",
@@ -741,7 +744,7 @@ async def test_device_profession_is_filled_from_unique_same_device_history() -> 
 
 
 @pytest.mark.asyncio
-async def test_conflicting_device_profession_history_returns_ranked_recommendations() -> None:
+async def test_conflicting_device_profession_history_uses_top_ranked_value() -> None:
     client = FakeBackendClient(user(RoleCode.APPLICANT))
     conversation = await client.get_or_create_agent_conversation(
         identity=identity(RoleCode.APPLICANT), current_action="ASSISTANT_CHAT"
@@ -786,8 +789,28 @@ async def test_conflicting_device_profession_history_returns_ranked_recommendati
     )
 
     assert result.status == "SUCCESS"
-    assert "device_profession" not in result.updated_values
+    assert result.updated_values["device_profession"] == "暖通"
     assert result.device_profession_recommendations == ("暖通", "电气")
+
+
+@pytest.mark.asyncio
+async def test_applicant_draft_rejects_non_contract_device_profession_before_backend_write() -> (
+    None
+):
+    client = FakeBackendClient(user(RoleCode.APPLICANT))
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.APPLICANT), current_action="ASSISTANT_CHAT"
+    )
+
+    result = await UpdatePurchaseDraftTool(client).execute(
+        args=UpdatePurchaseDraftArgs(device_profession="Task08 synthetic history"),
+        context=context(
+            RoleCode.APPLICANT, conversation_id=conversation.conversation_id
+        ).model_copy(update={"active_requirement_id": 1}),
+    )
+
+    assert result.status == "INVALID_ARGUMENTS"
+    assert result.device_profession_recommendations == DEVICE_PROFESSION_OPTIONS
 
 
 @pytest.mark.asyncio
@@ -815,6 +838,27 @@ async def test_start_new_draft_ignores_submitted_requirement_focus() -> None:
     )
 
     assert result.status == "SUCCESS"
+
+
+@pytest.mark.asyncio
+async def test_new_fields_auto_create_draft_when_session_focus_is_submitted() -> None:
+    client = FakeBackendClient(user(RoleCode.APPLICANT))
+    client.seed_requirement(
+        detail(RoleCode.APPLICANT, RequirementStatus.PENDING_REVIEW, requirement_id=1)
+    )
+    conversation = await client.get_or_create_agent_conversation(
+        identity=identity(RoleCode.APPLICANT), current_action="ASSISTANT_CHAT"
+    )
+
+    result = await UpdatePurchaseDraftTool(client).execute(
+        args=UpdatePurchaseDraftArgs(device_name="开关电源", quantity="2", unit="台"),
+        context=context(
+            RoleCode.APPLICANT, conversation_id=conversation.conversation_id
+        ).model_copy(update={"active_requirement_id": 1}),
+    )
+
+    assert result.status == "SUCCESS"
+    assert result.requirement_id != 1
     assert result.requirement_id != 1
     assert client.call_counts["create_requirement"] == 1
 
@@ -836,7 +880,7 @@ async def test_start_new_without_fields_does_not_create_empty_draft() -> None:
 
 
 @pytest.mark.asyncio
-async def test_field_update_does_not_implicitly_replace_submitted_requirement() -> None:
+async def test_field_update_creates_new_draft_when_focus_is_submitted() -> None:
     client = FakeBackendClient(user(RoleCode.APPLICANT))
     client.seed_requirement(
         detail(RoleCode.APPLICANT, RequirementStatus.PENDING_REVIEW, requirement_id=1)
@@ -857,9 +901,10 @@ async def test_field_update_does_not_implicitly_replace_submitted_requirement() 
         ).model_copy(update={"active_requirement_id": 1}),
     )
 
-    assert result.status == "INVALID_STATUS"
-    assert result.requirement_id is None
-    assert client.call_counts["create_requirement"] == 0
+    assert result.status == "SUCCESS"
+    assert result.requirement_id is not None
+    assert result.requirement_id != 1
+    assert client.call_counts["create_requirement"] == 1
 
 
 @pytest.mark.asyncio

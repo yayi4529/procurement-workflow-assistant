@@ -105,6 +105,80 @@ async def main() -> None:
             assert current_user.json()["data"]["employee_id"] == 90001
             checks.append("signed-identity")
 
+            catalog = await request(client, "GET", "/api/v1/analytics/catalog", "test-user-03")
+            assert catalog.status_code == 200
+            checks.append(f"analytics-catalog:{catalog.json()['trace_id']}")
+
+            monthly = await request(
+                client,
+                "POST",
+                "/api/v1/analytics/query",
+                "test-user-03",
+                json={
+                    "question": "按月统计 TEST 采购金额和数量",
+                    "sql": (
+                        "SELECT DATE_FORMAT(purchased_at, '%Y-%m') AS month, "
+                        "SUM(actual_total_price) AS amount, "
+                        "SUM(purchased_quantity) AS quantity "
+                        "FROM analytics_purchase_item_fact "
+                        "WHERE request_no LIKE 'TEST-%' GROUP BY month ORDER BY month"
+                    ),
+                    "include_synthetic": True,
+                },
+            )
+            assert monthly.status_code == 200
+            monthly_data = monthly.json()["data"]
+            checks.append(
+                f"analytics-monthly:{monthly_data['query_id']}:{monthly_data['row_count']}"
+            )
+
+            supplier_ranking = await request(
+                client,
+                "POST",
+                "/api/v1/analytics/query",
+                "test-user-03",
+                json={
+                    "question": "统计 TEST 供应商采购次数、金额和交付周期",
+                    "sql": (
+                        "SELECT supplier_id, supplier_name, COUNT(*) AS purchase_count, "
+                        "SUM(actual_total_price) AS purchase_amount, "
+                        "AVG(delivery_days) AS average_delivery_days "
+                        "FROM analytics_purchase_item_fact "
+                        "WHERE request_no LIKE 'TEST-%' AND supplier_id IS NOT NULL "
+                        "GROUP BY supplier_id, supplier_name ORDER BY purchase_count DESC"
+                    ),
+                    "include_synthetic": True,
+                },
+            )
+            assert supplier_ranking.status_code == 200
+            supplier_data = supplier_ranking.json()["data"]
+            checks.append(
+                f"analytics-suppliers:{supplier_data['query_id']}:{supplier_data['row_count']}"
+            )
+
+            forbidden_role = await request(
+                client, "GET", "/api/v1/analytics/catalog", "test-user-01"
+            )
+            assert forbidden_role.status_code == 403
+            assert forbidden_role.json()["code"] == "PERMISSION_DENIED"
+            checks.append("analytics-permission-denied")
+
+            rejected_sql = (
+                "UPDATE analytics_purchase_item_fact SET item_name='x'",
+                "SELECT * FROM analytics_purchase_item_fact; SELECT 1",
+                "SELECT * FROM purchase_request",
+            )
+            for index, sql in enumerate(rejected_sql, start=1):
+                rejected = await request(
+                    client,
+                    "POST",
+                    "/api/v1/analytics/query",
+                    "test-user-03",
+                    json={"question": "拒绝测试", "sql": sql, "include_synthetic": True},
+                )
+                assert rejected.status_code == 422
+                checks.append(f"analytics-rejected-{index}:{rejected.json()['code']}")
+
             records = await request(
                 client,
                 "GET",

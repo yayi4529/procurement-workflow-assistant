@@ -85,15 +85,10 @@ async def test_channel_maps_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_channel_creates_updates_and_finishes_cardkit_stream() -> None:
+async def test_channel_does_not_send_transient_streaming_card() -> None:
     transport = FakeTransport()
     client = FeishuChannelClient(transport, FeishuInteractionRenderer())
 
     handle = await client.begin_streaming_reply(reply_to_message_id="om_source")
-    assert handle is not None
-    updated = await client.update_streaming_reply(handle=handle, text="最终答复", finish=True)
-
-    assert updated.sequence == 2
-    assert transport.calls[0] == ("stream-create", "正在理解你的需求…")
-    assert transport.calls[2][0] == "stream-update:card_1:agent_progress:1"
-    assert transport.calls[3][0] == "stream-finish:card_1:2"
+    assert handle is None
+    assert transport.calls == []

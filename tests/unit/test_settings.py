@@ -25,6 +25,8 @@ def test_settings_load_and_hide_secret() -> None:
     settings = Settings.from_env(environment())
     assert settings.backend_request_timeout_seconds == 10
     assert settings.llm_enabled is False
+    assert settings.llm_context_knowledge_path is None
+    assert settings.llm_role_skills_path == "skills"
     assert settings.fault_knowledge_path == "knowledge/fault-guidance"
     assert settings.fault_state_ttl_seconds == 86400
     assert settings.fault_guidance_enabled is False
@@ -65,6 +67,18 @@ def test_llm_setting_is_explicit_and_strict() -> None:
     assert Settings.from_env(environment(PROCUREMENT_LLM_ENABLED="true")).llm_enabled is True
     with pytest.raises(ValueError, match="boolean"):
         Settings.from_env(environment(PROCUREMENT_LLM_ENABLED="sometimes"))
+
+
+def test_optional_llm_context_knowledge_path() -> None:
+    settings = Settings.from_env(environment(LLM_CONTEXT_KNOWLEDGE_PATH="docs/fault-context.md"))
+    assert settings.llm_context_knowledge_path == "docs/fault-context.md"
+
+
+def test_role_skills_path_can_be_overridden_or_disabled() -> None:
+    configured = Settings.from_env(environment(PROCUREMENT_LLM_ROLE_SKILLS_PATH="custom/skills"))
+    assert configured.llm_role_skills_path == "custom/skills"
+    disabled = Settings.from_env(environment(PROCUREMENT_LLM_ROLE_SKILLS_PATH=" "))
+    assert disabled.llm_role_skills_path is None
 
 
 def test_missing_secret_fails_fast() -> None:

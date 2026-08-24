@@ -1,17 +1,22 @@
 import time
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete, select
 
 from app.core.config import get_settings
 from app.core.exceptions import AppError
 from app.core.gateway_auth import build_gateway_signature
-from app.db.session import engine
+from app.db.session import async_session_factory, engine
 from app.domain.identity import CurrentUser, UserBuilding, UserRole
 from app.main import app
+from app.models.identity import EmployeeExternalIdentity
 from app.services.permissions import require_any_role, require_building_membership
 from scripts.seed_demo_data import seed_demo_data
+
+PRESERVED_FEISHU_OPEN_ID = "ou_test_seed_preserves_feishu_identity"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -74,6 +79,42 @@ async def test_get_current_user_from_signed_gateway_identity() -> None:
     assert data["mobile"] == "138****9001"
     assert [role["role_code"] for role in data["roles"]] == ["APPLICANT"]
     assert [building["building_id"] for building in data["buildings"]] == [1]
+
+
+@pytest.mark.asyncio
+async def test_seed_demo_data_preserves_feishu_identity_bindings() -> None:
+    async with async_session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                delete(EmployeeExternalIdentity).where(
+                    EmployeeExternalIdentity.platform_type == "FEISHU",
+                    EmployeeExternalIdentity.platform_user_id == PRESERVED_FEISHU_OPEN_ID,
+                )
+            )
+            session.add(
+                EmployeeExternalIdentity(
+                    employee_id=90008,
+                    platform_type="FEISHU",
+                    platform_user_id=PRESERVED_FEISHU_OPEN_ID,
+                    status=True,
+                    last_synced_at=datetime.now(),
+                )
+            )
+    await engine.dispose()
+
+    await seed_demo_data()
+
+    async with async_session_factory() as session:
+        preserved = await session.scalar(
+            select(EmployeeExternalIdentity).where(
+                EmployeeExternalIdentity.platform_type == "FEISHU",
+                EmployeeExternalIdentity.platform_user_id == PRESERVED_FEISHU_OPEN_ID,
+            )
+        )
+        assert preserved is not None
+        assert preserved.employee_id == 90008
+        await session.delete(preserved)
+        await session.commit()
 
 
 @pytest.mark.asyncio

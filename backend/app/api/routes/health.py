@@ -7,7 +7,7 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.responses import ApiResponse
-from app.db.session import engine
+from app.db.session import analytics_engine, engine
 
 router = APIRouter(tags=["system"])
 
@@ -20,6 +20,7 @@ class ReadinessData(BaseModel):
     status: Literal["ready", "not_ready"]
     mysql: Literal["ok", "error"]
     redis: Literal["ok", "error"]
+    analytics: Literal["disabled", "ok", "error"]
 
 
 @router.get("/health", response_model=ApiResponse[HealthData])
@@ -31,6 +32,7 @@ async def health() -> ApiResponse[HealthData]:
 async def readiness() -> ApiResponse[ReadinessData]:
     mysql_status: Literal["ok", "error"] = "error"
     redis_status: Literal["ok", "error"] = "error"
+    analytics_status: Literal["disabled", "ok", "error"] = "disabled"
 
     try:
         async with engine.connect() as connection:
@@ -40,6 +42,15 @@ async def readiness() -> ApiResponse[ReadinessData]:
         mysql_status = "error"
 
     settings = get_settings()
+    if settings.analytics_enabled:
+        analytics_status = "error"
+        if analytics_engine is not None:
+            try:
+                async with analytics_engine.connect() as connection:
+                    await connection.execute(text("SELECT 1"))
+                analytics_status = "ok"
+            except Exception:
+                analytics_status = "error"
     client = Redis.from_url(settings.redis_url, decode_responses=True)
     try:
         await client.ping()
@@ -49,7 +60,7 @@ async def readiness() -> ApiResponse[ReadinessData]:
     finally:
         await client.aclose()
 
-    ready = mysql_status == "ok" and redis_status == "ok"
+    ready = mysql_status == "ok" and redis_status == "ok" and analytics_status in {"disabled", "ok"}
     return ApiResponse(
         code="OK" if ready else "SERVICE_NOT_READY",
         message="服务就绪" if ready else "依赖服务未就绪",
@@ -57,5 +68,6 @@ async def readiness() -> ApiResponse[ReadinessData]:
             status="ready" if ready else "not_ready",
             mysql=mysql_status,
             redis=redis_status,
+            analytics=analytics_status,
         ),
     )

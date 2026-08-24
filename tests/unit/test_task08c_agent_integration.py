@@ -9,6 +9,8 @@ from procurement_platform.application.assistant.capabilities.suppliers.capabilit
     RecommendSuppliersArgs,
     RecommendSuppliersCapability,
 )
+from procurement_platform.application.assistant.presentation import LegacyToolResultPresenter
+from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.domain.assistant_session import AgentSessionStateUpdate
 from procurement_platform.domain.requirement import (
     ItemProductRecommendations,
@@ -61,6 +63,28 @@ async def test_product_selection_flows_to_supplier_and_is_saved_per_item() -> No
     assert "recommendation:item:101:selected_product" in state.collected_data
     assert client.call_counts["recommend_products"] == 1
     assert client.call_counts["recommend_suppliers"] == 1
+
+
+@pytest.mark.asyncio
+async def test_product_recommendations_return_to_llm_for_synthesis() -> None:
+    client = FakeBackendClient(_user())
+    conversation = await client.get_or_create_agent_conversation(
+        identity=_identity(), current_action="ASSISTANT_CHAT"
+    )
+    client.item_product_recommendations[101] = ItemProductRecommendations.model_validate(
+        product_response()
+    )
+    context = _context(conversation.conversation_id)
+    result = await RecommendProductsCapability(client).execute(
+        args=RecommendProductsArgs(request_item_id=101), context=context
+    )
+
+    response = await LegacyToolResultPresenter(
+        backend_client=client,
+        session_service=AssistantSessionService(client),
+    ).present(result=result, context=context, external_message_id="m-products")
+
+    assert response is None
 
 
 @pytest.mark.asyncio

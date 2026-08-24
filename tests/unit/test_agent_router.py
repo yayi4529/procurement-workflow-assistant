@@ -39,8 +39,10 @@ class StubAgent:
         *,
         context: AssistantToolContext,
         history: tuple[AssistantMessage, ...],
+        working_context: str | None = None,
+        active_role: RoleCode | None = None,
     ) -> tuple[AssistantMessage, ...]:
-        del context
+        del context, working_context, active_role
         return history
 
     async def before_run(

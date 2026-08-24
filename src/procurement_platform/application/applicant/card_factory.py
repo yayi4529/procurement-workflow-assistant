@@ -23,6 +23,16 @@ from procurement_platform.domain.requirement import (
 from procurement_platform.domain.user import CurrentUser
 
 
+def _item_kind_label(value: PurchaseItemKind) -> str:
+    return {
+        PurchaseItemKind.EQUIPMENT: "设备",
+        PurchaseItemKind.COMPONENT: "部件",
+        PurchaseItemKind.MATERIAL: "材料",
+        PurchaseItemKind.SERVICE: "服务",
+        PurchaseItemKind.TOOL: "工具",
+    }[value]
+
+
 class ApplicantCardFactory:
     @staticmethod
     def _application_date(detail: RequirementDetail) -> str:
@@ -80,6 +90,8 @@ class ApplicantCardFactory:
         fields = detail.applicant_fields
         editable = detail.status in {RequirementStatus.DRAFT, RequirementStatus.REJECTED}
         show_editor = editable and not confirmation_mode
+        active_items = tuple(item for item in detail.items if item.is_active)
+        primary_item = active_items[0] if active_items else None
         elements: list[InteractionElement] = []
         if notice:
             elements.append(MarkdownBlock(markdown=notice))
@@ -109,7 +121,7 @@ class ApplicantCardFactory:
             )
         )
         elements.append(KeyValueSection(fields=tuple(summary_fields)))
-        if detail.items:
+        if detail.items and not show_editor:
             elements.append(MarkdownBlock(markdown=multi_item_markdown(detail)))
         if detail.rejection_reason:
             elements.append(MarkdownBlock(markdown=f"**驳回原因:** {detail.rejection_reason}"))
@@ -117,7 +129,7 @@ class ApplicantCardFactory:
             elements.append(
                 SelectInput(
                     name="device_profession",
-                    label="设备类型",
+                    label="设备专业",
                     options=tuple(
                         SelectOption(label=item, value=item) for item in DEVICE_PROFESSION_OPTIONS
                     ),
@@ -129,66 +141,68 @@ class ApplicantCardFactory:
                     ),
                 )
             )
+            elements.append(
+                SelectInput(
+                    name="item_kind",
+                    label="设备类型",
+                    options=tuple(
+                        SelectOption(label=_item_kind_label(value), value=value.value)
+                        for value in PurchaseItemKind
+                    ),
+                    required=True,
+                    default_value=primary_item.item_kind.value if primary_item else None,
+                )
+            )
             specs = (
-                ("device_name", "设备名称", fields.device_name, True),
-                ("brand", "品牌(选填)", fields.brand, False),
-                ("model", "型号(选填)", fields.model, False),
-                ("quantity", "数量", quantity_text(fields.quantity, empty=""), True),
-                ("unit", "单位", fields.unit, True),
+                (
+                    "device_name",
+                    "设备名称",
+                    primary_item.item_name if primary_item else fields.device_name,
+                    True,
+                ),
+                (
+                    "brand",
+                    "品牌(选填)",
+                    primary_item.brand_snapshot if primary_item else fields.brand,
+                    False,
+                ),
+                (
+                    "model",
+                    "型号(选填)",
+                    primary_item.model_snapshot if primary_item else fields.model,
+                    False,
+                ),
+                (
+                    "quantity",
+                    "数量",
+                    quantity_text(
+                        primary_item.quantity if primary_item else fields.quantity, empty=""
+                    ),
+                    True,
+                ),
+                ("unit", "单位", primary_item.unit if primary_item else fields.unit, True),
                 ("application_reason", "需求原因", fields.application_reason, True),
-                ("applicant_remark", "备注(选填)", fields.applicant_remark, False),
+                (
+                    "applicant_remark",
+                    "备注(选填)",
+                    (
+                        primary_item.remark
+                        if primary_item and primary_item.remark
+                        else fields.applicant_remark
+                    ),
+                    False,
+                ),
             )
             elements.extend(
                 TextInput(
                     name=name,
                     label=label,
                     default_value=value,
-                    required=required and not detail.items,
+                    required=required,
                 )
                 for name, label, value, required in specs
             )
-            elements.extend(
-                (
-                    SelectInput(
-                        name="item_kind",
-                        label="新增采购项类型",
-                        options=tuple(
-                            SelectOption(label=value.value, value=value.value)
-                            for value in PurchaseItemKind
-                        ),
-                        required=False,
-                    ),
-                    TextInput(name="item_name", label="新增采购项名称", required=False),
-                    TextInput(name="item_quantity", label="新增采购项数量", required=False),
-                    TextInput(name="item_unit", label="新增采购项单位", required=False),
-                )
-            )
         actions = []
-        if show_editor:
-            actions.append(
-                ActionButton(
-                    action_id="applicant.add_item",
-                    label="新增采购项",
-                    value={
-                        "requirement_id": detail.requirement_id,
-                        "expected_version": detail.version,
-                    },
-                )
-            )
-            actions.extend(
-                ActionButton(
-                    action_id="applicant.remove_item",
-                    label=f"移除 {item.item_no}. {item.item_name}",
-                    value={
-                        "requirement_id": detail.requirement_id,
-                        "expected_version": detail.version,
-                        "request_item_id": item.request_item_id,
-                    },
-                    style="danger",
-                )
-                for item in detail.items
-                if item.is_active
-            )
         if editable:
             actions.append(
                 ActionButton(
@@ -197,7 +211,7 @@ class ApplicantCardFactory:
                         if detail.status is RequirementStatus.REJECTED
                         else "applicant.prepare_submit"
                     ),
-                    label="重新提交" if detail.status is RequirementStatus.REJECTED else "准备提交",
+                    label="重新提交" if detail.status is RequirementStatus.REJECTED else "提交审核",
                     value={
                         "requirement_id": detail.requirement_id,
                         "expected_version": detail.version,
@@ -220,7 +234,6 @@ class ApplicantCardFactory:
             elements=tuple(elements),
             actions=tuple(actions),
         )
-
     def handler_selection(
         self, detail: RequirementDetail, candidates: HandlerCandidates, *, resubmit: bool
     ) -> InteractionView:
@@ -261,14 +274,48 @@ class ApplicantCardFactory:
         *,
         resubmit: bool,
     ) -> InteractionView:
+        fields = detail.applicant_fields
+        item = next((value for value in detail.items if value.is_active), None)
         return InteractionView(
             title="重新提交确认" if resubmit else "提交审批确认",
             elements=(
-                MarkdownBlock(markdown=multi_item_markdown(detail, include_status=False)),
                 KeyValueSection(
                     fields=(
                         KeyValueField(label="采购单编号", value=detail.requirement_no),
                         KeyValueField(label="所属楼宇", value=detail.building.building_name),
+                        KeyValueField(label="设备专业", value=fields.device_profession or "-"),
+                        KeyValueField(
+                            label="设备名称",
+                            value=item.item_name if item else fields.device_name or "-",
+                        ),
+                        KeyValueField(
+                            label="设备类型",
+                            value=item.item_kind.value if item else "-",
+                        ),
+                        KeyValueField(
+                            label="品牌",
+                            value=(item.brand_snapshot if item else fields.brand) or "未填写",
+                        ),
+                        KeyValueField(
+                            label="型号",
+                            value=(item.model_snapshot if item else fields.model) or "未填写",
+                        ),
+                        KeyValueField(
+                            label="数量和单位",
+                            value=(
+                                f"{quantity_text(item.quantity)} {item.unit}"
+                                if item
+                                else f"{quantity_text(fields.quantity)} {fields.unit or ''}".strip()
+                            ),
+                        ),
+                        KeyValueField(
+                            label="需求原因",
+                            value=fields.application_reason or "-",
+                        ),
+                        KeyValueField(
+                            label="备注",
+                            value=fields.applicant_remark or (item.remark if item else None) or "-",
+                        ),
                         KeyValueField(label="审批楼长", value=manager_name),
                         KeyValueField(label="申请人", value=detail.applicant_name or "-"),
                         KeyValueField(label="申请时间", value=self._application_date(detail)),

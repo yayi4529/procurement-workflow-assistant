@@ -1,3 +1,4 @@
+import logging
 from typing import Protocol
 
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
@@ -12,15 +13,30 @@ from procurement_platform.domain.assistant import (
     AssistantResponse,
     AssistantTextResponse,
 )
-from procurement_platform.domain.assistant_errors import AssistantError
+from procurement_platform.domain.assistant_errors import (
+    AssistantError,
+    AssistantToolArgumentsError,
+    AssistantToolExecutionError,
+    AssistantToolStepLimitError,
+    LlmAuthenticationError,
+    LlmBadRequestError,
+    LlmConfigurationError,
+    LlmInvalidResponseError,
+    LlmRateLimitError,
+    LlmTimeoutError,
+    LlmUnavailableError,
+)
 from procurement_platform.domain.channel import StreamingCardHandle
 from procurement_platform.domain.enums import PlatformType, RoleCode
+from procurement_platform.domain.errors import BackendApplicationError, UserNotFoundError
 from procurement_platform.domain.identity import PlatformIdentity
 from procurement_platform.domain.inbound_event import TextMessageEvent
 from procurement_platform.domain.interaction import InteractionView, MarkdownBlock
 from procurement_platform.ports.backend_client import BackendClient
 from procurement_platform.ports.channel import ChannelClient
 from procurement_platform.ports.conversation_lock import ConversationLockManager
+
+logger = logging.getLogger(__name__)
 
 
 class AssistantHandler(Protocol):
@@ -91,10 +107,40 @@ class BaseMessageHandler:
                 )
                 try:
                     response = await self._assistant_service.handle(event)
-                except AssistantError:
+                except UserNotFoundError:
+                    await self._send_backend_failure(
+                        reply_to_message_id=event.external_message_id,
+                        stream=stream,
+                        text="当前飞书身份尚未绑定采购员工,请联系管理员完成身份绑定后再试。",
+                    )
+                    return
+                except BackendApplicationError as exc:
+                    logger.exception(
+                        "assistant.backend.failed",
+                        extra={
+                            "event_id": event.event_id,
+                            "error_code": exc.error_code,
+                            "trace_id": exc.trace_id,
+                        },
+                    )
+                    await self._send_backend_failure(
+                        reply_to_message_id=event.external_message_id,
+                        stream=stream,
+                        text="采购后端暂时无法处理这条消息,请稍后重试。",
+                    )
+                    return
+                except AssistantError as exc:
+                    logger.exception(
+                        "assistant.message.failed",
+                        extra={
+                            "event_id": event.event_id,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
                     await self._send_assistant_failure(
                         reply_to_message_id=event.external_message_id,
                         stream=stream,
+                        error=exc,
                     )
                     return
                 if isinstance(response, AssistantTextResponse):
@@ -153,10 +199,36 @@ class BaseMessageHandler:
             text="采购中心已收到您的消息。智能助手当前未启用。",
         )
 
-    async def _send_assistant_failure(
-        self, *, reply_to_message_id: str, stream: StreamingCardHandle | None
+    async def _send_backend_failure(
+        self,
+        *,
+        reply_to_message_id: str,
+        stream: StreamingCardHandle | None,
+        text: str,
     ) -> None:
-        text = "智能助手本次响应超时或暂时不可用, 请稍后重新发送消息。"
+        if stream is not None:
+            try:
+                await self._channel_client.update_streaming_reply(
+                    handle=stream, text=text, finish=True
+                )
+                return
+            except Exception:
+                pass
+        await self._channel_client.reply_interaction(
+            reply_to_message_id=reply_to_message_id,
+            view=self._assistant_text_card(
+                text, title="身份未绑定" if "身份" in text else "采购助手"
+            ),
+        )
+
+    async def _send_assistant_failure(
+        self,
+        *,
+        reply_to_message_id: str,
+        stream: StreamingCardHandle | None,
+        error: AssistantError,
+    ) -> None:
+        text = self._assistant_failure_text(error)
         if stream is not None:
             try:
                 await self._channel_client.update_streaming_reply(
@@ -169,6 +241,30 @@ class BaseMessageHandler:
             reply_to_message_id=reply_to_message_id,
             view=self._assistant_text_card(text, title="处理失败"),
         )
+
+    @staticmethod
+    def _assistant_failure_text(error: AssistantError) -> str:
+        reason = str(error).strip() or "未提供异常详情"
+        if isinstance(error, LlmTimeoutError):
+            summary = "大语言模型请求超时"
+        elif isinstance(error, LlmRateLimitError):
+            summary = "大语言模型触发限流"
+        elif isinstance(
+            error,
+            (LlmConfigurationError, LlmAuthenticationError, LlmUnavailableError),
+        ):
+            summary = "大语言模型服务不可用或配置错误"
+        elif isinstance(error, (LlmBadRequestError, LlmInvalidResponseError)):
+            summary = "大语言模型返回无效响应"
+        elif isinstance(error, AssistantToolArgumentsError):
+            summary = "工具调用参数无效"
+        elif isinstance(error, AssistantToolExecutionError):
+            summary = "采购查询工具执行失败"
+        elif isinstance(error, AssistantToolStepLimitError):
+            summary = "本轮工具调用步骤达到上限"
+        else:
+            summary = "智能助手处理失败"
+        return f"{summary}\n\n错误类型: `{type(error).__name__}`\n真实原因: {reason}"
 
     @staticmethod
     def _assistant_text_card(text: str, *, title: str = "采购助手") -> InteractionView:

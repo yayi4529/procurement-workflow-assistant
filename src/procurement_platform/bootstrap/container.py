@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 from procurement_platform.adapters.backend.fake_client import FakeBackendClient
@@ -10,7 +11,10 @@ from procurement_platform.adapters.feishu.channel_client import FeishuChannelCli
 from procurement_platform.adapters.feishu.interaction_renderer import FeishuInteractionRenderer
 from procurement_platform.adapters.feishu.sdk_client import LarkOapiTransport
 from procurement_platform.adapters.feishu.webhook_parser import FeishuWebhookParser
-from procurement_platform.adapters.knowledge import MarkdownKnowledgeLoader
+from procurement_platform.adapters.knowledge import (
+    MarkdownKnowledgeLoader,
+    load_optional_context,
+)
 from procurement_platform.adapters.llm.openai_compatible_llm_client import OpenAICompatibleLlmClient
 from procurement_platform.adapters.persistence.fault_state_repository import (
     FaultStateRepository,
@@ -30,11 +34,16 @@ from procurement_platform.adapters.persistence.redis_stores import (
     RedisEventDedupStore,
     RedisNotificationDeliveryStore,
 )
+from procurement_platform.adapters.skills import MarkdownRoleSkillLoader
 from procurement_platform.application.applicant.action_router import ApplicantActionRouter
 from procurement_platform.application.applicant.workflow_service import ApplicantWorkflowService
 from procurement_platform.application.assistant.agent import ProcurementAgent
 from procurement_platform.application.assistant.capabilities.adapters import (
     ExistingToolCapabilityAdapter,
+)
+from procurement_platform.application.assistant.capabilities.analytics import (
+    DescribeAnalyticsSchemaCapability,
+    RunReadonlyAnalyticsSqlCapability,
 )
 from procurement_platform.application.assistant.capabilities.assets import (
     GetAssetCapability,
@@ -57,10 +66,17 @@ from procurement_platform.application.assistant.capabilities.intelligence import
     FindSimilarPurchasesCapability,
 )
 from procurement_platform.application.assistant.capabilities.policy import CapabilityPolicy
+from procurement_platform.application.assistant.capabilities.products.recommend import (
+    RecommendProductsByNameCapability,
+)
 from procurement_platform.application.assistant.capabilities.purchases import (
     PreparePurchasePrefillCapability,
 )
 from procurement_platform.application.assistant.capabilities.registry import CapabilityRegistry
+from procurement_platform.application.assistant.capabilities.skill_handlers import (
+    ProcurementAnalyticsHandler,
+    SupplierRecommendationHandler,
+)
 from procurement_platform.application.assistant.capabilities.v2 import (
     ApplySupplierProfileCapability,
     GetPurchaseRequestCapability,
@@ -74,6 +90,7 @@ from procurement_platform.application.assistant.capabilities.v2 import (
     UpdateWarehouseDraftCapability,
 )
 from procurement_platform.application.assistant.context_builder import AssistantContextBuilder
+from procurement_platform.application.assistant.phase_input import ApplicantPhaseInputParser
 from procurement_platform.application.assistant.presentation import LegacyToolResultPresenter
 from procurement_platform.application.assistant.procurement_assistant import ProcurementAssistant
 from procurement_platform.application.assistant.runtime import AssistantRuntime
@@ -83,6 +100,11 @@ from procurement_platform.application.assistant.tooling import (
     PurchasePrefillNotificationService,
 )
 from procurement_platform.application.assistant.tools import ToolExecutor
+from procurement_platform.application.assistant.workflow_completion import (
+    BackendWorkflowCompletionObserver,
+)
+from procurement_platform.application.assistant.workflow_router import LlmWorkflowRouter
+from procurement_platform.application.assistant.workflow_state import WorkflowStateService
 from procurement_platform.application.building_manager.action_router import (
     BuildingManagerActionRouter,
 )
@@ -97,6 +119,10 @@ from procurement_platform.application.fault_guidance import (
     FaultGuidanceService,
     MarkdownKnowledgeSearch,
     ProcurementDraftService,
+)
+from procurement_platform.application.fault_guidance.intent_router import (
+    FaultIntentRouter,
+    LlmFaultIntentClassifier,
 )
 from procurement_platform.application.inbound.card_interaction_handler import (
     BaseCardInteractionHandler,
@@ -179,6 +205,7 @@ class ApplicationContainer:
                 signer=signer,
             )
             container = cls(settings=settings, backend_client=HttpBackendClient(transport))
+        completion_observer = None
         if settings.feishu.enabled:
             sdk = LarkOapiTransport(
                 settings.feishu.app_id,
@@ -218,11 +245,6 @@ class ApplicationContainer:
                     raise ValueError("enabled LLM requires API key and model")
                 if settings.environment == "production" and settings.llm_base_url is None:
                     raise ValueError("enabled production LLM requires base URL")
-                capability_registry = _build_capability_registry(container.backend_client)
-                capability_policy = CapabilityPolicy(capability_registry)
-                container.capability_registry = capability_registry
-                container.capability_policy = capability_policy
-                tool_registry = capability_registry.tool_registry
                 llm_client = OpenAICompatibleLlmClient(
                     api_key=api_key,
                     model=model,
@@ -230,8 +252,18 @@ class ApplicationContainer:
                     base_url=settings.llm_base_url,
                 )
                 container.llm_client = llm_client
+                capability_registry = _build_capability_registry(
+                    container.backend_client, llm_client
+                )
+                capability_policy = CapabilityPolicy(capability_registry)
+                container.capability_registry = capability_registry
+                container.capability_policy = capability_policy
+                tool_registry = capability_registry.tool_registry
                 session_service = AssistantSessionService(container.backend_client)
-                if settings.fault_guidance_enabled:
+                use_legacy_fault_guidance = (
+                    settings.fault_guidance_enabled and settings.llm_context_knowledge_path is None
+                )
+                if use_legacy_fault_guidance:
                     knowledge_repository = MarkdownKnowledgeLoader(
                         settings.fault_knowledge_path
                     ).load()
@@ -260,6 +292,13 @@ class ApplicationContainer:
                     max_tool_steps=settings.llm_max_tool_steps,
                     max_total_tool_calls=settings.llm_max_total_tool_calls,
                 )
+                role_skills = (
+                    MarkdownRoleSkillLoader(Path(settings.llm_role_skills_path))
+                    .load()
+                    .validate_capabilities(tool_registry.registered_names)
+                    if settings.llm_role_skills_path is not None
+                    else None
+                )
                 procurement_agent = ProcurementAgent(
                     runtime=runtime,
                     capability_policy=capability_policy,
@@ -268,8 +307,18 @@ class ApplicationContainer:
                         backend_client=container.backend_client,
                         session_service=session_service,
                     ),
+                    context_knowledge=load_optional_context(settings.llm_context_knowledge_path),
+                    role_skill_registry=role_skills,
+                    workflow_router=LlmWorkflowRouter(llm_client),
+                    workflow_state_service=WorkflowStateService(container.backend_client),
+                    skill_routing_mode=settings.llm_skill_routing_mode,
+                    phase_input_parser=ApplicantPhaseInputParser(llm_client),
                 )
                 container.procurement_agent = procurement_agent
+                if role_skills is not None:
+                    completion_observer = BackendWorkflowCompletionObserver(
+                        container.backend_client, role_skills
+                    )
                 container.assistant_service = AssistantService(
                     backend_client=container.backend_client,
                     session_service=session_service,
@@ -277,6 +326,11 @@ class ApplicationContainer:
                     procurement_agent=procurement_agent,
                     max_history_messages=settings.llm_max_history_messages,
                     fault_guidance_service=container.fault_guidance_service,
+                    fault_intent_router=(
+                        FaultIntentRouter(LlmFaultIntentClassifier(llm_client))
+                        if use_legacy_fault_guidance
+                        else None
+                    ),
                 )
                 container.procurement_assistant = ProcurementAssistant(container.assistant_service)
             container.message_handler = BaseMessageHandler(
@@ -294,6 +348,7 @@ class ApplicationContainer:
                 ),
                 PurchaserActionRouter(PurchaserWorkflowService(container.backend_client)),
                 WarehouseActionRouter(WarehouseWorkflowService(container.backend_client)),
+                completion_observer=completion_observer,
             )
             if settings.notification_gateway.enabled:
                 delivery_store: NotificationDeliveryStore = (
@@ -388,9 +443,25 @@ class _UnusedRedisClient:
         raise RuntimeError("Redis is not configured")
 
 
-def _build_capability_registry(backend_client: BackendClient) -> CapabilityRegistry:
+def _build_capability_registry(
+    backend_client: BackendClient, llm_client: LlmClient | None = None
+) -> CapabilityRegistry:
     metadata_by_name = {item.name: item for item in DEFAULT_CAPABILITY_METADATA}
+    analytics_handler = (
+        ProcurementAnalyticsHandler(backend_client, llm_client) if llm_client is not None else None
+    )
+    skill_tools = (
+        (
+            analytics_handler,
+            SupplierRecommendationHandler(backend_client, analytics_handler),
+        )
+        if analytics_handler is not None
+        else ()
+    )
     tools = (
+        *skill_tools,
+        DescribeAnalyticsSchemaCapability(backend_client),
+        RunReadonlyAnalyticsSqlCapability(backend_client),
         SearchAssetsCapability(backend_client),
         ResolveAssetCapability(backend_client),
         GetAssetCapability(backend_client),
@@ -398,6 +469,7 @@ def _build_capability_registry(backend_client: BackendClient) -> CapabilityRegis
         GetAssetRelationsCapability(backend_client),
         DiagnoseProcurementNeedCapability(backend_client),
         FindSimilarPurchasesCapability(backend_client),
+        RecommendProductsByNameCapability(backend_client),
         CompareProductsCapability(backend_client),
         CompareSuppliersCapability(backend_client),
         SearchPurchaseRequestsCapability(backend_client),

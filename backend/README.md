@@ -151,6 +151,17 @@ Task06-A 新增申请项整体替换、逐项评审、逐项采购和追加收�
 
 ## Security
 
+## Governed analytics
+
+`GET /api/v1/analytics/catalog` and `POST /api/v1/analytics/query` expose purchaser/admin-only,
+read-only procurement analytics. The query service uses a separate `ANALYTICS_DATABASE_URL`,
+SQLGlot AST validation, allowlisted analytics views, EXPLAIN cost control, timeout and row limits.
+The external Agent still accesses data only through signed BackendClient HTTP calls.
+
+Configure with `ANALYTICS_ENABLED`, `ANALYTICS_DATABASE_URL`, `ANALYTICS_MAX_ROWS`,
+`ANALYTICS_QUERY_TIMEOUT_SECONDS` and `ANALYTICS_INCLUDE_SYNTHETIC_DEFAULT`. Create the database
+reader with `scripts/configure_analytics_reader.sql.example`; never commit the resulting password.
+
 禁止提交或记录：
 
 - `.env`、`.env.docker`、数据库密码和 Redis 密码；

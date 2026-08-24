@@ -7,6 +7,9 @@ are redesigned in a later task. It never performs a formal procurement transitio
 # ruff: noqa: RUF001
 
 from procurement_platform.application.applicant.card_factory import ApplicantCardFactory
+from procurement_platform.application.assistant.capabilities.products.recommend import (
+    RecommendProductsByNameResult,
+)
 from procurement_platform.application.assistant.session_service import AssistantSessionService
 from procurement_platform.application.assistant.tooling import (
     FillSelectedSupplierProfileResult,
@@ -59,6 +62,25 @@ class LegacyToolResultPresenter:
     ) -> AssistantResponse | None:
         if result.exact_render_required and result.user_message:
             return await self._text_response(context, external_message_id, result.user_message)
+        if isinstance(result, RecommendProductsByNameResult) and result.status == "SUCCESS":
+            assert result.response is not None
+            lines = [
+                "查询到该物品之前的采购历史。请选择下列品牌或型号的序号，"
+                "或直接输入您想购买的品牌和型号：",
+                "",
+            ]
+            for index, item in enumerate(result.response.items, start=1):
+                label = item.brand or "未记录品牌"
+                if item.model:
+                    label += f"（型号：{item.model}）"
+                if item.last_purchased_at is not None:
+                    label += f" — 最近采购于 {item.last_purchased_at.date().isoformat()}"
+                # Feishu Markdown may restart separately rendered ordered-list blocks at 1.
+                # A Chinese enumeration delimiter preserves the intended visible numbering.
+                lines.append(f"{index}、{label}")
+            return await self._text_response(context, external_message_id, "\n".join(lines))
+        if isinstance(result, QueryPurchaseRequestsResult) and result.status == "SUCCESS":
+            return await self._history_card(result, context, external_message_id)
         if isinstance(result, RecommendProductOptionsResult) and result.status in {
             "NOT_FOUND",
             "NEED_MORE_INFORMATION",
@@ -92,11 +114,8 @@ class LegacyToolResultPresenter:
             if result.status == "SUCCESS" and result.fields_complete:
                 return await self._warehouse_card(result, context, external_message_id)
             return None
-        if isinstance(result, QueryPurchaseRequestsResult) and self._is_applicant_only(context):
-            if (result.status == "NOT_FOUND" and result.total_count == 0) or (
-                result.status in {"SUCCESS", "MULTIPLE_MATCHES"} and result.total_count is not None
-            ):
-                return await self._history_card(result, context, external_message_id)
+        # Read observations return to the LLM so it can continue planning and synthesize a
+        # response. Only completed drafts and exact-render safety responses terminate a turn.
         return None
 
     async def _applicant_card(
@@ -146,7 +165,7 @@ class LegacyToolResultPresenter:
         notice = "多采购项草稿已完整，请在正式确认卡中检查并提交。"
         await self._append_reply(context, external_message_id, notice)
         return AssistantInteractionResponse(
-            view=ApplicantCardFactory().detail(detail, notice=notice, confirmation_mode=True)
+            view=ApplicantCardFactory().detail(detail, notice=notice)
         )
 
     async def _purchase_card(

@@ -11,6 +11,7 @@ from procurement_platform.domain.assistant import AssistantMessage, AssistantTur
 from procurement_platform.domain.assistant_errors import LlmInvalidResponseError
 from procurement_platform.domain.enums import FaultAction, PurchaseItemKind
 from procurement_platform.domain.fault_guidance import (
+    CandidateItem,
     FaultContext,
     FaultState,
     KnowledgeSearchResult,
@@ -37,6 +38,20 @@ def _context(user_message: str) -> FaultContext:
         ],
         conversation_messages=[AssistantMessage(role="user", content="UPS出现BATTERY FAULT")],
     )
+
+
+def _confirmation_context(user_message: str) -> FaultContext:
+    context = _context(user_message)
+    context.fault_state.candidate_items = [
+        CandidateItem(
+            item_kind=PurchaseItemKind.COMPONENT,
+            item_name="UPS 风扇",
+            quantity=Decimal("2"),
+            unit="个",
+            quantity_evidence="USER_CONFIRMED",
+        )
+    ]
+    return context
 
 
 def _turn(**overrides: object) -> AssistantTurn:
@@ -120,6 +135,36 @@ async def test_orchestrator_routes_explicit_purchase_without_creating_draft() ->
     decision = await FaultGuidanceOrchestrator(llm).decide(_context("买1块UPS功率模块"))
     assert decision.action is FaultAction.DIRECT_TO_PROCUREMENT
     assert decision.candidate_items[0].quantity == Decimal("1")
+
+
+async def test_confirmation_context_exposes_transition_stage_to_llm() -> None:
+    llm = FakeLlmClient(
+        turns=(
+            _turn(
+                action="DIRECT_TO_PROCUREMENT",
+                reply="用户确认按当前候选继续。",
+                candidate_items=[],
+            ),
+        )
+    )
+
+    decision = await FaultGuidanceOrchestrator(llm).decide(_confirmation_context("是的"))
+
+    assert decision.action is FaultAction.DIRECT_TO_PROCUREMENT
+    assert decision.candidate_items == []
+    runtime = json.loads(llm.calls[0][1].content or "{}")
+    assert runtime["workflow_stage"] == "AWAITING_CANDIDATE_CONFIRMATION"
+    assert runtime["fault_state"]["candidate_items"][0]["item_name"] == "UPS 风扇"
+    assert "不得再次返回相同的 PROPOSE_ITEM" in (llm.calls[0][0].content or "")
+
+
+async def test_orchestrator_accepts_standard_json_code_fence_then_validates_schema() -> None:
+    payload = _turn(action="DIRECT_TO_PROCUREMENT", candidate_items=[]).content
+    llm = FakeLlmClient(turns=(AssistantTurn(content=f"```json\n{payload}\n```"),))
+
+    decision = await FaultGuidanceOrchestrator(llm).decide(_confirmation_context("是的"))
+
+    assert decision.action is FaultAction.DIRECT_TO_PROCUREMENT
 
 
 @pytest.mark.parametrize(
